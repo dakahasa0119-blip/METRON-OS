@@ -97,6 +97,29 @@ function doPost(e) {
   const arcWorkerAllowlist = parseAllowlist(props.getProperty("ARC_WORKER_ALLOWLIST"));
   const mothershipWorkerAllowlist = parseAllowlist(props.getProperty("MOTHERSHIP_WORKER_ALLOWLIST"));
 
+  const ensureRecommendedDefaults = () => {
+    const defaults = {
+      ARC_DEFAULT_ROUTE: "ARC",
+      ARC_DEFAULT_EXECUTOR: "AUTO",
+      ARC_DEFAULT_TARGET: "chatgpt",
+      ARC_REPAIR_EXECUTOR: "BAKU",
+      ARC_LEASE_TIMEOUT_SEC: "300",
+      ARC_MAX_RETRY: "2",
+      ARC_RETRY_BACKOFF_SEC: "30",
+      ARC_AUDIT_RETENTION_DAYS: "14",
+      ARC_ENABLE_BAKU_FOLLOWUP: "true",
+      ARC_AUTONOMY_PAUSED: "false",
+      ARC_DEAD_JOB_ALERT_THRESHOLD: "20",
+      ARC_LEASED_ALERT_THRESHOLD: "50",
+      ARC_REQUIRE_SIGNATURE: "false",
+      ARC_SIGNATURE_WINDOW_SEC: "180",
+      ARC_NONCE_TTL_SEC: "300"
+    };
+    Object.keys(defaults).forEach((k) => {
+      if (!norm(props.getProperty(k))) props.setProperty(k, defaults[k]);
+    });
+  };
+
   const expectedAuth = props.getProperty("ARC_AUTH_KEY") || "";
   const requiresAuth = [
     "arc_result", "report_result",
@@ -670,6 +693,7 @@ function doPost(e) {
     return enq;
   };
 
+  ensureRecommendedDefaults();
   maybeRunDailyCleanup();
   evaluateRuntimeAlerts();
 

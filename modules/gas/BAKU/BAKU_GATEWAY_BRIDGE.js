@@ -20,6 +20,24 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     return PropertiesService.getScriptProperties();
   },
 
+  ensureRecommendedDefaults_: function () {
+    var p = this.getProps_();
+    var defaults = {
+      GATEWAY_WEBAPP_URL: "https://script.google.com/macros/s/AKfycbyTZSv_X625o7T27_hQQ6eP_BztvrBDLx6kU_8cVLcmbvjWnhNYGFA2e8Wo7E0m7A/exec",
+      BAKU_USE_SIGNATURE: "false",
+      BAKU_ALLOW_REBUILD: "false",
+      BAKU_MAX_LOOP_JOBS: "6"
+    };
+
+    Object.keys(defaults).forEach(function (k) {
+      if (!String(p.getProperty(k) || "").trim()) p.setProperty(k, defaults[k]);
+    });
+
+    if (!String(p.getProperty("BAKU_WORKER_ID") || "").trim()) {
+      p.setProperty("BAKU_WORKER_ID", "baku-node-" + Utilities.getUuid().slice(0, 8));
+    }
+  },
+
   getGatewayUrl_: function () {
     return String(this.getProps_().getProperty("GATEWAY_WEBAPP_URL") || "").trim();
   },
@@ -422,6 +440,7 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
   },
 
   runLoop: function (maxJobs) {
+    this.ensureRecommendedDefaults_();
     var n = Number(maxJobs || this.maxLoopJobs_());
     if (!isFinite(n) || n < 1) n = 1;
     if (n > 50) n = 50;
