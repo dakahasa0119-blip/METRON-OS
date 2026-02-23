@@ -9,6 +9,10 @@ function doPost(e) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const props = PropertiesService.getScriptProperties();
 
+  const MAX_CHAT_CONTENT = 4000;
+  const MAX_USER = 64;
+  const MAX_PROMPT = 8000;
+
   const ensureSheet = (name, header) => {
     const sh = ss.getSheetByName(name) || ss.insertSheet(name);
     if (sh.getLastRow() === 0 && header) sh.appendRow(header);
@@ -19,7 +23,26 @@ function doPost(e) {
   const nowIso = () => new Date().toISOString();
   const norm = (v) => String(v || "").trim();
   const lower = (v) => norm(v).toLowerCase();
+  const upper = (v) => norm(v).toUpperCase();
   const mode = norm(data.mode);
+
+  const parseJsonSafe = (raw) => {
+    try {
+      return raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      return { raw: String(raw || "") };
+    }
+  };
+
+  const makeTraceId = () => "TRC_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
+  const toTraceId = (v) => {
+    const t = norm(v);
+    return /^TRC_[A-Za-z0-9_-]{6,64}$/.test(t) ? t : makeTraceId();
+  };
+
+  const leaseTimeoutSecRaw = parseInt(norm(props.getProperty("ARC_LEASE_TIMEOUT_SEC")) || "300", 10);
+  const leaseTimeoutSec = Number.isFinite(leaseTimeoutSecRaw) && leaseTimeoutSecRaw >= 30 ? leaseTimeoutSecRaw : 300;
+  const leaseTimeoutMs = leaseTimeoutSec * 1000;
 
   const expectedAuth = props.getProperty("ARC_AUTH_KEY") || "";
   const requiresAuth = [
@@ -35,6 +58,11 @@ function doPost(e) {
     }
   }
 
+  const submitAuth = norm(props.getProperty("SUBMIT_AUTH_KEY"));
+  if (submitAuth && mode === "submit_chat" && norm(data.submit_key) !== submitAuth) {
+    return jsonOut({ status: "error", error: "submit_unauthorized" });
+  }
+
   const sheets = {
     main: ensureSheet("MAIN_CHAT", ["Timestamp", "User", "Content", "Status", "Response", "MissionID"]),
     nodes: ensureSheet("ARC_NODES", ["LastSeen", "IP", "Port", "Status", "Capabilities", "Version"]),
@@ -42,7 +70,24 @@ function doPost(e) {
     results: ensureSheet("ARC_RESULTS", ["Timestamp", "MissionID", "Target", "Prompt", "Result", "ImageURL"]),
     errors: ensureSheet("ARC_ERRORS", ["Timestamp", "QID", "Type", "Data"]),
     learning: ensureSheet("ARC_LEARNING", ["Timestamp", "Target", "Learned"]),
-    mothership: ensureSheet("MOTHERSHIP_QUEUE", ["Timestamp", "MessageID", "User", "Content", "Status"])
+    mothership: ensureSheet("MOTHERSHIP_QUEUE", ["Timestamp", "MessageID", "User", "Content", "Status"]),
+    audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"])
+  };
+
+  const addAudit = (traceId, event, jobId, worker, status, detail) => {
+    try {
+      sheets.audit.appendRow([
+        new Date(),
+        norm(traceId),
+        norm(event),
+        norm(jobId),
+        norm(worker),
+        norm(status),
+        norm(detail)
+      ]);
+    } catch (_) {
+      // keep main flow alive even if audit write fails
+    }
   };
 
   const parseCommandTags = (text) => {
@@ -85,23 +130,27 @@ function doPost(e) {
       .replace(/\s+/g, " ")
       .trim();
     if (!cleanPrompt) cleanPrompt = raw;
+    if (cleanPrompt.length > MAX_PROMPT) cleanPrompt = cleanPrompt.slice(0, MAX_PROMPT);
 
     return { route: route, target: target, opMode: opMode, script: script, prompt: cleanPrompt, executor: executor };
   };
 
   const enqueueArcJob = (job) => {
     const jobId = norm(job.jobId) || ("JOB_" + Utilities.getUuid().slice(0, 8));
+    const traceId = toTraceId(job.traceId);
     const payload = {
       qid: norm(job.qid) || jobId,
       target: norm(job.target) || "gemini",
-      prompt: norm(job.prompt) || "",
-      script: norm(job.script) || "",
+      prompt: norm(job.prompt).slice(0, MAX_PROMPT),
+      script: norm(job.script),
       executor: norm(job.executor) || "AUTO",
       requested_by: norm(job.user) || "gateway",
+      trace_id: traceId,
       ts: nowIso()
     };
     sheets.jobs.appendRow([new Date(), jobId, norm(job.workerId), norm(job.mode) || "request_arc", JSON.stringify(payload), "pending", ""]);
-    return { jobId: jobId, payload: payload };
+    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / " + (norm(job.mode) || "request_arc"));
+    return { jobId: jobId, traceId: traceId, payload: payload };
   };
 
   const routeOneChatRow = (rowIndex, rowValues) => {
@@ -113,6 +162,8 @@ function doPost(e) {
     if (status && status !== "new" && status !== "pending") return null;
 
     const cmd = parseCommandTags(content);
+    const traceId = toTraceId(missionId);
+
     if (cmd.route === "ARC") {
       const effectiveMode = cmd.opMode;
       const jobRes = enqueueArcJob({
@@ -124,20 +175,22 @@ function doPost(e) {
         mode: effectiveMode,
         executor: cmd.executor,
         user: user,
-        workerId: ""
+        workerId: "",
+        traceId: traceId
       });
       sheets.main.getRange(rowIndex, 4).setValue("QUEUED_ARC");
-      sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + " / " + cmd.executor);
+      sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + " / " + cmd.executor + " / " + jobRes.traceId);
       sheets.main.getRange(rowIndex, 6).setValue(jobRes.jobId);
-      return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode };
+      return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode, traceId: jobRes.traceId };
     }
 
     const msgId = missionId || ("MS_" + rowIndex + "_" + Date.now());
     sheets.mothership.appendRow([new Date(), msgId, user, content, "pending"]);
     sheets.main.getRange(rowIndex, 4).setValue("ROUTED_MOTHERSHIP");
-    sheets.main.getRange(rowIndex, 5).setValue("Forwarded to MOTHERSHIP");
+    sheets.main.getRange(rowIndex, 5).setValue("Forwarded to MOTHERSHIP / " + traceId);
     sheets.main.getRange(rowIndex, 6).setValue(msgId);
-    return { routed: "MOTHERSHIP", jobId: msgId, mode: "mothership_queue" };
+    addAudit(traceId, "MOTHERSHIP_ROUTED", msgId, "", "pending", user);
+    return { routed: "MOTHERSHIP", jobId: msgId, mode: "mothership_queue", traceId: traceId };
   };
 
   const routePendingChatCommands = () => {
@@ -151,38 +204,88 @@ function doPost(e) {
     return routed;
   };
 
-  const claimNextInstruction = (workerId, consumer) => {
-    routePendingChatCommands();
+  const requeueExpiredLeases = () => {
     const rows = sheets.jobs.getDataRange().getValues();
+    const now = Date.now();
+    let recovered = 0;
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
-      const rowWorker = norm(row[2]);
-      const rowMode = norm(row[3]) || "request_arc";
-      const payloadRaw = norm(row[4]);
       const status = lower(row[5]);
-      if (status !== "pending") continue;
+      if (status !== "leased") continue;
+      const leasedAt = new Date(row[6]).getTime();
+      if (!Number.isFinite(leasedAt) || now - leasedAt < leaseTimeoutMs) continue;
 
-      // Respect explicit worker pinning. A pinned job cannot be leased without matching worker_id.
-      if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
-
-      let payload = {};
-      try {
-        payload = payloadRaw ? JSON.parse(payloadRaw) : {};
-      } catch (_) {
-        payload = { raw: payloadRaw };
-      }
-      const wanted = upper(payload.executor || "AUTO");
-      const mine = upper(consumer || "ARC");
-      if (wanted !== "AUTO" && wanted !== mine) continue;
-
-      sheets.jobs.getRange(i + 1, 6).setValue("leased");
-      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
-      if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
-      return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
+      const payload = parseJsonSafe(norm(row[4]));
+      const keepWorker = lower(payload.pin_worker) === "true";
+      if (!keepWorker) sheets.jobs.getRange(i + 1, 3).setValue("");
+      sheets.jobs.getRange(i + 1, 6).setValue("pending");
+      sheets.jobs.getRange(i + 1, 7).setValue("");
+      recovered++;
+      addAudit(
+        norm(payload.trace_id),
+        "LEASE_EXPIRED",
+        norm(row[1]),
+        norm(row[2]),
+        "pending",
+        "timeout_sec=" + leaseTimeoutSec
+      );
     }
-    return null;
+    return recovered;
   };
-  const upper = (v) => norm(v).toUpperCase();
+
+  const claimNextInstruction = (workerId, consumer) => {
+    const lock = LockService.getScriptLock();
+    const locked = lock.tryLock(5000);
+    if (!locked) {
+      addAudit("", "LEASE_LOCK_TIMEOUT", "", workerId, "busy", consumer);
+      return null;
+    }
+
+    try {
+      requeueExpiredLeases();
+      routePendingChatCommands();
+
+      const rows = sheets.jobs.getDataRange().getValues();
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const rowWorker = norm(row[2]);
+        const rowMode = norm(row[3]) || "request_arc";
+        const payloadRaw = norm(row[4]);
+        const status = lower(row[5]);
+        if (status !== "pending") continue;
+
+        // Respect explicit worker pinning. A pinned job cannot be leased without matching worker_id.
+        if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
+
+        const payload = parseJsonSafe(payloadRaw);
+        const wanted = upper(payload.executor || "AUTO");
+        const mine = upper(consumer || "ARC");
+        if (wanted !== "AUTO" && wanted !== mine) continue;
+
+        sheets.jobs.getRange(i + 1, 6).setValue("leased");
+        sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+        if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
+
+        addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
+        return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
+      }
+      return null;
+    } finally {
+      lock.releaseLock();
+    }
+  };
+
+  const findTraceByMissionId = (missionId) => {
+    const mid = norm(missionId);
+    if (!mid) return "";
+    const rows = sheets.jobs.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (norm(rows[i][1]) !== mid) continue;
+      const payload = parseJsonSafe(norm(rows[i][4]));
+      return norm(payload.trace_id);
+    }
+    return "";
+  };
 
   const completeLinkedChat = (missionId, output, type) => {
     const mid = norm(missionId);
@@ -195,6 +298,7 @@ function doPost(e) {
       return;
     }
   };
+
   const completeArcJob = (missionId, status) => {
     const mid = norm(missionId);
     if (!mid) return;
@@ -203,6 +307,8 @@ function doPost(e) {
       if (norm(rows[i][1]) !== mid) continue;
       sheets.jobs.getRange(i + 1, 6).setValue(status);
       if (!norm(rows[i][6])) sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+      const payload = parseJsonSafe(norm(rows[i][4]));
+      addAudit(norm(payload.trace_id), "JOB_COMPLETED", mid, norm(rows[i][2]), status, "");
       return;
     }
   };
@@ -214,43 +320,50 @@ function doPost(e) {
   }
 
   if (mode === "handshake") {
-    return jsonOut({ status: "ok", role: "gateway", version: "arc-gateway-16.0", control: "gateway_primary" });
+    return jsonOut({ status: "ok", role: "gateway", version: "arc-gateway-17.0", control: "gateway_primary", lease_timeout_sec: leaseTimeoutSec });
   }
 
   if (mode === "submit_chat") {
-    const user = norm(data.user) || "operator";
+    const user = norm(data.user || "operator").slice(0, MAX_USER);
     const content = norm(data.content);
     if (!content) return jsonOut({ status: "error", error: "content_required" });
+    if (content.length > MAX_CHAT_CONTENT) return jsonOut({ status: "error", error: "content_too_large" });
     sheets.main.appendRow([new Date(), user, content, "NEW", "", ""]);
+    addAudit(toTraceId(data.trace_id), "CHAT_SUBMITTED", "", "", "new", user);
     return jsonOut({ status: "ok" });
   }
 
   if (mode === "route_chat") {
     const routed = routePendingChatCommands();
-    return jsonOut({ status: "ok", routed: routed.length });
+    return jsonOut({ status: "ok", routed: routed.length, details: routed });
   }
 
   if (mode === "arc_result" || mode === "report_result") {
     const missionId = norm(data.qid || data.mission_id);
     const result = norm(data.text);
+    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId);
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
     completeArcJob(missionId, "done");
     completeLinkedChat(missionId, result, "result");
-    return jsonOut({ status: "ok" });
+    addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
+    return jsonOut({ status: "ok", trace_id: traceId });
   }
 
   if (mode === "arc_error" || mode === "report_error") {
     const missionId = norm(data.qid || data.mission_id);
     const err = norm(data.error_type);
     const payload = norm(data.data);
+    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId);
     sheets.errors.appendRow([new Date(), missionId, err, payload]);
     completeArcJob(missionId, "error");
     completeLinkedChat(missionId, "[" + err + "] " + payload, "error");
-    return jsonOut({ status: "ok" });
+    addAudit(traceId, "ARC_ERROR", missionId, norm(data.worker_id), "error", err);
+    return jsonOut({ status: "ok", trace_id: traceId });
   }
 
   if (mode === "arc_learning") {
     sheets.learning.appendRow([new Date(), data.target || "", data.learned || ""]);
+    addAudit(norm(data.trace_id), "ARC_LEARNING", "", norm(data.worker_id), "ok", norm(data.target));
     return jsonOut({ status: "ok" });
   }
 
@@ -272,6 +385,7 @@ function doPost(e) {
     else sheets.nodes.appendRow(row);
 
     const instruction = claimNextInstruction(workerId, consumer);
+    addAudit(norm(data.trace_id), "ARC_HEARTBEAT", "", workerId, "ok", consumer);
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
   }
 

@@ -48,6 +48,9 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
   - `ARC_RESULTS` / `ARC_ERRORS`
   - matching `MAIN_CHAT` row changes to `ARC_DONE` or `ARC_ERROR`.
   - matching `ARC_JOBS` row changes to `done` or `error`.
+5. Audit/trace:
+  - `trace_id` is attached to ARC jobs.
+  - Gateway writes operation logs to `ARC_AUDIT`.
 
 ## API Modes
 
@@ -60,6 +63,18 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
 - `arc_error` / `report_error`: report error
 - `arc_learning`: learning feedback
 - `arc_consult`: optional advisory path
+
+## Reliability and Safety
+
+- Lease lock:
+  - `claimNextInstruction` uses script lock to avoid double-lease races.
+- Lease timeout recovery:
+  - `leased` jobs older than timeout are moved back to `pending`.
+  - Timeout is configured by Script Property `ARC_LEASE_TIMEOUT_SEC` (default: `300`).
+- Audit trail:
+  - `ARC_AUDIT` captures enqueue/lease/complete/error/heartbeat events.
+- Optional submit auth:
+  - If Script Property `SUBMIT_AUTH_KEY` is set, `submit_chat` requires matching `submit_key`.
 
 ## BAKU Through ARC
 
