@@ -70,6 +70,8 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
 - `mothership_error`: mark leased message error
 - `admin_status`: return queue/node/dead-letter counters
 - `admin_cleanup`: force audit archive cleanup run
+- `admin_pause`: set `ARC_AUTONOMY_PAUSED=true`
+- `admin_resume`: set `ARC_AUTONOMY_PAUSED=false`
 
 ## Reliability and Safety
 
@@ -114,6 +116,12 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
 - Structured BAKU report:
   - If `arc_result.text` starts with `BAKU_REPORT_JSON:`, Gateway parses it.
   - When `ARC_ENABLE_BAKU_FOLLOWUP=true`, Gateway can auto-enqueue follow-up jobs from report payload.
+- Emergency stop:
+  - `ARC_AUTONOMY_PAUSED=true` pauses autonomous leasing/routing loops.
+- Alert thresholds:
+  - `ARC_DEAD_JOB_ALERT_THRESHOLD` (default `20`)
+  - `ARC_LEASED_ALERT_THRESHOLD` (default `50`)
+  - Alerts are recorded to `ARC_ALERTS`.
 - Daily cleanup:
   - `ARC_AUDIT` old rows are archived to `ARC_AUDIT_ARCHIVE`.
   - Retention uses `ARC_AUDIT_RETENTION_DAYS` (default `14`).

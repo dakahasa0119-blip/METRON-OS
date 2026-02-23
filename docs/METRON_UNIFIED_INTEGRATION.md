@@ -58,6 +58,8 @@ Reference blueprints:
 ### Admin
 - `admin_status`
 - `admin_cleanup`
+- `admin_pause`
+- `admin_resume`
 
 ## Security posture
 
@@ -94,3 +96,6 @@ Recommended next hardening:
 - `ARC_NONCE_TTL_SEC` (optional, default 300)
 - `ARC_WORKER_AUTH_MAP` (optional JSON map)
 - `MOTHERSHIP_WORKER_AUTH_MAP` (optional JSON map)
+- `ARC_AUTONOMY_PAUSED` (`true|false`, optional)
+- `ARC_DEAD_JOB_ALERT_THRESHOLD` (optional, default 20)
+- `ARC_LEASED_ALERT_THRESHOLD` (optional, default 50)

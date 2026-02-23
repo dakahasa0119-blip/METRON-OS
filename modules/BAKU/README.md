@@ -71,3 +71,4 @@ Recommended first run:
 
 - `BAKU_GATEWAY_BRIDGE.js` is now multi-domain by design.
 - BAKU is not ARC-only; it can process MOTHERSHIP + Drive salvage tasks through Gateway orchestration.
+- If Gateway `ARC_AUTONOMY_PAUSED=true`, BAKU loop enters paused mode and does not lease jobs.

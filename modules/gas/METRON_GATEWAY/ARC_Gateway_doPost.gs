@@ -66,6 +66,11 @@ function doPost(e) {
     return v === "chatgpt" || v === "copilot" || v === "all" || v === "gemini" ? v : "gemini";
   })();
   const requireSignature = lower(norm(props.getProperty("ARC_REQUIRE_SIGNATURE") || "false")) === "true";
+  const autonomyPaused = lower(norm(props.getProperty("ARC_AUTONOMY_PAUSED") || "false")) === "true";
+  const deadAlertThresholdRaw = parseInt(norm(props.getProperty("ARC_DEAD_JOB_ALERT_THRESHOLD")) || "20", 10);
+  const deadAlertThreshold = Number.isFinite(deadAlertThresholdRaw) && deadAlertThresholdRaw >= 1 ? deadAlertThresholdRaw : 20;
+  const leaseAlertThresholdRaw = parseInt(norm(props.getProperty("ARC_LEASED_ALERT_THRESHOLD")) || "50", 10);
+  const leaseAlertThreshold = Number.isFinite(leaseAlertThresholdRaw) && leaseAlertThresholdRaw >= 1 ? leaseAlertThresholdRaw : 50;
   const signatureWindowSecRaw = parseInt(norm(props.getProperty("ARC_SIGNATURE_WINDOW_SEC")) || "180", 10);
   const signatureWindowSec = Number.isFinite(signatureWindowSecRaw) && signatureWindowSecRaw >= 30 ? signatureWindowSecRaw : 180;
   const nonceTtlSecRaw = parseInt(norm(props.getProperty("ARC_NONCE_TTL_SEC")) || "300", 10);
@@ -100,7 +105,7 @@ function doPost(e) {
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
     "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
-    "admin_status", "admin_cleanup"
+    "admin_status", "admin_cleanup", "admin_pause", "admin_resume"
   ];
 
   const getRequestTsMs = (v) => {
@@ -193,7 +198,8 @@ function doPost(e) {
     mothershipNodes: ensureSheet("MOTHERSHIP_NODES", ["LastSeen", "WorkerID", "Status", "Version"]),
     audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     dead: ensureSheet("ARC_DEAD_JOBS", ["Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload"]),
-    auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"])
+    auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
+    alerts: ensureSheet("ARC_ALERTS", ["Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID"])
   };
 
   const addAudit = (traceId, event, jobId, worker, status, detail) => {
@@ -209,6 +215,36 @@ function doPost(e) {
       ]);
     } catch (_) {
       // keep main flow alive
+    }
+  };
+  const addAlert = (level, type, message, value, threshold, traceId) => {
+    const key = "alert:" + String(type) + ":" + Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd");
+    const cache = CacheService.getScriptCache();
+    if (cache.get(key)) return;
+    cache.put(key, "1", 60 * 30); // de-dup for 30 minutes
+    sheets.alerts.appendRow([
+      new Date(),
+      norm(level || "WARN"),
+      norm(type),
+      norm(message),
+      String(value || ""),
+      String(threshold || ""),
+      norm(traceId)
+    ]);
+  };
+
+  const evaluateRuntimeAlerts = () => {
+    const rows = sheets.jobs.getDataRange().getValues();
+    let leased = 0;
+    for (let i = 1; i < rows.length; i++) {
+      if (lower(rows[i][5]) === "leased") leased++;
+    }
+    const dead = Math.max(0, sheets.dead.getLastRow() - 1);
+    if (dead >= deadAlertThreshold) {
+      addAlert("WARN", "dead_jobs_threshold", "Dead jobs reached threshold", dead, deadAlertThreshold, "");
+    }
+    if (leased >= leaseAlertThreshold) {
+      addAlert("WARN", "leased_jobs_threshold", "Leased jobs reached threshold", leased, leaseAlertThreshold, "");
     }
   };
 
@@ -320,6 +356,7 @@ function doPost(e) {
   };
 
   const claimMothershipMessage = (workerId) => {
+    if (autonomyPaused) return null;
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(5000)) return null;
     try {
@@ -518,6 +555,7 @@ function doPost(e) {
   };
 
   const claimNextInstruction = (workerId, consumer) => {
+    if (autonomyPaused) return null;
     const lock = LockService.getScriptLock();
     const locked = lock.tryLock(5000);
     if (!locked) {
@@ -633,6 +671,7 @@ function doPost(e) {
   };
 
   maybeRunDailyCleanup();
+  evaluateRuntimeAlerts();
 
   if (mode === "arc_setup") {
     const setupSheets = (data.blueprint && data.blueprint.sheets) || {};
@@ -644,14 +683,15 @@ function doPost(e) {
     return jsonOut({
       status: "ok",
       role: "gateway",
-      version: "arc-gateway-19.0",
+      version: "arc-gateway-20.0",
       control: "gateway_primary",
       lease_timeout_sec: leaseTimeoutSec,
       max_retry: maxRetry,
       retry_backoff_sec: retryBackoffSec,
       repair_executor: repairExecutor,
       default_route: defaultRoute,
-      require_signature: requireSignature
+      require_signature: requireSignature,
+      autonomy_paused: autonomyPaused
     });
   }
 
@@ -666,6 +706,7 @@ function doPost(e) {
   }
 
   if (mode === "route_chat") {
+    if (autonomyPaused) return jsonOut({ status: "paused", routed: 0 });
     const routed = routePendingChatCommands();
     return jsonOut({ status: "ok", routed: routed.length, details: routed });
   }
@@ -721,7 +762,7 @@ function doPost(e) {
     }
     return jsonOut({
       status: "ok",
-      gateway_version: "arc-gateway-19.0",
+      gateway_version: "arc-gateway-20.0",
       lease_timeout_sec: leaseTimeoutSec,
       max_retry: maxRetry,
       retry_backoff_sec: retryBackoffSec,
@@ -730,12 +771,25 @@ function doPost(e) {
       default_executor: defaultExecutor,
       default_target: defaultTarget,
       require_signature: requireSignature,
+      autonomy_paused: autonomyPaused,
       jobs: counts,
       nodes: Math.max(0, sheets.nodes.getLastRow() - 1),
       dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
       audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
       mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1)
     });
+  }
+
+  if (mode === "admin_pause") {
+    props.setProperty("ARC_AUTONOMY_PAUSED", "true");
+    addAudit(norm(data.trace_id), "AUTONOMY_PAUSED", "", norm(data.worker_id), "ok", "manual");
+    return jsonOut({ status: "ok", autonomy_paused: true });
+  }
+
+  if (mode === "admin_resume") {
+    props.setProperty("ARC_AUTONOMY_PAUSED", "false");
+    addAudit(norm(data.trace_id), "AUTONOMY_RESUMED", "", norm(data.worker_id), "ok", "manual");
+    return jsonOut({ status: "ok", autonomy_paused: false });
   }
 
   if (mode === "admin_cleanup") {

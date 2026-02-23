@@ -150,6 +150,10 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     return this.postGateway_("mothership_pull", {});
   },
 
+  getAdminStatus_: function () {
+    return this.postGateway_("admin_status", {});
+  },
+
   reportArcResult_: function (job, text) {
     return this.postGateway_("arc_result", {
       qid: String(job.job_id || job.qid || ""),
@@ -422,8 +426,20 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     if (!isFinite(n) || n < 1) n = 1;
     if (n > 50) n = 50;
 
+    var admin = this.getAdminStatus_();
     var arcHb = this.heartbeatArc();
     var msHb = this.heartbeatMothership();
+    if (admin && admin.autonomy_paused === true) {
+      return {
+        status: "paused",
+        heartbeat_arc: arcHb && arcHb.status || "ok",
+        heartbeat_mothership: msHb && msHb.status || "ok",
+        processed: 0,
+        arc_processed: 0,
+        mothership_processed: 0,
+        events: []
+      };
+    }
     var processed = 0;
     var arcProcessed = 0;
     var msProcessed = 0;
