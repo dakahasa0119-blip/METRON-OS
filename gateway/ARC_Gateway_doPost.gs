@@ -12,6 +12,7 @@ function doPost(e) {
   const MAX_CHAT_CONTENT = 4000;
   const MAX_USER = 64;
   const MAX_PROMPT = 8000;
+  const TZ = "Asia/Tokyo";
 
   const ensureSheet = (name, header) => {
     const sh = ss.getSheetByName(name) || ss.insertSheet(name);
@@ -44,13 +45,23 @@ function doPost(e) {
   const leaseTimeoutSec = Number.isFinite(leaseTimeoutSecRaw) && leaseTimeoutSecRaw >= 30 ? leaseTimeoutSecRaw : 300;
   const leaseTimeoutMs = leaseTimeoutSec * 1000;
 
+  const maxRetryRaw = parseInt(norm(props.getProperty("ARC_MAX_RETRY")) || "2", 10);
+  const maxRetry = Number.isFinite(maxRetryRaw) && maxRetryRaw >= 0 ? maxRetryRaw : 2;
+  const retryBackoffSecRaw = parseInt(norm(props.getProperty("ARC_RETRY_BACKOFF_SEC")) || "30", 10);
+  const retryBackoffSec = Number.isFinite(retryBackoffSecRaw) && retryBackoffSecRaw >= 5 ? retryBackoffSecRaw : 30;
+  const repairExecutor = (() => {
+    const v = upper(norm(props.getProperty("ARC_REPAIR_EXECUTOR") || "BAKU"));
+    return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "BAKU";
+  })();
+
   const expectedAuth = props.getProperty("ARC_AUTH_KEY") || "";
   const requiresAuth = [
     "arc_result", "report_result",
     "arc_error", "report_error",
     "arc_learning",
     "arc_heartbeat", "register_worker", "lease_job",
-    "arc_consult", "route_chat"
+    "arc_consult", "route_chat",
+    "admin_status", "admin_cleanup"
   ];
   if (expectedAuth && requiresAuth.indexOf(mode) >= 0) {
     if (norm(data.auth_key) !== expectedAuth) {
@@ -71,7 +82,9 @@ function doPost(e) {
     errors: ensureSheet("ARC_ERRORS", ["Timestamp", "QID", "Type", "Data"]),
     learning: ensureSheet("ARC_LEARNING", ["Timestamp", "Target", "Learned"]),
     mothership: ensureSheet("MOTHERSHIP_QUEUE", ["Timestamp", "MessageID", "User", "Content", "Status"]),
-    audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"])
+    audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
+    dead: ensureSheet("ARC_DEAD_JOBS", ["Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload"]),
+    auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"])
   };
 
   const addAudit = (traceId, event, jobId, worker, status, detail) => {
@@ -86,7 +99,53 @@ function doPost(e) {
         norm(detail)
       ]);
     } catch (_) {
-      // keep main flow alive even if audit write fails
+      // keep main flow alive
+    }
+  };
+
+  const todayKey = () => Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd");
+
+  const runDailyCleanup = () => {
+    const retentionRaw = parseInt(norm(props.getProperty("ARC_AUDIT_RETENTION_DAYS")) || "14", 10);
+    const retentionDays = Number.isFinite(retentionRaw) && retentionRaw >= 1 ? retentionRaw : 14;
+    const thresholdMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
+    const rows = sheets.audit.getDataRange().getValues();
+    if (rows.length <= 1) return { archived: 0, kept: 0, retention_days: retentionDays };
+
+    const kept = [rows[0]];
+    const archived = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const ts = new Date(row[0]).getTime();
+      if (Number.isFinite(ts) && ts < thresholdMs) {
+        archived.push([new Date()].concat(row));
+      } else {
+        kept.push(row);
+      }
+    }
+
+    if (archived.length > 0) {
+      sheets.auditArchive.getRange(sheets.auditArchive.getLastRow() + 1, 1, archived.length, archived[0].length).setValues(archived);
+      sheets.audit.clearContents();
+      sheets.audit.getRange(1, 1, kept.length, kept[0].length).setValues(kept);
+    }
+
+    props.setProperty("ARC_LAST_DAILY_CLEANUP", todayKey());
+    addAudit("", "DAILY_CLEANUP", "", "", "ok", "archived=" + archived.length + ",kept=" + (kept.length - 1));
+    return { archived: archived.length, kept: kept.length - 1, retention_days: retentionDays };
+  };
+
+  const maybeRunDailyCleanup = () => {
+    const done = norm(props.getProperty("ARC_LAST_DAILY_CLEANUP"));
+    if (done === todayKey()) return;
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(3000)) return;
+    try {
+      const done2 = norm(props.getProperty("ARC_LAST_DAILY_CLEANUP"));
+      if (done2 !== todayKey()) runDailyCleanup();
+    } finally {
+      lock.releaseLock();
     }
   };
 
@@ -138,6 +197,8 @@ function doPost(e) {
   const enqueueArcJob = (job) => {
     const jobId = norm(job.jobId) || ("JOB_" + Utilities.getUuid().slice(0, 8));
     const traceId = toTraceId(job.traceId);
+    const retryCountRaw = parseInt(norm(job.retryCount) || "0", 10);
+    const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
     const payload = {
       qid: norm(job.qid) || jobId,
       target: norm(job.target) || "gemini",
@@ -146,11 +207,81 @@ function doPost(e) {
       executor: norm(job.executor) || "AUTO",
       requested_by: norm(job.user) || "gateway",
       trace_id: traceId,
+      retry_count: retryCount,
+      max_retry: maxRetry,
       ts: nowIso()
     };
     sheets.jobs.appendRow([new Date(), jobId, norm(job.workerId), norm(job.mode) || "request_arc", JSON.stringify(payload), "pending", ""]);
-    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / " + (norm(job.mode) || "request_arc"));
+    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / retry=" + retryCount);
     return { jobId: jobId, traceId: traceId, payload: payload };
+  };
+
+  const findJobRowById = (jobId) => {
+    const rows = sheets.jobs.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (norm(rows[i][1]) === norm(jobId)) {
+        return { rowIndex: i + 1, row: rows[i], payload: parseJsonSafe(norm(rows[i][4])) };
+      }
+    }
+    return null;
+  };
+
+  const markDeadJob = (jobId, traceId, failedWorker, errorType, errorData, reason) => {
+    const found = findJobRowById(jobId);
+    if (!found) return;
+    const row = found.row;
+    const payload = found.payload;
+    sheets.jobs.getRange(found.rowIndex, 6).setValue("dead");
+    if (!norm(row[6])) sheets.jobs.getRange(found.rowIndex, 7).setValue(new Date());
+
+    sheets.dead.appendRow([
+      new Date(),
+      norm(jobId),
+      norm(traceId) || norm(payload.trace_id),
+      norm(payload.executor),
+      norm(payload.target),
+      norm(payload.prompt).slice(0, MAX_PROMPT),
+      norm(payload.retry_count),
+      norm(errorType),
+      norm(errorData),
+      norm(failedWorker),
+      norm(reason),
+      JSON.stringify(payload)
+    ]);
+    addAudit(norm(traceId) || norm(payload.trace_id), "JOB_DEAD", norm(jobId), norm(failedWorker), "dead", norm(reason));
+  };
+
+  const tryScheduleRetry = (jobId, traceId, errorType, errorData, failedWorker) => {
+    const found = findJobRowById(jobId);
+    if (!found) return { retried: false, reason: "job_not_found" };
+
+    const row = found.row;
+    const payload = found.payload;
+    const retryCountRaw = parseInt(norm(payload.retry_count) || "0", 10);
+    const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
+
+    if (retryCount >= maxRetry) {
+      markDeadJob(jobId, traceId, failedWorker, errorType, errorData, "retry_exhausted");
+      return { retried: false, reason: "retry_exhausted", retry_count: retryCount };
+    }
+
+    const nextRetryAt = new Date(Date.now() + retryBackoffSec * 1000).toISOString();
+    payload.retry_count = retryCount + 1;
+    payload.last_error = norm(errorType);
+    payload.last_error_data = norm(errorData).slice(0, 1200);
+    payload.next_retry_at = nextRetryAt;
+
+    // Repair path can be rerouted to BAKU (default) so BAKU can salvage failed jobs.
+    payload.executor = repairExecutor;
+
+    const keepWorker = lower(payload.pin_worker) === "true";
+    sheets.jobs.getRange(found.rowIndex, 5).setValue(JSON.stringify(payload));
+    sheets.jobs.getRange(found.rowIndex, 6).setValue("pending");
+    sheets.jobs.getRange(found.rowIndex, 7).setValue("");
+    if (!keepWorker) sheets.jobs.getRange(found.rowIndex, 3).setValue("");
+
+    addAudit(norm(traceId) || norm(payload.trace_id), "JOB_RETRY_SCHEDULED", norm(jobId), norm(failedWorker), "pending", "retry=" + payload.retry_count + ",executor=" + payload.executor);
+    return { retried: true, retry_count: payload.retry_count, next_retry_at: nextRetryAt, executor: payload.executor };
   };
 
   const routeOneChatRow = (rowIndex, rowValues) => {
@@ -176,7 +307,8 @@ function doPost(e) {
         executor: cmd.executor,
         user: user,
         workerId: "",
-        traceId: traceId
+        traceId: traceId,
+        retryCount: 0
       });
       sheets.main.getRange(rowIndex, 4).setValue("QUEUED_ARC");
       sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + " / " + cmd.executor + " / " + jobRes.traceId);
@@ -221,14 +353,7 @@ function doPost(e) {
       sheets.jobs.getRange(i + 1, 6).setValue("pending");
       sheets.jobs.getRange(i + 1, 7).setValue("");
       recovered++;
-      addAudit(
-        norm(payload.trace_id),
-        "LEASE_EXPIRED",
-        norm(row[1]),
-        norm(row[2]),
-        "pending",
-        "timeout_sec=" + leaseTimeoutSec
-      );
+      addAudit(norm(payload.trace_id), "LEASE_EXPIRED", norm(row[1]), norm(row[2]), "pending", "timeout_sec=" + leaseTimeoutSec);
     }
     return recovered;
   };
@@ -254,13 +379,15 @@ function doPost(e) {
         const status = lower(row[5]);
         if (status !== "pending") continue;
 
-        // Respect explicit worker pinning. A pinned job cannot be leased without matching worker_id.
         if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
 
         const payload = parseJsonSafe(payloadRaw);
         const wanted = upper(payload.executor || "AUTO");
         const mine = upper(consumer || "ARC");
         if (wanted !== "AUTO" && wanted !== mine) continue;
+
+        const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
+        if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
 
         sheets.jobs.getRange(i + 1, 6).setValue("leased");
         sheets.jobs.getRange(i + 1, 7).setValue(new Date());
@@ -276,15 +403,9 @@ function doPost(e) {
   };
 
   const findTraceByMissionId = (missionId) => {
-    const mid = norm(missionId);
-    if (!mid) return "";
-    const rows = sheets.jobs.getDataRange().getValues();
-    for (let i = 1; i < rows.length; i++) {
-      if (norm(rows[i][1]) !== mid) continue;
-      const payload = parseJsonSafe(norm(rows[i][4]));
-      return norm(payload.trace_id);
-    }
-    return "";
+    const found = findJobRowById(missionId);
+    if (!found) return "";
+    return norm(found.payload.trace_id);
   };
 
   const completeLinkedChat = (missionId, output, type) => {
@@ -300,18 +421,15 @@ function doPost(e) {
   };
 
   const completeArcJob = (missionId, status) => {
-    const mid = norm(missionId);
-    if (!mid) return;
-    const rows = sheets.jobs.getDataRange().getValues();
-    for (let i = 1; i < rows.length; i++) {
-      if (norm(rows[i][1]) !== mid) continue;
-      sheets.jobs.getRange(i + 1, 6).setValue(status);
-      if (!norm(rows[i][6])) sheets.jobs.getRange(i + 1, 7).setValue(new Date());
-      const payload = parseJsonSafe(norm(rows[i][4]));
-      addAudit(norm(payload.trace_id), "JOB_COMPLETED", mid, norm(rows[i][2]), status, "");
-      return;
-    }
+    const found = findJobRowById(missionId);
+    if (!found) return;
+    const row = found.row;
+    sheets.jobs.getRange(found.rowIndex, 6).setValue(status);
+    if (!norm(row[6])) sheets.jobs.getRange(found.rowIndex, 7).setValue(new Date());
+    addAudit(norm(found.payload.trace_id), "JOB_COMPLETED", norm(missionId), norm(row[2]), status, "");
   };
+
+  maybeRunDailyCleanup();
 
   if (mode === "arc_setup") {
     const setupSheets = (data.blueprint && data.blueprint.sheets) || {};
@@ -320,7 +438,16 @@ function doPost(e) {
   }
 
   if (mode === "handshake") {
-    return jsonOut({ status: "ok", role: "gateway", version: "arc-gateway-17.0", control: "gateway_primary", lease_timeout_sec: leaseTimeoutSec });
+    return jsonOut({
+      status: "ok",
+      role: "gateway",
+      version: "arc-gateway-18.0",
+      control: "gateway_primary",
+      lease_timeout_sec: leaseTimeoutSec,
+      max_retry: maxRetry,
+      retry_backoff_sec: retryBackoffSec,
+      repair_executor: repairExecutor
+    });
   }
 
   if (mode === "submit_chat") {
@@ -338,6 +465,33 @@ function doPost(e) {
     return jsonOut({ status: "ok", routed: routed.length, details: routed });
   }
 
+  if (mode === "admin_status") {
+    const rows = sheets.jobs.getDataRange().getValues();
+    const counts = { pending: 0, leased: 0, done: 0, error: 0, dead: 0, other: 0 };
+    for (let i = 1; i < rows.length; i++) {
+      const s = lower(rows[i][5]);
+      if (counts.hasOwnProperty(s)) counts[s]++;
+      else counts.other++;
+    }
+    return jsonOut({
+      status: "ok",
+      gateway_version: "arc-gateway-18.0",
+      lease_timeout_sec: leaseTimeoutSec,
+      max_retry: maxRetry,
+      retry_backoff_sec: retryBackoffSec,
+      repair_executor: repairExecutor,
+      jobs: counts,
+      nodes: Math.max(0, sheets.nodes.getLastRow() - 1),
+      dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
+      audit_rows: Math.max(0, sheets.audit.getLastRow() - 1)
+    });
+  }
+
+  if (mode === "admin_cleanup") {
+    const res = runDailyCleanup();
+    return jsonOut({ status: "ok", cleanup: res });
+  }
+
   if (mode === "arc_result" || mode === "report_result") {
     const missionId = norm(data.qid || data.mission_id);
     const result = norm(data.text);
@@ -352,13 +506,22 @@ function doPost(e) {
   if (mode === "arc_error" || mode === "report_error") {
     const missionId = norm(data.qid || data.mission_id);
     const err = norm(data.error_type);
-    const payload = norm(data.data);
+    const errData = norm(data.data);
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId);
-    sheets.errors.appendRow([new Date(), missionId, err, payload]);
+    const workerId = norm(data.worker_id);
+
+    sheets.errors.appendRow([new Date(), missionId, err, errData]);
+    completeLinkedChat(missionId, "[" + err + "] " + errData, "error");
+
+    const retry = tryScheduleRetry(missionId, traceId, err, errData, workerId);
+    if (retry.retried) {
+      addAudit(traceId, "ARC_ERROR_RETRY", missionId, workerId, "pending", "retry=" + retry.retry_count + ",executor=" + retry.executor);
+      return jsonOut({ status: "retry_scheduled", trace_id: traceId, retry: retry });
+    }
+
     completeArcJob(missionId, "error");
-    completeLinkedChat(missionId, "[" + err + "] " + payload, "error");
-    addAudit(traceId, "ARC_ERROR", missionId, norm(data.worker_id), "error", err);
-    return jsonOut({ status: "ok", trace_id: traceId });
+    addAudit(traceId, "ARC_ERROR", missionId, workerId, "error", err + " / " + retry.reason);
+    return jsonOut({ status: "ok", trace_id: traceId, retry: retry });
   }
 
   if (mode === "arc_learning") {

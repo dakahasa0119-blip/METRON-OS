@@ -75,6 +75,28 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
   - `ARC_AUDIT` captures enqueue/lease/complete/error/heartbeat events.
 - Optional submit auth:
   - If Script Property `SUBMIT_AUTH_KEY` is set, `submit_chat` requires matching `submit_key`.
+- Dead-letter queue:
+  - Jobs that exceed retry limit move to `ARC_DEAD_JOBS` with full payload snapshot.
+- Auto retry:
+  - On `arc_error`, Gateway schedules retry with backoff.
+  - Retry policy uses Script Properties:
+    - `ARC_MAX_RETRY` (default `2`)
+    - `ARC_RETRY_BACKOFF_SEC` (default `30`)
+    - `ARC_REPAIR_EXECUTOR` (default `BAKU`)
+  - Retry path reuses ARC job pipeline and can hand failed jobs to BAKU automatically.
+- Retry wait gate:
+  - `next_retry_at` is honored at lease time; jobs are not leased before backoff expires.
+- Daily cleanup:
+  - `ARC_AUDIT` old rows are archived to `ARC_AUDIT_ARCHIVE`.
+  - Retention uses `ARC_AUDIT_RETENTION_DAYS` (default `14`).
+  - Last run date is tracked by `ARC_LAST_DAILY_CLEANUP`.
+
+## Admin APIs
+
+- `admin_status` (requires `auth_key`):
+  - returns queue counters, node count, dead-letter count, audit count, and policy settings.
+- `admin_cleanup` (requires `auth_key`):
+  - runs immediate audit archive cleanup and returns archive stats.
 
 ## BAKU Through ARC
 
