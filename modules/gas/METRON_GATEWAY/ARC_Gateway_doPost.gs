@@ -53,6 +53,44 @@ function doPost(e) {
     const v = upper(norm(props.getProperty("ARC_REPAIR_EXECUTOR") || "BAKU"));
     return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "BAKU";
   })();
+  const defaultRoute = (() => {
+    const v = upper(norm(props.getProperty("ARC_DEFAULT_ROUTE") || "MOTHERSHIP"));
+    return v === "ARC" ? "ARC" : "MOTHERSHIP";
+  })();
+  const defaultExecutor = (() => {
+    const v = upper(norm(props.getProperty("ARC_DEFAULT_EXECUTOR") || "AUTO"));
+    return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "AUTO";
+  })();
+  const defaultTarget = (() => {
+    const v = lower(norm(props.getProperty("ARC_DEFAULT_TARGET") || "gemini"));
+    return v === "chatgpt" || v === "copilot" || v === "all" || v === "gemini" ? v : "gemini";
+  })();
+  const requireSignature = lower(norm(props.getProperty("ARC_REQUIRE_SIGNATURE") || "false")) === "true";
+  const signatureWindowSecRaw = parseInt(norm(props.getProperty("ARC_SIGNATURE_WINDOW_SEC")) || "180", 10);
+  const signatureWindowSec = Number.isFinite(signatureWindowSecRaw) && signatureWindowSecRaw >= 30 ? signatureWindowSecRaw : 180;
+  const nonceTtlSecRaw = parseInt(norm(props.getProperty("ARC_NONCE_TTL_SEC")) || "300", 10);
+  const nonceTtlSec = Number.isFinite(nonceTtlSecRaw) && nonceTtlSecRaw >= 60 ? nonceTtlSecRaw : 300;
+
+  const parseKeyMap = (raw) => {
+    const txt = norm(raw);
+    if (!txt) return {};
+    try {
+      const obj = JSON.parse(txt);
+      return obj && typeof obj === "object" ? obj : {};
+    } catch (_) {
+      return {};
+    }
+  };
+  const workerAuthMap = parseKeyMap(props.getProperty("ARC_WORKER_AUTH_MAP"));
+  const mothershipAuthMap = parseKeyMap(props.getProperty("MOTHERSHIP_WORKER_AUTH_MAP"));
+
+  const parseAllowlist = (raw) => {
+    const txt = norm(raw);
+    if (!txt) return [];
+    return txt.split(",").map((x) => norm(x)).filter((x) => x);
+  };
+  const arcWorkerAllowlist = parseAllowlist(props.getProperty("ARC_WORKER_ALLOWLIST"));
+  const mothershipWorkerAllowlist = parseAllowlist(props.getProperty("MOTHERSHIP_WORKER_ALLOWLIST"));
 
   const expectedAuth = props.getProperty("ARC_AUTH_KEY") || "";
   const requiresAuth = [
@@ -61,13 +99,82 @@ function doPost(e) {
     "arc_learning",
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
-    "mothership_heartbeat", "mothership_pull", "mothership_result",
+    "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
     "admin_status", "admin_cleanup"
   ];
+
+  const getRequestTsMs = (v) => {
+    const s = norm(v);
+    if (!s) return NaN;
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      // Accept sec or ms.
+      return s.length <= 10 ? n * 1000 : n;
+    }
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? t : NaN;
+  };
+  const digestHex = (str) => {
+    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, str);
+    return bytes.map((b) => {
+      const v = (b + 256) % 256;
+      return (v < 16 ? "0" : "") + v.toString(16);
+    }).join("");
+  };
+  const resolveSigningKey = (modeName, workerId) => {
+    const w = norm(workerId);
+    if (modeName.indexOf("mothership_") === 0) return norm(mothershipAuthMap[w] || expectedAuth);
+    return norm(workerAuthMap[w] || expectedAuth);
+  };
+  const validateWorkerAllowlist = (modeName, workerId) => {
+    const wid = norm(workerId);
+    if (!wid) return { ok: true };
+    if (modeName.indexOf("mothership_") === 0) {
+      if (mothershipWorkerAllowlist.length > 0 && mothershipWorkerAllowlist.indexOf(wid) < 0) {
+        return { ok: false, error: "worker_not_allowed" };
+      }
+      return { ok: true };
+    }
+    if (arcWorkerAllowlist.length > 0 && arcWorkerAllowlist.indexOf(wid) < 0) {
+      return { ok: false, error: "worker_not_allowed" };
+    }
+    return { ok: true };
+  };
+  const validateSignature = (modeName, payload) => {
+    if (!requireSignature || requiresAuth.indexOf(modeName) < 0) return { ok: true };
+    const workerId = norm(payload.worker_id);
+    if (!workerId) return { ok: false, error: "worker_id_required" };
+    const tsRaw = norm(payload.request_ts);
+    const nonce = norm(payload.nonce);
+    const sig = lower(norm(payload.signature));
+    if (!tsRaw || !nonce || !sig) return { ok: false, error: "signature_fields_required" };
+    const tsMs = getRequestTsMs(tsRaw);
+    if (!Number.isFinite(tsMs)) return { ok: false, error: "invalid_request_ts" };
+    if (Math.abs(Date.now() - tsMs) > signatureWindowSec * 1000) return { ok: false, error: "signature_expired" };
+
+    const cache = CacheService.getScriptCache();
+    const nonceKey = "sig_nonce:" + modeName + ":" + workerId + ":" + nonce;
+    if (cache.get(nonceKey)) return { ok: false, error: "replay_blocked" };
+
+    const key = resolveSigningKey(modeName, workerId);
+    if (!key) return { ok: false, error: "signing_key_missing" };
+    const canonical = [modeName, workerId, tsRaw, nonce].join("|");
+    const expected = digestHex(canonical + "|" + key);
+    if (sig !== expected) return { ok: false, error: "bad_signature" };
+    cache.put(nonceKey, "1", nonceTtlSec);
+    return { ok: true };
+  };
+
   if (expectedAuth && requiresAuth.indexOf(mode) >= 0) {
     if (norm(data.auth_key) !== expectedAuth) {
       return jsonOut({ status: "error", error: "unauthorized" });
     }
+  }
+  if (requiresAuth.indexOf(mode) >= 0) {
+    const allow = validateWorkerAllowlist(mode, data.worker_id);
+    if (!allow.ok) return jsonOut({ status: "error", error: allow.error });
+    const sig = validateSignature(mode, data);
+    if (!sig.ok) return jsonOut({ status: "error", error: sig.error });
   }
 
   const submitAuth = norm(props.getProperty("SUBMIT_AUTH_KEY"));
@@ -156,15 +263,15 @@ function doPost(e) {
     const l = raw.toLowerCase();
     const has = (t) => l.indexOf(t) >= 0;
 
-    let route = "MOTHERSHIP";
+    let route = defaultRoute;
     if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy") || has("#baku") || has("@baku")) route = "ARC";
     if (has("#mother") || has("@mother") || has("#metron") || has("#osb")) route = "MOTHERSHIP";
 
-    let executor = "AUTO";
+    let executor = defaultExecutor;
     if (has("#baku") || has("@baku")) executor = "BAKU";
     else if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy")) executor = "ARC";
 
-    let target = "gemini";
+    let target = defaultTarget;
     if (has("#chatgpt") || has("@chatgpt")) target = "chatgpt";
     else if (has("#copilot") || has("@copilot")) target = "copilot";
     else if (has("#all") || has("@all")) target = "ALL";
@@ -493,12 +600,14 @@ function doPost(e) {
     return jsonOut({
       status: "ok",
       role: "gateway",
-      version: "arc-gateway-18.0",
+      version: "arc-gateway-19.0",
       control: "gateway_primary",
       lease_timeout_sec: leaseTimeoutSec,
       max_retry: maxRetry,
       retry_backoff_sec: retryBackoffSec,
-      repair_executor: repairExecutor
+      repair_executor: repairExecutor,
+      default_route: defaultRoute,
+      require_signature: requireSignature
     });
   }
 
@@ -568,15 +677,20 @@ function doPost(e) {
     }
     return jsonOut({
       status: "ok",
-      gateway_version: "arc-gateway-18.0",
+      gateway_version: "arc-gateway-19.0",
       lease_timeout_sec: leaseTimeoutSec,
       max_retry: maxRetry,
       retry_backoff_sec: retryBackoffSec,
       repair_executor: repairExecutor,
+      default_route: defaultRoute,
+      default_executor: defaultExecutor,
+      default_target: defaultTarget,
+      require_signature: requireSignature,
       jobs: counts,
       nodes: Math.max(0, sheets.nodes.getLastRow() - 1),
       dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
-      audit_rows: Math.max(0, sheets.audit.getLastRow() - 1)
+      audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
+      mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1)
     });
   }
 

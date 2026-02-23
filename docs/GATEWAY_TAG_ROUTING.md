@@ -82,6 +82,24 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
   - `ARC_AUDIT` captures enqueue/lease/complete/error/heartbeat events.
 - Optional submit auth:
   - If Script Property `SUBMIT_AUTH_KEY` is set, `submit_chat` requires matching `submit_key`.
+- Worker allowlist:
+  - `ARC_WORKER_ALLOWLIST` (comma-separated worker IDs)
+  - `MOTHERSHIP_WORKER_ALLOWLIST` (comma-separated worker IDs)
+- Optional request signature:
+  - Enable with `ARC_REQUIRE_SIGNATURE=true`
+  - Required fields on protected modes:
+    - `worker_id`, `request_ts`, `nonce`, `signature`
+  - Signature canonical string:
+    - `mode|worker_id|request_ts|nonce`
+  - Signature algorithm:
+    - `sha256_hex(canonical + "|" + worker_key)`
+  - Replay protection:
+    - nonce cache TTL via `ARC_NONCE_TTL_SEC` (default `300`)
+  - Allowed clock drift:
+    - `ARC_SIGNATURE_WINDOW_SEC` (default `180`)
+- Per-worker auth maps:
+  - `ARC_WORKER_AUTH_MAP` (JSON map)
+  - `MOTHERSHIP_WORKER_AUTH_MAP` (JSON map)
 - Dead-letter queue:
   - Jobs that exceed retry limit move to `ARC_DEAD_JOBS` with full payload snapshot.
 - Auto retry:
@@ -104,6 +122,15 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
   - returns queue counters, node count, dead-letter count, audit count, and policy settings.
 - `admin_cleanup` (requires `auth_key`):
   - runs immediate audit archive cleanup and returns archive stats.
+
+## ARC Maximization Policy
+
+- Default route can be switched to ARC:
+  - `ARC_DEFAULT_ROUTE=ARC`
+- Default executor/target can be set:
+  - `ARC_DEFAULT_EXECUTOR` in `ARC|BAKU|AUTO`
+  - `ARC_DEFAULT_TARGET` in `gemini|chatgpt|copilot|all`
+- With these settings, non-tagged chat requests are routed to ARC by default, reducing direct API dependence.
 
 ## BAKU Through ARC
 

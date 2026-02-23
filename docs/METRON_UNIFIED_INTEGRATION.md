@@ -55,11 +55,15 @@ Current:
 - Shared `ARC_AUTH_KEY` auth
 - Optional `SUBMIT_AUTH_KEY`
 - Queue leasing lock and audit logging
+- Optional worker-level allowlist (`ARC_WORKER_ALLOWLIST`, `MOTHERSHIP_WORKER_ALLOWLIST`)
+- Optional per-worker key maps (`ARC_WORKER_AUTH_MAP`, `MOTHERSHIP_WORKER_AUTH_MAP`)
+- Optional signed request verification (`ARC_REQUIRE_SIGNATURE=true`)
+- Replay guard with nonce cache and request timestamp window
 
 Recommended next hardening:
-1. Per-worker key map (`worker_id -> worker_key`)
-2. HMAC signature with nonce/timestamp
-3. Mandatory auth for all write endpoints
+1. Make signature mode mandatory after worker rollout
+2. Rotate worker keys periodically
+3. Narrow allowlists to production nodes only
 
 ## Required Script Properties
 
@@ -70,4 +74,13 @@ Recommended next hardening:
 - `ARC_REPAIR_EXECUTOR` (optional, default BAKU)
 - `ARC_AUDIT_RETENTION_DAYS` (optional, default 14)
 - `SUBMIT_AUTH_KEY` (optional)
-
+- `ARC_DEFAULT_ROUTE` (`ARC` or `MOTHERSHIP`, optional)
+- `ARC_DEFAULT_EXECUTOR` (`ARC|BAKU|AUTO`, optional)
+- `ARC_DEFAULT_TARGET` (`gemini|chatgpt|copilot|all`, optional)
+- `ARC_WORKER_ALLOWLIST` (optional)
+- `MOTHERSHIP_WORKER_ALLOWLIST` (optional)
+- `ARC_REQUIRE_SIGNATURE` (`true|false`, optional)
+- `ARC_SIGNATURE_WINDOW_SEC` (optional, default 180)
+- `ARC_NONCE_TTL_SEC` (optional, default 300)
+- `ARC_WORKER_AUTH_MAP` (optional JSON map)
+- `MOTHERSHIP_WORKER_AUTH_MAP` (optional JSON map)
