@@ -61,6 +61,7 @@ function doPost(e) {
     "arc_learning",
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
+    "mothership_heartbeat", "mothership_pull", "mothership_result",
     "admin_status", "admin_cleanup"
   ];
   if (expectedAuth && requiresAuth.indexOf(mode) >= 0) {
@@ -82,6 +83,7 @@ function doPost(e) {
     errors: ensureSheet("ARC_ERRORS", ["Timestamp", "QID", "Type", "Data"]),
     learning: ensureSheet("ARC_LEARNING", ["Timestamp", "Target", "Learned"]),
     mothership: ensureSheet("MOTHERSHIP_QUEUE", ["Timestamp", "MessageID", "User", "Content", "Status"]),
+    mothershipNodes: ensureSheet("MOTHERSHIP_NODES", ["LastSeen", "WorkerID", "Status", "Version"]),
     audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     dead: ensureSheet("ARC_DEAD_JOBS", ["Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload"]),
     auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"])
@@ -192,6 +194,56 @@ function doPost(e) {
     if (cleanPrompt.length > MAX_PROMPT) cleanPrompt = cleanPrompt.slice(0, MAX_PROMPT);
 
     return { route: route, target: target, opMode: opMode, script: script, prompt: cleanPrompt, executor: executor };
+  };
+
+  const upsertMothershipNode = (workerId, status, version) => {
+    const wid = norm(workerId);
+    if (!wid) return;
+    const rows = sheets.mothershipNodes.getDataRange().getValues();
+    let found = -1;
+    for (let i = 1; i < rows.length; i++) {
+      if (norm(rows[i][1]) === wid) {
+        found = i + 1;
+        break;
+      }
+    }
+    const row = [new Date(), wid, norm(status || "online"), norm(version)];
+    if (found > 0) sheets.mothershipNodes.getRange(found, 1, 1, row.length).setValues([row]);
+    else sheets.mothershipNodes.appendRow(row);
+  };
+
+  const claimMothershipMessage = (workerId) => {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(5000)) return null;
+    try {
+      const rows = sheets.mothership.getDataRange().getValues();
+      for (let i = 1; i < rows.length; i++) {
+        const status = lower(rows[i][4]);
+        if (status !== "pending") continue;
+        const msgId = norm(rows[i][1]);
+        const user = norm(rows[i][2]);
+        const content = norm(rows[i][3]);
+        sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
+        addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
+        return { message_id: msgId, user: user, content: content };
+      }
+      return null;
+    } finally {
+      lock.releaseLock();
+    }
+  };
+
+  const completeMothershipMessage = (messageId, isError, workerId) => {
+    const mid = norm(messageId);
+    if (!mid) return false;
+    const rows = sheets.mothership.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (norm(rows[i][1]) !== mid) continue;
+      sheets.mothership.getRange(i + 1, 5).setValue(isError ? "error" : "done");
+      addAudit("", "MOTHERSHIP_DONE", mid, norm(workerId), isError ? "error" : "done", "");
+      return true;
+    }
+    return false;
   };
 
   const enqueueArcJob = (job) => {
@@ -463,6 +515,47 @@ function doPost(e) {
   if (mode === "route_chat") {
     const routed = routePendingChatCommands();
     return jsonOut({ status: "ok", routed: routed.length, details: routed });
+  }
+
+  if (mode === "mothership_submit") {
+    const user = norm(data.user || "mothership");
+    const content = norm(data.content);
+    if (!content) return jsonOut({ status: "error", error: "content_required" });
+    const msgId = norm(data.message_id) || ("MS_" + Utilities.getUuid().slice(0, 8));
+    sheets.mothership.appendRow([new Date(), msgId, user, content, "pending"]);
+    addAudit(norm(data.trace_id), "MOTHERSHIP_SUBMIT", msgId, "", "pending", user);
+    return jsonOut({ status: "ok", message_id: msgId });
+  }
+
+  if (mode === "mothership_heartbeat") {
+    const workerId = norm(data.worker_id);
+    upsertMothershipNode(workerId, data.status || "online", data.version || "");
+    const instruction = claimMothershipMessage(workerId);
+    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
+  }
+
+  if (mode === "mothership_pull") {
+    const workerId = norm(data.worker_id);
+    const instruction = claimMothershipMessage(workerId);
+    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "empty" });
+  }
+
+  if (mode === "mothership_result") {
+    const messageId = norm(data.message_id);
+    const output = norm(data.result);
+    if (!messageId) return jsonOut({ status: "error", error: "message_id_required" });
+    const ok = completeMothershipMessage(messageId, false, norm(data.worker_id));
+    if (output) sheets.main.appendRow([new Date(), "MOTHERSHIP", output, "DONE", "", messageId]);
+    return jsonOut({ status: ok ? "ok" : "not_found" });
+  }
+
+  if (mode === "mothership_error") {
+    const messageId = norm(data.message_id);
+    const output = norm(data.error || data.data || "mothership_error");
+    if (!messageId) return jsonOut({ status: "error", error: "message_id_required" });
+    const ok = completeMothershipMessage(messageId, true, norm(data.worker_id));
+    sheets.main.appendRow([new Date(), "MOTHERSHIP", "[ERR] " + output, "ERROR", "", messageId]);
+    return jsonOut({ status: ok ? "ok" : "not_found" });
   }
 
   if (mode === "admin_status") {

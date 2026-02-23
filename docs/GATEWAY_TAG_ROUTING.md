@@ -63,6 +63,13 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
 - `arc_error` / `report_error`: report error
 - `arc_learning`: learning feedback
 - `arc_consult`: optional advisory path
+- `mothership_submit`: enqueue one MOTHERSHIP message
+- `mothership_heartbeat`: upsert mothership node + lease one message
+- `mothership_pull`: lease one pending MOTHERSHIP message
+- `mothership_result`: mark leased message done
+- `mothership_error`: mark leased message error
+- `admin_status`: return queue/node/dead-letter counters
+- `admin_cleanup`: force audit archive cleanup run
 
 ## Reliability and Safety
 
