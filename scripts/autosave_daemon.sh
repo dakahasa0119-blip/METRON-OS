@@ -21,13 +21,16 @@ start_daemon() {
     exit 0
   fi
 
-  (
-    cd "$ROOT_DIR"
+  nohup bash -lc '
+    set -euo pipefail
+    ROOT_DIR="$1"
+    LOG_FILE="$2"
+    INTERVAL_SECONDS="$3"
     while true; do
       "$ROOT_DIR/scripts/autosave_snapshot.sh" >>"$LOG_FILE" 2>&1 || true
       sleep "$INTERVAL_SECONDS"
     done
-  ) &
+  ' _ "$ROOT_DIR" "$LOG_FILE" "$INTERVAL_SECONDS" >/dev/null 2>&1 &
 
   echo $! > "$PID_FILE"
   echo "autosave daemon started (pid $(cat "$PID_FILE"), interval ${INTERVAL_SECONDS}s)"
