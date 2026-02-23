@@ -22,6 +22,10 @@ Reference blueprints:
 2. BAKU salvage lane
 - Failed ARC jobs are auto-rerouted to `ARC_REPAIR_EXECUTOR` (default `BAKU`)
 - Retry policy and backoff are configurable by Script Properties
+- BAKU bridge is multi-domain:
+  - ARC repair queue
+  - MOTHERSHIP queue
+  - Drive salvage operations
 
 3. MOTHERSHIP control lane (new)
 - `mothership_submit`
