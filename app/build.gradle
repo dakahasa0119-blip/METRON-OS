@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.arc'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.arc"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        multiDexEnabled true
+    }
+
+    // 【重要】MainActivityのエラーを直すための画面バインド設定
+    buildFeatures {
+        viewBinding true
+        dataBinding true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.10.1'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    // 【重要】DoPostClientのエラーを直す通信ライブラリ
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // サーバー機能用ライブラリ
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+}

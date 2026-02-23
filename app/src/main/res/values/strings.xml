@@ -1,0 +1,32 @@
+<resources>
+    <string name="app_name">ARC</string>
+    <string name="btn_gemini">Gemini</string>
+    <string name="btn_chatgpt">ChatGPT</string>
+    <string name="btn_copilot">Copilot</string>
+    <string name="hint_prompt">Ask me anything…</string>
+    <string name="btn_send">Send</string>
+    <string name="btn_settings">Settings</string>
+    <string name="hud_initial_text">ARC SYSTEM HUD\nWAITING…</string>
+
+    <!-- 🚀 Settings Activity Resources -->
+    <string name="title_setup">Gateway Zero-Touch Setup</string>
+    <string name="hint_gas_url">GAS Web App URL</string>
+    <string name="btn_test_connection">Test Connection</string>
+    <string name="hint_sheet_id">Spreadsheet ID (Optional)</string>
+    <string name="btn_auto_setup">Run Auto Setup</string>
+
+    <string name="label_gemini">Google Gemini Config</string>
+    <string name="label_chatgpt">OpenAI ChatGPT Config</string>
+    <string name="label_copilot">MS Copilot Config</string>
+    <string name="hint_url">Service URL</string>
+    <string name="hint_input_sel">Input Selector</string>
+    <string name="hint_send_sel">Send Selector</string>
+    <string name="hint_resp_sel">Response Selector</string>
+    <string name="btn_pick">Pick</string>
+
+    <string name="label_profiles">Profile Slots (Experimental)</string>
+    <string name="hint_json">Enter JSON Configuration…</string>
+    <string name="btn_import">Import</string>
+    <string name="btn_export">Export</string>
+    <string name="btn_save_apply">Save and Apply All Settings</string>
+</resources>

@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android">
+    <FrameLayout
+        android:id="@+id/root"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:clipChildren="false">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <FrameLayout
+                android:id="@+id/webViewContainer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:minHeight="300dp"
+                android:background="#FFFFFF">
+
+                <ProgressBar
+                    android:id="@+id/loadingBar"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_gravity="top"
+                    android:elevation="4dp"
+                    android:indeterminate="true"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="#FFFFFF"
+                android:elevation="8dp"
+                android:padding="8dp">
+
+                <LinearLayout
+                    style="?android:attr/buttonBarStyle"
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp">
+
+                    <Button
+                        android:id="@+id/btnGemini"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:text="@string/btn_gemini"
+                        android:textSize="12sp"
+                        android:textAllCaps="false" />
+
+                    <Button
+                        android:id="@+id/btnGPT"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:text="@string/btn_chatgpt"
+                        android:textSize="12sp"
+                        android:textAllCaps="false" />
+
+                    <Button
+                        android:id="@+id/btnCopilot"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:text="@string/btn_copilot"
+                        android:textSize="12sp"
+                        android:textAllCaps="false" />
+                </LinearLayout>
+
+                <EditText
+                    android:id="@+id/promptInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/hint_prompt"
+                    android:textSize="14sp"
+                    android:background="@android:drawable/editbox_background_normal"
+                    android:padding="12dp"
+                    android:minHeight="50dp"
+                    android:autofillHints="none"
+                    android:inputType="textMultiLine"/>
+
+                <LinearLayout
+                    style="?android:attr/buttonBarStyle"
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp">
+
+                    <Button
+                        android:id="@+id/sendButton"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_weight="2"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_send"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/settingsButton"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_settings" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <include
+            android:id="@+id/debugHudLayout"
+            layout="@layout/debug_hud"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="80dp"
+            android:layout_marginEnd="10dp" />
+
+        <View
+            android:id="@+id/pickerOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#220000FF"
+            android:visibility="gone"
+            android:elevation="100dp" />
+
+    </FrameLayout>
+</layout>

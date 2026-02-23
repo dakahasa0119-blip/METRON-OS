@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F0F2F5"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- 🚀 Zero-Touch Setup Section -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/title_setup" android:textColor="#1A73E8" android:textStyle="bold" />
+                    <com.google.android.material.textfield.TextInputLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:hint="@string/hint_gas_url"><com.google.android.material.textfield.TextInputEditText android:id="@+id/gasUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textUri" android:autofillHints="none"/></com.google.android.material.textfield.TextInputLayout>
+                    <Button android:id="@+id/btnTestConnection" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/btn_test_connection" />
+                    <com.google.android.material.textfield.TextInputLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:hint="@string/hint_sheet_id"><com.google.android.material.textfield.TextInputEditText android:id="@+id/sheetId" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="text" android:autofillHints="none"/></com.google.android.material.textfield.TextInputLayout>
+                    <Button android:id="@+id/btnAutoSetup" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:backgroundTint="#1A73E8" android:text="@string/btn_auto_setup" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 🔵 Gemini Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                app:cardCornerRadius="12dp"
+                app:strokeColor="#4285F4"
+                app:strokeWidth="1dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <RelativeLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentStart="true"
+                            android:layout_toStartOf="@+id/lockGemini"
+                            android:text="@string/label_gemini"
+                            android:textColor="#4285F4"
+                            android:textStyle="bold" />
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/lockGemini"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentEnd="true" />
+                    </RelativeLayout>
+                    <EditText android:id="@+id/geminiUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_url" android:textSize="14sp" android:inputType="textUri" android:autofillHints="none"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/geminiInput" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_input_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickGeminiInput" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/geminiSend" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_send_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickGeminiSend" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/geminiResp" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_resp_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickGeminiResp" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 🟢 ChatGPT Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                app:cardCornerRadius="12dp"
+                app:strokeColor="#10a37f"
+                app:strokeWidth="1dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <RelativeLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentStart="true"
+                            android:layout_toStartOf="@+id/lockChatGPT"
+                            android:text="@string/label_chatgpt"
+                            android:textColor="#10a37f"
+                            android:textStyle="bold" />
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/lockChatGPT"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentEnd="true" />
+                    </RelativeLayout>
+                    <EditText android:id="@+id/chatGptUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_url" android:textSize="14sp" android:inputType="textUri" android:autofillHints="none"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/chatGptInput" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_input_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickChatgptInput" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/chatGptSend" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_send_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickChatgptSend" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/chatGptResp" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_resp_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickChatgptResp" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 🟣 Copilot Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="12dp"
+                app:strokeColor="#ff3b30"
+                app:strokeWidth="1dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <RelativeLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentStart="true"
+                            android:layout_toStartOf="@+id/lockCopilot"
+                            android:text="@string/label_copilot"
+                            android:textColor="#ff3b30"
+                            android:textStyle="bold" />
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/lockCopilot"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentEnd="true" />
+                    </RelativeLayout>
+                    <EditText android:id="@+id/copilotUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_url" android:textSize="14sp" android:inputType="textUri" android:autofillHints="none"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/copilotInput" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_input_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickCopilotInput" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/copilotSend" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_send_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickCopilotSend" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <EditText android:id="@+id/copilotResp" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/hint_resp_sel" android:textSize="12sp" android:inputType="text" android:autofillHints="none"/>
+                        <Button android:id="@+id/pickCopilotResp" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/btn_pick" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 📂 Profile Slots -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:cardCornerRadius="12dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/label_profiles" android:textStyle="bold" />
+                    <Spinner android:id="@+id/profileSpinner" android:layout_width="match_parent" android:layout_height="48dp" />
+                    <EditText android:id="@+id/experimentalJson" android:layout_width="match_parent" android:layout_height="100dp" android:gravity="top" android:hint="@string/hint_json" android:inputType="textMultiLine" android:textSize="12sp" android:autofillHints="none"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <Button android:id="@+id/importButton" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/btn_import" />
+                        <Button android:id="@+id/exportButton" style="@style/Widget.MaterialComponents.Button.TextButton" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/btn_export" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <Button android:id="@+id/saveButton" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginBottom="32dp" android:backgroundTint="#455A64" android:text="@string/btn_save_apply" android:textColor="#FFFFFF" app:cornerRadius="12dp" />
+        </LinearLayout>
+    </ScrollView>
+</layout>

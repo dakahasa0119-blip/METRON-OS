@@ -1,0 +1,119 @@
+package com.arc
+
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import kotlinx.coroutines.*
+
+/**
+ * 複数AIの結果を統合し、ハルシネーションを抑制する
+ * v5.1: ifBlank への置換と接続性の改善
+ */
+class HallucinationPipeline(
+    private val prefs: Prefs,
+    private val loadAi: (AiTarget) -> Unit,
+    private val injectPrompt: (String) -> Unit
+) {
+
+    private var onDone: ((String) -> Unit)? = null
+    private var summaryBuffer = ""
+    private var originalPrompt = ""
+
+    var isProcessing = false
+        private set
+
+    private var phase = 0
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var phaseTimeoutJob: Job? = null
+    private var injectionJob: Job? = null
+
+    private fun startPhaseTimeout() {
+        phaseTimeoutJob?.cancel()
+        phaseTimeoutJob = scope.launch {
+            delay(60000)
+            Log.w("ARC_PIPELINE", "⚠️ Hallucination phase $phase timed out. Forcing completion...")
+            finalizeWithLastAvailable()
+        }
+    }
+
+    fun process(prompt: String, results: List<String>, callback: (String) -> Unit) {
+        this.originalPrompt = prompt
+        this.onDone = callback
+        this.isProcessing = true
+        this.phase = 0
+
+        val combined = results.joinToString("\n\n---\n\n")
+        
+        // 🛠️ ifBlank を使用して簡略化
+        val template = prefs.summaryPrompt.ifBlank { "以下の複数のAI回答を統合し、最も正確で一貫性のある回答を作成してください：\n\n{CONTENT}" }
+        val finalPrompt = template.replace("{CONTENT}", combined)
+
+        Log.d("ARC_HALLUCINATION", "🚀 Starting Summary Phase...")
+        loadAi(AiTarget.GEMINI)
+        
+        startPhaseTimeout()
+
+        injectionJob?.cancel()
+        injectionJob = scope.launch {
+            delay(2000)
+            if (isProcessing) injectPrompt(finalPrompt)
+        }
+    }
+
+    fun handleResult(text: String) {
+        if (!isProcessing) return
+        phaseTimeoutJob?.cancel()
+        
+        when (phase) {
+            0 -> handleSummary(text)
+            1 -> handleFactCheck(text)
+        }
+    }
+
+    private fun handleSummary(text: String) {
+        summaryBuffer = text
+        phase = 1
+
+        Log.d("ARC_HALLUCINATION", "🔍 Starting Fact Check Phase...")
+        loadAi(AiTarget.COPILOT)
+        
+        val factCheckPrompt = """
+            以下の内容に事実誤認や矛盾がないか最終確認し、必要なら修正して完成させてください。
+            (重要: 誤りがない場合はそのまま出力し、誤りがある場合のみ修正せよ)
+            
+            $summaryBuffer
+        """.trimIndent()
+
+        startPhaseTimeout()
+
+        injectionJob?.cancel()
+        injectionJob = scope.launch {
+            delay(2000)
+            if (isProcessing) injectPrompt(factCheckPrompt)
+        }
+    }
+
+    private fun handleFactCheck(text: String) {
+        complete(text)
+    }
+
+    private fun finalizeWithLastAvailable() {
+        if (summaryBuffer.isNotEmpty()) {
+            complete(summaryBuffer)
+        } else {
+            complete("Error: Hallucination pipeline failed.")
+        }
+    }
+
+    private fun complete(finalText: String) {
+        isProcessing = false
+        phaseTimeoutJob?.cancel()
+        injectionJob?.cancel()
+        
+        if (finalText.length > 10) {
+            prefs.addContext(originalPrompt, finalText)
+        }
+
+        onDone?.invoke(finalText)
+    }
+}

@@ -1,0 +1,19 @@
+# Android/Gradle
+.gradle/
+build/
+**/build/
+
+# IDE
+.idea/
+*.iml
+
+# Local env
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Autosave runtime
+.autosave.pid
+.autosave.log

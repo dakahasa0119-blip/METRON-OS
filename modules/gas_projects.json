@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "name": "METRON_GATEWAY",
+      "scriptId": "16k5v6CauVT61sS8na3tK5o50eE2T_qBCJFTaxEhkX_l7gBJRVolAjMLN",
+      "url": "https://script.google.com/u/0/home/projects/16k5v6CauVT61sS8na3tK5o50eE2T_qBCJFTaxEhkX_l7gBJRVolAjMLN/edit",
+      "localDir": "modules/gas/METRON_GATEWAY"
+    },
+    {
+      "name": "BAKU",
+      "scriptId": "1_CIZpOUoqfFl3bJpiPwQXQeLGPJ2-5bfpKSpRKxzUsXUQid1me_GvlrY",
+      "url": "https://script.google.com/u/0/home/projects/1_CIZpOUoqfFl3bJpiPwQXQeLGPJ2-5bfpKSpRKxzUsXUQid1me_GvlrY/edit",
+      "localDir": "modules/gas/BAKU"
+    },
+    {
+      "name": "METRON_OS_B",
+      "scriptId": "1mcJxx9xLzKNY0AuTvxTJILvOFC1xWJUUPVE-QJLbtIchmQPl_cSUlD-w",
+      "url": "https://script.google.com/u/0/home/projects/1mcJxx9xLzKNY0AuTvxTJILvOFC1xWJUUPVE-QJLbtIchmQPl_cSUlD-w/edit",
+      "localDir": "modules/gas/METRON_OS_B"
+    }
+  ]
+}
