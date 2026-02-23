@@ -60,3 +60,31 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
 - `arc_error` / `report_error`: report error
 - `arc_learning`: learning feedback
 - `arc_consult`: optional advisory path
+
+## BAKU Through ARC
+
+BAKU can use the same Gateway job pipeline as ARC by setting `executor=BAKU`.
+
+1. Operator sends a chat command with `#baku` (example: `#baku #chatgpt ...`).
+2. Gateway parses tags and enqueues in `ARC_JOBS` with payload `executor: "BAKU"`.
+3. BAKU worker calls `arc_heartbeat` or `lease_job` with:
+   - `executor: "BAKU"`
+   - stable `worker_id`
+   - `auth_key`
+4. Gateway leases only jobs where `executor` is `BAKU` (or `AUTO`).
+5. BAKU reports via `arc_result` / `arc_error` using the same `mission_id` or `qid`.
+
+### Example heartbeat payload (BAKU worker)
+
+```json
+{
+  "mode": "arc_heartbeat",
+  "executor": "BAKU",
+  "worker_id": "baku-node-01",
+  "ip": "192.168.1.10",
+  "port": "8080",
+  "status": "online",
+  "version": "baku-1.0",
+  "auth_key": "..."
+}
+```

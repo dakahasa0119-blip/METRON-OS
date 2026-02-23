@@ -161,9 +161,10 @@ function doPost(e) {
       const payloadRaw = norm(row[4]);
       const status = lower(row[5]);
       if (status !== "pending") continue;
-      if (rowWorker && workerId && rowWorker !== workerId) continue;
-      sheets.jobs.getRange(i + 1, 6).setValue("leased");
-      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+
+      // Respect explicit worker pinning. A pinned job cannot be leased without matching worker_id.
+      if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
+
       let payload = {};
       try {
         payload = payloadRaw ? JSON.parse(payloadRaw) : {};
@@ -173,6 +174,9 @@ function doPost(e) {
       const wanted = upper(payload.executor || "AUTO");
       const mine = upper(consumer || "ARC");
       if (wanted !== "AUTO" && wanted !== mine) continue;
+
+      sheets.jobs.getRange(i + 1, 6).setValue("leased");
+      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
       if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
       return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
     }
