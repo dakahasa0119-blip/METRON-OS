@@ -34,6 +34,14 @@ Domain coverage:
 - MOTHERSHIP queue lane (Gateway `mothership_pull`)
 - Drive salvage lane (BAKU full scan / DNA analysis / system map)
 
+Playbook:
+
+- Sheet `BAKU_PLAYBOOK` is auto-created in BAKU spreadsheet.
+- Columns:
+  - `Enabled`, `Priority`, `Domain`, `Pattern`, `Actions`, `Notes`
+- `Actions` example:
+  - `scan_drive,analyze_dna,system_map,patrol,rebuild`
+
 Required Script Properties in BAKU GAS:
 
 - `GATEWAY_WEBAPP_URL`:
@@ -50,6 +58,8 @@ Required Script Properties in BAKU GAS:
   - `true` only if you allow `METRON_EVO.selfRebuildOS()` execution
 - `BAKU_MAX_LOOP_JOBS`:
   - per run loop upper limit (default `6`)
+- `BAKU_PLAYBOOK`:
+  - managed in sheet, no property needed
 
 Recommended first run:
 

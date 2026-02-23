@@ -1,14 +1,20 @@
 /**
- * BAKU Multi-Domain Gateway Bridge
+ * BAKU Multi-Domain Gateway Bridge (v3)
  *
  * Domains:
  * - ARC repair jobs (ARC_JOBS via lease_job)
  * - MOTHERSHIP messages (MOTHERSHIP_QUEUE via mothership_pull)
  * - Drive salvage operations through BAKU core scanner
+ *
+ * New in v3:
+ * - External playbook rules from sheet `BAKU_PLAYBOOK`
+ * - Structured report envelope `BAKU_REPORT_JSON:`
+ * - Follow-up job proposal for Gateway orchestration
  */
 
 var BAKU_GATEWAY = BAKU_GATEWAY || {
   ARC_EXECUTOR: "BAKU",
+  REPORT_PREFIX: "BAKU_REPORT_JSON:",
 
   getProps_: function () {
     return PropertiesService.getScriptProperties();
@@ -122,7 +128,7 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     return this.postGateway_("arc_heartbeat", {
       executor: this.ARC_EXECUTOR,
       status: "online",
-      version: "baku-bridge-2.0",
+      version: "baku-bridge-3.0",
       target: "salvage"
     });
   },
@@ -136,7 +142,7 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
   heartbeatMothership: function () {
     return this.postGateway_("mothership_heartbeat", {
       status: "online",
-      version: "baku-bridge-2.0"
+      version: "baku-bridge-3.0"
     });
   },
 
@@ -179,17 +185,68 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     });
   },
 
-  detectActions_: function (text, mode) {
+  ensurePlaybookSheet_: function () {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName("BAKU_PLAYBOOK") || ss.insertSheet("BAKU_PLAYBOOK");
+    if (sh.getLastRow() === 0) {
+      sh.appendRow(["Enabled", "Priority", "Domain", "Pattern", "Actions", "Notes"]);
+      sh.appendRow(["Y", 10, "ARC", "arc_execute_js", "scan_drive,system_map", "JS実行不能時の代替"]);
+      sh.appendRow(["Y", 20, "ARC", "timeout|selector|dom|send_fail|fill_fail", "scan_drive,analyze_dna", "DOM系失敗の復旧"]);
+      sh.appendRow(["Y", 30, "MOTHERSHIP", "backup|salvage|inventory|drive", "scan_drive,system_map", "母艦からの保守要求"]);
+    }
+    return sh;
+  },
+
+  loadPlaybookRules_: function () {
+    var sh = this.ensurePlaybookSheet_();
+    var rows = sh.getDataRange().getValues();
+    if (rows.length <= 1) return [];
+    var out = [];
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (String(r[0] || "").toUpperCase() !== "Y") continue;
+      var priority = Number(r[1] || 100);
+      var domain = String(r[2] || "ANY").toUpperCase();
+      var pattern = String(r[3] || "").trim();
+      var actions = String(r[4] || "").split(",").map(function (x) { return String(x || "").trim(); }).filter(function (x) { return x; });
+      if (!pattern || actions.length === 0) continue;
+      out.push({ priority: isFinite(priority) ? priority : 100, domain: domain, pattern: pattern, actions: actions });
+    }
+    out.sort(function (a, b) { return a.priority - b.priority; });
+    return out;
+  },
+
+  detectActions_: function (text, mode, domain) {
     var raw = String(text || "");
     var l = raw.toLowerCase();
+    var d = String(domain || "ARC").toUpperCase();
+    var m = String(mode || "").toLowerCase();
     var actions = [];
 
     var push = function (x) {
       if (actions.indexOf(x) < 0) actions.push(x);
     };
 
-    if (mode === "arc_refresh") push("scan_drive");
-    if (mode === "arc_screenshot") push("system_map");
+    // Playbook first
+    var rules = this.loadPlaybookRules_();
+    for (var i = 0; i < rules.length; i++) {
+      var rule = rules[i];
+      if (rule.domain !== "ANY" && rule.domain !== d) continue;
+      var re = null;
+      try {
+        re = new RegExp(rule.pattern, "i");
+      } catch (_) {
+        re = null;
+      }
+      if (!re) continue;
+      if (re.test(raw) || re.test(m)) {
+        rule.actions.forEach(push);
+      }
+    }
+
+    // Heuristic fallback
+    if (m === "arc_refresh") push("scan_drive");
+    if (m === "arc_screenshot") push("system_map");
 
     if (/scan|salvage|recover|inventory|backup|drive/.test(l)) push("scan_drive");
     if (/dna|extract|analy|profile|vault/.test(l)) push("analyze_dna");
@@ -207,7 +264,7 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
   runAction_: function (action) {
     if (action === "scan_drive") {
       BAKU.fullScan();
-      return "scan_drive=ok";
+      return { action: action, status: "ok" };
     }
 
     if (action === "analyze_dna") {
@@ -216,7 +273,7 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
       if (typeof METRON_DNA_ANALYST !== "undefined" && METRON_DNA_ANALYST.extract) {
         dna = METRON_DNA_ANALYST.extract(source, "BAKU_CORE");
       }
-      return "analyze_dna=ok,count=" + String((dna && dna.length) || 0);
+      return { action: action, status: "ok", count: (dna && dna.length) || 0 };
     }
 
     if (action === "system_map") {
@@ -224,51 +281,71 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
       if (typeof METRON_ARCHITECT !== "undefined" && METRON_ARCHITECT.generateSystemMap) {
         map = String(METRON_ARCHITECT.generateSystemMap() || "{}");
       }
-      return "system_map=ok,size=" + String(map.length);
+      return { action: action, status: "ok", size: map.length };
     }
 
     if (action === "patrol") {
       if (typeof METRON_AUTO_EVO !== "undefined" && METRON_AUTO_EVO.patrol) {
         METRON_AUTO_EVO.patrol();
-        return "patrol=ok";
+        return { action: action, status: "ok" };
       }
-      return "patrol=skip:not_available";
+      return { action: action, status: "skip", reason: "not_available" };
     }
 
     if (action === "rebuild") {
-      if (!this.isRebuildAllowed_()) return "rebuild=skip:disabled";
+      if (!this.isRebuildAllowed_()) return { action: action, status: "skip", reason: "disabled" };
       if (typeof METRON_EVO !== "undefined" && METRON_EVO.selfRebuildOS) {
         var r = METRON_EVO.selfRebuildOS();
-        return "rebuild=ok:" + JSON.stringify(r || {});
+        return { action: action, status: "ok", detail: r || {} };
       }
-      return "rebuild=skip:not_available";
+      return { action: action, status: "skip", reason: "not_available" };
     }
 
-    return action + "=skip:unknown";
+    return { action: action, status: "skip", reason: "unknown" };
+  },
+
+  createFollowup_: function (ctx) {
+    if (String(ctx.domain) !== "ARC") return null;
+    if (String(ctx.mode || "") === "arc_execute_js") {
+      return {
+        auto_enqueue: true,
+        mode: "request_arc",
+        executor: "ARC",
+        target: "chatgpt",
+        prompt: "BAKU salvage completed. Retry browser-side execution safely for original task: " + String(ctx.id || "")
+      };
+    }
+    return null;
   },
 
   composeSalvageReport_: function (ctx) {
-    var lines = [];
-    lines.push("[BAKU] multi-domain salvage report");
-    lines.push("domain=" + String(ctx.domain || "ARC"));
-    lines.push("id=" + String(ctx.id || ""));
-    lines.push("mode=" + String(ctx.mode || ""));
-    lines.push("trace_id=" + String(ctx.traceId || ""));
-    lines.push("actions=" + (ctx.actions || []).join(","));
-    (ctx.outputs || []).forEach(function (o) { lines.push(String(o)); });
-    if (ctx.prompt) lines.push("prompt_preview=" + String(ctx.prompt).slice(0, 480));
-    lines.push("recommendation=continue via Gateway orchestration");
-    return lines.join("\n");
+    var report = {
+      engine: "BAKU_GATEWAY_BRIDGE",
+      version: "3.0",
+      domain: String(ctx.domain || "ARC"),
+      id: String(ctx.id || ""),
+      mode: String(ctx.mode || ""),
+      trace_id: String(ctx.traceId || ""),
+      worker_id: this.getWorkerId_(),
+      actions: ctx.actions || [],
+      outputs: ctx.outputs || [],
+      prompt_preview: String(ctx.prompt || "").slice(0, 480),
+      recommendation: "continue via Gateway orchestration",
+      followup: this.createFollowup_(ctx),
+      ts: new Date().toISOString()
+    };
+
+    return this.REPORT_PREFIX + JSON.stringify(report);
   },
 
   executeArcInstruction_: function (job) {
     var prompt = String(job.prompt || "");
     var mode = String(job.mode || "request_arc");
-    var actions = this.detectActions_(prompt, mode);
+    var actions = this.detectActions_(prompt, mode, "ARC");
     var outputs = [];
 
     if (mode === "arc_execute_js") {
-      outputs.push("note=arc_execute_js is browser-side; BAKU performs salvage-only path");
+      outputs.push({ action: "arc_execute_js", status: "skip", reason: "browser_side_only" });
     }
 
     for (var i = 0; i < actions.length; i++) {
@@ -288,7 +365,7 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
 
   executeMothershipInstruction_: function (msg) {
     var content = String(msg.content || "");
-    var actions = this.detectActions_(content, "mothership");
+    var actions = this.detectActions_(content, "mothership", "MOTHERSHIP");
     var outputs = [];
 
     for (var i = 0; i < actions.length; i++) {
@@ -353,7 +430,6 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     var events = [];
 
     for (var i = 0; i < n; i++) {
-      // Alternate domains to prevent starvation.
       var first = (i % 2 === 0) ? this.processArcOne() : this.processMothershipOne();
       if (first && first.status !== "empty") {
         events.push(first);

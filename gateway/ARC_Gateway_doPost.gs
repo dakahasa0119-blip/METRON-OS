@@ -588,6 +588,50 @@ function doPost(e) {
     addAudit(norm(found.payload.trace_id), "JOB_COMPLETED", norm(missionId), norm(row[2]), status, "");
   };
 
+  const parseBakuStructuredReport = (text) => {
+    const raw = norm(text);
+    const prefix = "BAKU_REPORT_JSON:";
+    if (!raw.startsWith(prefix)) return null;
+    try {
+      const obj = JSON.parse(raw.substring(prefix.length));
+      return obj && typeof obj === "object" ? obj : null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const maybeEnqueueBakuFollowup = (missionId, traceId, bakuReport) => {
+    if (!bakuReport || !bakuReport.followup) return null;
+    const enabled = lower(norm(props.getProperty("ARC_ENABLE_BAKU_FOLLOWUP") || "false")) === "true";
+    if (!enabled) return null;
+
+    const follow = bakuReport.followup;
+    if (follow.auto_enqueue !== true) return null;
+    const modeName = norm(follow.mode) || "request_arc";
+    const target = lower(norm(follow.target) || "chatgpt");
+    const executor = upper(norm(follow.executor) || "ARC");
+    const prompt = norm(follow.prompt || "");
+    if (!prompt) return null;
+
+    const parent = norm(missionId);
+    const followupId = parent ? (parent + "_FU_" + Utilities.getUuid().slice(0, 6)) : ("FU_" + Utilities.getUuid().slice(0, 8));
+    const enq = enqueueArcJob({
+      jobId: followupId,
+      qid: followupId,
+      target: target,
+      prompt: prompt,
+      script: "",
+      mode: modeName,
+      executor: executor,
+      user: "baku_followup",
+      workerId: "",
+      traceId: norm(traceId) || norm(bakuReport.trace_id),
+      retryCount: 0
+    });
+    addAudit(enq.traceId, "BAKU_FOLLOWUP_ENQUEUED", enq.jobId, "", "pending", executor + " / " + target);
+    return enq;
+  };
+
   maybeRunDailyCleanup();
 
   if (mode === "arc_setup") {
@@ -706,6 +750,11 @@ function doPost(e) {
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
     completeArcJob(missionId, "done");
     completeLinkedChat(missionId, result, "result");
+    const bakuReport = parseBakuStructuredReport(result);
+    if (bakuReport) {
+      addAudit(traceId, "BAKU_REPORT_PARSED", missionId, norm(data.worker_id), "ok", norm(bakuReport.domain) + " / " + norm(bakuReport.mode));
+      maybeEnqueueBakuFollowup(missionId, traceId, bakuReport);
+    }
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
     return jsonOut({ status: "ok", trace_id: traceId });
   }

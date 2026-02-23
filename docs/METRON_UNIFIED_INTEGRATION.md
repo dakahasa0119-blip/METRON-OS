@@ -26,6 +26,12 @@ Reference blueprints:
   - ARC repair queue
   - MOTHERSHIP queue
   - Drive salvage operations
+- BAKU playbook sheet:
+  - `BAKU_PLAYBOOK` controls pattern -> actions mapping without code edits
+- Structured report:
+  - BAKU emits `BAKU_REPORT_JSON:` envelope for machine-readable salvage outputs
+- Optional follow-up enqueue:
+  - Gateway can auto-enqueue follow-up ARC jobs from BAKU report when `ARC_ENABLE_BAKU_FOLLOWUP=true`
 
 3. MOTHERSHIP control lane (new)
 - `mothership_submit`

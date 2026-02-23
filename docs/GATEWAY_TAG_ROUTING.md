@@ -111,6 +111,9 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
   - Retry path reuses ARC job pipeline and can hand failed jobs to BAKU automatically.
 - Retry wait gate:
   - `next_retry_at` is honored at lease time; jobs are not leased before backoff expires.
+- Structured BAKU report:
+  - If `arc_result.text` starts with `BAKU_REPORT_JSON:`, Gateway parses it.
+  - When `ARC_ENABLE_BAKU_FOLLOWUP=true`, Gateway can auto-enqueue follow-up jobs from report payload.
 - Daily cleanup:
   - `ARC_AUDIT` old rows are archived to `ARC_AUDIT_ARCHIVE`.
   - Retention uses `ARC_AUDIT_RETENTION_DAYS` (default `14`).
