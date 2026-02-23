@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    :root {
+      --bg-main: #f2f2f7;
+      --bg-card: #ffffff;
+      --text-main: #1c1c1e;
+      --text-secondary: #8e8e93;
+      --accent-blue: #007aff;
+      --accent-green: #34c759;
+      --accent-purple: #af52de;
+      --border: #d1d1d6;
+      --radius: 14px;
+    }
+    :root[data-theme="dark"] {
+      --bg-main: #000000;
+      --bg-card: #1c1c1e;
+      --text-main: #f2f2f7;
+      --text-secondary: #8e8e93;
+      --accent-blue: #0a84ff;
+      --accent-green: #30d158;
+      --accent-purple: #bf5af2;
+      --border: #3a3a3c;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg-main);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui;
+      color: var(--text-main);
+    }
+
+    h2 {
+      margin: 0;
+      padding: 14px 18px;
+      font-size: 20px;
+      font-weight: 700;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    #theme-toggle {
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .page { display: none; padding: 15px; }
+    .page.active { display: block; }
+
+    .ios-card {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .bubble-user {
+      background: var(--accent-blue);
+      color: white;
+      padding: 10px 14px;
+      border-radius: 18px;
+      max-width: 75%;
+      margin-left: auto;
+      display: inline-block;
+      white-space: pre-wrap;
+    }
+
+    .bubble-ai {
+      background: #e5e5ea;
+      color: black;
+      padding: 10px 14px;
+      border-radius: 18px;
+      max-width: 75%;
+      margin-right: auto;
+      display: inline-block;
+      white-space: pre-wrap;
+    }
+
+    :root[data-theme="dark"] .bubble-ai {
+      background: #2c2c2e;
+      color: #f2f2f7;
+    }
+
+    @keyframes typingDots {
+      0% { opacity: 0.2; }
+      20% { opacity: 1; }
+      100% { opacity: 0.2; }
+    }
+    .typing-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-left: 4px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      animation: typingDots 1.4s infinite;
+    }
+
+    #bottom-tabs {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-around;
+      padding: 6px 0;
+      z-index: 20;
+    }
+
+    .tab-btn {
+      flex: 1;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-secondary);
+      padding: 6px 0;
+      border: none;
+      background: transparent;
+    }
+    .tab-btn.active {
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>
+  🤖 METRON Gateway v10
+  <button id="theme-toggle" onclick="toggleTheme()">☀️</button>
+</h2>
+
+<!-- ===========================
+     MainChat（内部＋外部AI統合）
+=========================== -->
+<div id="page-chat" class="page active">
+
+  <!-- 外部AI選択 -->
+  <div class="ios-card">
+    <label style="font-size:14px; font-weight:600;">External AI</label>
+    <select id="external-ai"
+            style="width:100%; margin-top:8px; padding:10px; border-radius:var(--radius);
+                   border:1px solid var(--border); font-size:14px;">
+      <option value="ChatGPT">ChatGPT</option>
+      <option value="Gemini">Gemini</option>
+      <option value="Copilot">Copilot</option>
+      <option value="AllAI">全AI（ChatGPT + Gemini + Copilot）</option>
+    </select>
+  </div>
+
+  <!-- Chat Log -->
+  <div class="ios-card" style="padding:0;">
+    <div id="chat-log"
+         style="padding:16px; height:420px; overflow-y:auto;
+                display:flex; flex-direction:column; gap:10px;">
+      Loading...
+    </div>
+
+    <div id="ai-typing" style="display:none; padding:10px 16px; color:var(--text-secondary); font-size:13px;">
+      External AI is typing
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+
+    <div id="external-loading" style="display:none; padding:10px 16px; color:var(--text-secondary); font-size:13px;">
+      Sending to External AI…
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="ios-card" style="padding:14px;">
+    <textarea id="chat-input"
+              placeholder="Send a message..."
+              style="width:100%; height:80px; padding:12px;
+                     border-radius:var(--radius); border:1px solid var(--border);
+                     font-size:14px;"></textarea>
+
+    <button onclick="sendChat()"
+            style="margin-top:10px; width:100%; padding:14px;
+                   border-radius:var(--radius); background:var(--accent-blue);
+                   color:white; border:none; font-weight:600; font-size:15px;">
+      Send to MainChat
+    </button>
+
+    <button onclick="sendToExternalAI()"
+            style="margin-top:10px; width:100%; padding:14px;
+                   border-radius:var(--radius); background:var(--accent-green);
+                   color:white; border:none; font-weight:600; font-size:15px;">
+      Ask External AI
+    </button>
+  </div>
+
+</div>
+
+<!-- ===========================
+     Logs
+=========================== -->
+<div id="page-logs" class="page">
+  <div class="ios-card">
+    <h3>System Logs</h3>
+    <div id="logs-area">Loading...</div>
+  </div>
+</div>
+
+<!-- ===========================
+     Evolution
+=========================== -->
+<div id="page-evolution" class="page">
+  <div class="ios-card">
+    <h3>Evolution Engine</h3>
+    <div id="evolution-list">Loading...</div>
+  </div>
+</div>
+
+<!-- ===========================
+     Staging
+=========================== -->
+<div id="page-staging" class="page">
+  <div class="ios-card">
+    <h3>Staging Area</h3>
+    <div id="staging-area">Loading...</div>
+  </div>
+</div>
+
+<!-- ===========================
+     Settings
+=========================== -->
+<div id="page-settings" class="page">
+  <div class="ios-card">
+    <h3>Settings</h3>
+    <p>Theme, preferences, etc.</p>
+  </div>
+</div>
+
+<!-- Bottom Tabs -->
+<div id="bottom-tabs">
+  <button class="tab-btn active" onclick="switchTab('chat')">Chat</button>
+  <button class="tab-btn" onclick="switchTab('logs')">Logs</button>
+  <button class="tab-btn" onclick="switchTab('evolution')">Evolution</button>
+  <button class="tab-btn" onclick="switchTab('staging')">Staging</button>
+  <button class="tab-btn" onclick="switchTab('settings')">Settings</button>
+</div>
+
+<script>
+/* ============================================================
+   Theme
+============================================================ */
+function toggleTheme() {
+  const root = document.documentElement;
+  const current = root.getAttribute("data-theme");
+  root.setAttribute("data-theme", current === "dark" ? "light" : "dark");
+  localStorage.setItem("metron-theme", current === "dark" ? "light" : "dark");
+}
+
+function applyThemeFromStorage() {
+  const saved = localStorage.getItem("metron-theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+}
+
+/* ============================================================
+   Tab Switching
+============================================================ */
+function switchTab(name) {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+
+  document.getElementById("page-" + name).classList.add("active");
+
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    if (b.textContent.toLowerCase() === name) b.classList.add("active");
+  });
+}
+
+/* ============================================================
+   Utility: AI 判定・アイコン・色付け
+============================================================ */
+function detectAIFromSource(source) {
+  if (source.includes("ChatGPT")) return "ChatGPT";
+  if (source.includes("Gemini")) return "Gemini";
+  if (source.includes("Copilot")) return "Copilot";
+  return "AI";
+}
+
+function getAIIcon(ai) {
+  if (ai === "ChatGPT") return "🟦 ChatGPT";
+  if (ai === "Gemini") return "🟩 Gemini";
+  if (ai === "Copilot") return "🟪 Copilot";
+  return "🤖 AI";
+}
+
+function applyAIColor(bubble, ai) {
+  if (ai === "ChatGPT") {
+    bubble.style.background = "var(--accent-blue)";
+    bubble.style.color = "white";
+  }
+  else if (ai === "Gemini") {
+    bubble.style.background = "var(--accent-green)";
+    bubble.style.color = "white";
+  }
+  else if (ai === "Copilot") {
+    bubble.style.background = "var(--accent-purple)";
+    bubble.style.color = "white";
+  }
+}
+
+/* ============================================================
+   折りたたみ（長文のみ）
+============================================================ */
+function makeCollapsible(text) {
+  const limit = 180;
+
+  if (text.length <= limit) {
+    return `<div>${text}</div>`;
+  }
+
+  const short = text.slice(0, limit) + "…";
+  const id = "col_" + Math.random().toString(36).slice(2);
+
+  return `
+    <div id="${id}_short">${short}</div>
+    <div id="${id}_full" style="display:none;">${text}</div>
+    <button onclick="toggleCollapse('${id}')"
+            style="margin-top:6px; background:none; border:none; color:var(--accent-blue); font-size:13px;">
+      続きを読む
+    </button>
+  `;
+}
+
+function toggleCollapse(id) {
+  const short = document.getElementById(id + "_short");
+  const full = document.getElementById(id + "_full");
+
+  if (full.style.display === "none") {
+    full.style.display = "block";
+    short.style.display = "none";
+  } else {
+    full.style.display = "none";
+    short.style.display = "block";
+  }
+}
+
+/* ============================================================
+   Chat Auto Scroll
+============================================================ */
+function scrollChatToBottom() {
+  const log = document.getElementById("chat-log");
+  log.scrollTop = log.scrollHeight;
+}
+
+/* ============================================================
+   Load Chat（AllAI 統合版）
+============================================================ */
+function autoUpdateChat() {
+  google.script.run.withSuccessHandler((rows) => {
+    const log = document.getElementById("chat-log");
+    log.innerHTML = "";
+
+    // AllAI の回答をまとめるための一時バッファ
+    const allAIGroup = {
+      ChatGPT: null,
+      Gemini: null,
+      Copilot: null
+    };
+
+    function flushAllAIGroup() {
+      const hasAny =
+        allAIGroup.ChatGPT ||
+        allAIGroup.Gemini ||
+        allAIGroup.Copilot;
+
+      if (!hasAny) return;
+
+      const card = document.createElement("div");
+      card.style = `
+        background: var(--bg-card);
+        border-radius: var(--radius);
+        padding: 12px;
+        border: 2px solid;
+        border-image: linear-gradient(45deg, #007aff, #34c759, #af52de) 1;
+        margin-bottom: 12px;
+      `;
+
+      card.innerHTML = `<div style="font-weight:600; margin-bottom:8px;">
+        🌈 AllAI Responses
+      </div>`;
+
+      ["ChatGPT", "Gemini", "Copilot"].forEach(ai => {
+        if (allAIGroup[ai]) {
+          const section = document.createElement("div");
+          section.style = "margin-bottom:10px;";
+
+          const icon = getAIIcon(ai);
+
+          section.innerHTML = `
+            <div style="display:flex; align-items:center; gap:6px; font-weight:600;">
+              ${icon}
+            </div>
+            ${makeCollapsible(allAIGroup[ai])}
+          `;
+
+          card.appendChild(section);
+        }
+      });
+
+      log.appendChild(card);
+
+      allAIGroup.ChatGPT = null;
+      allAIGroup.Gemini = null;
+      allAIGroup.Copilot = null;
+    }
+
+    rows.forEach(r => {
+      const source = r[1] || "";
+      const msg = r[2] || "";
+
+      // AllAI の回答をまとめる
+      if (source.includes("ChatGPT") && msg.startsWith("[ChatGPT]")) {
+        allAIGroup.ChatGPT = msg.replace("[ChatGPT]", "").trim();
+        return;
+      }
+      if (source.includes("Gemini") && msg.startsWith("[Gemini]")) {
+        allAIGroup.Gemini = msg.replace("[Gemini]", "").trim();
+        return;
+      }
+      if (source.includes("Copilot") && msg.startsWith("[Copilot]")) {
+        allAIGroup.Copilot = msg.replace("[Copilot]", "").trim();
+        return;
+      }
+
+      // AllAI グループを flush
+      flushAllAIGroup();
+
+      // 通常のメッセージ
+      const bubble = document.createElement("div");
+
+      if (source.includes("USER")) {
+        bubble.className = "bubble-user";
+        bubble.textContent = msg;
+      } else {
+        bubble.className = "bubble-ai";
+
+        const ai = detectAIFromSource(source);
+        const icon = getAIIcon(ai);
+
+        bubble.innerHTML = `
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            ${icon}
+          </div>
+          ${makeCollapsible(msg)}
+        `;
+
+        applyAIColor(bubble, ai);
+      }
+
+      log.appendChild(bubble);
+    });
+
+    // 最後に AllAI グループを flush
+    flushAllAIGroup();
+
+    scrollChatToBottom();
+  }).fetchMainChat();
+}
+
+/* ============================================================
+   Send to MainChat
+============================================================ */
+function sendChat() {
+  const text = document.getElementById("chat-input").value.trim();
+  if (!text) return;
+
+  google.script.run.withSuccessHandler(() => {
+    document.getElementById("chat-input").value = "";
+    autoUpdateChat();
+  }).sendToMainChat(text);
+}
+
+/* ============================================================
+   Send to External AI（AllAI 対応）
+============================================================ */
+function sendToExternalAI() {
+  const text = document.getElementById("chat-input").value.trim();
+  if (!text) return;
+
+  const ai = document.getElementById("external-ai").value;
+
+  document.getElementById("external-loading").style.display = "block";
+
+  if (ai === "AllAI") {
+    ["ChatGPT", "Gemini", "Copilot"].forEach(a => {
+      google.script.run.enqueueQuestion("USER", `[${a}] ${text}`, "USER_UI");
+    });
+
+    document.getElementById("external-loading").style.display = "none";
+    document.getElementById("chat-input").value = "";
+    return;
+  }
+
+  google.script.run.withSuccessHandler(() => {
+    document.getElementById("external-loading").style.display = "none";
+    document.getElementById("chat-input").value = "";
+  }).enqueueQuestion("USER", `[${ai}] ${text}`, "USER_UI");
+}
+
+/* ============================================================
+   Logs
+============================================================ */
+function loadLogs() {
+  google.script.run.withSuccessHandler((rows) => {
+    const area = document.getElementById("logs-area");
+    area.innerHTML = rows.map(r => `<div>${r.join(" | ")}</div>`).join("");
+  }).fetchLogs();
+}
+
+/* ============================================================
+   Evolution
+============================================================ */
+const Evolution = {
+  reload() {
+    google.script.run.withSuccessHandler((rows) => {
+      const area = document.getElementById("evolution-list");
+      area.innerHTML = rows.map(r => `<div>${r.join(" | ")}</div>`).join("");
+    }).fetchEvolution();
+  },
+
+  loadList() {
+    google.script.run.withSuccessHandler((rows) => {
+      const area = document.getElementById("evolution-list");
+      area.innerHTML = rows.map(r => `<div>${r.join(" | ")}</div>`).join("");
+    }).fetchEvolutionList();
+  }
+};
+
+/* ============================================================
+   Staging
+============================================================ */
+function loadStaging() {
+  google.script.run.withSuccessHandler((rows) => {
+    const area = document.getElementById("staging-area");
+    let html = "";
+
+    rows.forEach(p => {
+      html += `
+      <div style="padding:12px; border-bottom:1px solid var(--border);">
+        <div style="font-weight:600;">${p.filename}</div>
+        <div style="font-size:13px; color:#8e8e93;">${p.timestamp}</div>
+        <div style="margin-top:6px; font-size:13px;">${p.description}</div>
+
+        <pre style="background:#f2f2f7; padding:10px; border-radius:var(--radius);
+                    font-family:monospace; white-space:pre-wrap; max-height:150px; overflow-y:auto;">
+${p.code}
+        </pre>
+
+        <button onclick="approveStaged(${p.id})"
+                style="margin-top:10px; width:100%; padding:10px; border-radius:var(--radius);
+                       background:var(--accent-green); color:white; border:none;">
+          Promote to PatchSlots
+        </button>
+      </div>`;
+    });
+
+    area.innerHTML = html;
+  }).fetchStaging();
+}
+
+function approveStaged(id) {
+  showLoading();
+  google.script.run.withSuccessHandler(() => {
+    hideLoading();
+    showSuccess("Promoted");
+    loadStaging();
+    Evolution.reload();
+    Evolution.loadList();
+  }).approveStagedProposal(id);
+}
+
+/* ============================================================
+   Loading & Success UI
+============================================================ */
+function showLoading() {
+  let el = document.getElementById("global-loading");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "global-loading";
+    el.style = `
+      position:fixed; inset:0; background:rgba(255,255,255,0.6);
+      display:flex; align-items:center; justify-content:center; z-index:99999;
+    `;
+    el.innerHTML = `<div class="loader"></div>`;
+    document.body.appendChild(el);
+  }
+  el.style.display = "flex";
+}
+
+function hideLoading() {
+  const el = document.getElementById("global-loading");
+  if (el) el.style.display = "none";
+}
+
+function showSuccess(msg) {
+  const el = document.createElement("div");
+  el.style = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    background:var(--accent-green); color:white; padding:10px 20px;
+    border-radius:var(--radius); font-weight:600; z-index:99999;
+  `;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1500);
+}
+
+/* ============================================================
+   Auto Sync
+============================================================ */
+window.addEventListener("load", () => {
+  applyThemeFromStorage();
+
+  autoUpdateChat();
+  loadLogs();
+  Evolution.reload();
+  Evolution.loadList();
+  loadStaging();
+
+  setInterval(autoUpdateChat, 3000);
+  setInterval(loadLogs, 5000);
+  setInterval(Evolution.reload, 15000);
+  setInterval(Evolution.loadList, 20000);
+  setInterval(loadStaging, 30000);
+});
+</script>
+</html>
