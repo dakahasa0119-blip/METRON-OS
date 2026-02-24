@@ -6,6 +6,7 @@ import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.util.*
 import org.json.JSONObject
+import kotlin.math.max
 
 /**
  * 司令部(ArcWorker)と神経系を完全に統合し、全工程をフルログ管理する最強の知能ユニット (v24.0 - Neural Orchestrated)
@@ -149,26 +150,138 @@ class AllAiPipeline(
             lowerPrompt.contains("only reply") ||
             lowerPrompt.contains(" ok")
         val minLen = if (expectsShort) 2 else 30
-        return res.trim().length >= minLen && !res.lowercase().contains("access denied")
+        return res.trim().length >= minLen &&
+            !res.lowercase().contains("access denied") &&
+            !looksLikeContextLeak(res)
     }
     
     private fun buildAdaptivePrompt(count: Int, prev: List<String>, name: String): String {
         val context = if (prev.isNotEmpty()) "\n[Prev Result: ${prev.last().take(300)}...]" else ""
-        return "You are $name. Strategy: $gatewayAdvice\n${prefs.getFormattedContext()}$context\nRequest: $currentPrompt"
+        val memory = prefs.getFormattedContext(includeFailures = false, maxSuccess = 2)
+        val strict = if (isCodeTask(currentPrompt)) {
+            "\n[Output Rules]\n- Return only final code.\n- Do not include operational logs or memory summaries.\n- Include all requested functions and a runnable main/example.\n"
+        } else ""
+        return "You are $name. Strategy: $gatewayAdvice\n$memory$context$strict\nRequest: $currentPrompt"
     }
 
-    private fun sanitizeOutput(input: String) = input.replace(Regex("^(はい、|承知).*?\\n", RegexOption.IGNORE_CASE), "").trim()
+    private fun sanitizeOutput(input: String): String {
+        return input
+            .replace(Regex("^(はい、|承知).*?\\n", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("【現場の短期記憶（直近の経緯）】[\\s\\S]*?(?=\\n\\n|$)"), "")
+            .trim()
+    }
 
     private suspend fun finalizePipelineSuspending() {
         val d = CompletableDeferred<String>()
         hallucinationPipeline.process(currentPrompt, results) { d.complete(it) }
         val final = withTimeoutOrNull(120000) { d.await() }
-        val text = final ?: "Failed to synthesize."
+        val draft = normalizeFinalOutputForTask(final ?: "Failed to synthesize.")
+        val repaired = if (passesFinalQualityGate(draft)) draft else repairFinalOnce(draft)
+        var text = if (passesFinalQualityGate(repaired)) repaired else bestCandidateFallback(draft)
+        text = normalizeFinalOutputForTask(text)
         val ok = text.isNotBlank() &&
             !text.startsWith("Error:", ignoreCase = true) &&
-            !text.contains("failed to synthesize", ignoreCase = true)
+            !text.contains("failed to synthesize", ignoreCase = true) &&
+            (passesFinalQualityGate(text) || hasCodeBlockOrCodeShape(text))
         if (ok) Util.trace(missionId, Util.Level.SUMMARY, "COMPLETE", "Final synthesis success.")
         dispatchFinal(text, ok)
+    }
+
+    private suspend fun repairFinalOnce(draft: String): String {
+        val req = currentPrompt
+        val repairPrompt = """
+            次の回答を、要求仕様を満たす最終版に整形してください。
+            制約:
+            - 余計な前置き・運用ログ・短期記憶を出さない
+            - 要求仕様に不足があれば補う
+            - 出力は最終回答のみ（前置き禁止）
+            - コード課題ならコードだけを返す
+
+            [要求]
+            $req
+
+            [ドラフト]
+            $draft
+        """.trimIndent()
+        val repaired = executeViaCommandCenter(AiTarget.CHATGPT, repairPrompt)
+        return normalizeFinalOutputForTask(repaired ?: draft)
+    }
+
+    private fun bestCandidateFallback(draft: String): String {
+        val candidates = results.asReversed().map { normalizeFinalOutputForTask(it) } + listOf(draft)
+        val good = candidates.firstOrNull { passesFinalQualityGate(it) }
+        if (!good.isNullOrBlank()) return good
+        val codeLike = candidates.firstOrNull { hasCodeBlockOrCodeShape(it) && !looksLikeContextLeak(it) }
+        if (!codeLike.isNullOrBlank()) return codeLike
+        return draft
+    }
+
+    private fun normalizeFinalOutputForTask(raw: String): String {
+        var out = sanitizeOutput(raw)
+        if (!isCodeTask(currentPrompt)) return out
+
+        val fenced = Regex("```(?:[a-zA-Z0-9_+-]*)\\s*\\n([\\s\\S]*?)```")
+            .findAll(out)
+            .map { it.groupValues.getOrNull(1)?.trim().orEmpty() }
+            .filter { it.isNotBlank() }
+            .toList()
+        if (fenced.isNotEmpty()) {
+            out = fenced.maxByOrNull { it.length } ?: out
+        }
+
+        out = out.replace(Regex("^kotlin\\s*(?=//|/\\*|data\\s+class|class\\s+|fun\\s+|import\\s+)", RegexOption.IGNORE_CASE), "")
+        if (!hasCodeBlockOrCodeShape(out)) {
+            val markers = listOf("data class", "class ", "fun ", "import ", "object ", "interface ")
+            val lines = out.lines()
+            val start = lines.indexOfFirst { line ->
+                markers.any { m -> line.contains(m, ignoreCase = true) }
+            }
+            if (start >= 0) out = lines.drop(start).joinToString("\n")
+        }
+        return out.trim()
+    }
+
+    private fun passesFinalQualityGate(text: String): Boolean {
+        if (text.isBlank()) return false
+        if (looksLikeContextLeak(text)) return false
+        if (!isCodeTask(currentPrompt)) return true
+        return hasCodeBlockOrCodeShape(text) && meetsCodeTaskRequirements(currentPrompt, text)
+    }
+
+    private fun looksLikeContextLeak(text: String): Boolean {
+        val lower = text.lowercase()
+        return lower.contains("現場の短期記憶") ||
+            lower.contains("失敗の記録") ||
+            lower.contains("watchdog_timeout") ||
+            lower.contains("stall_no_progress")
+    }
+
+    private fun isCodeTask(prompt: String): Boolean {
+        val p = prompt.lowercase()
+        return p.contains("実装") ||
+            p.contains("コード") ||
+            p.contains("kotlin") ||
+            p.contains("python") ||
+            p.contains("typescript") ||
+            p.contains("java")
+    }
+
+    private fun hasCodeBlockOrCodeShape(text: String): Boolean {
+        val t = text.trim()
+        if (t.contains("```")) return true
+        val signals = listOf("class ", "fun ", "data class", "public ", "private ", "def ", "function ")
+        return signals.any { t.contains(it) }
+    }
+
+    private fun meetsCodeTaskRequirements(prompt: String, text: String): Boolean {
+        val p = prompt.lowercase()
+        val t = text.lowercase()
+        if (!p.contains("bst") && !p.contains("二分探索木")) return true
+        val needed = listOf("data class", "insert", "search", "delete", "inorder")
+        val hit = needed.count { t.contains(it) }
+        val requiresMain = p.contains("main")
+        val hasMain = t.contains("fun main") || t.contains("main(")
+        return hit >= max(4, needed.size - 1) && (!requiresMain || hasMain)
     }
 
     private fun dispatchFinal(text: String, success: Boolean) {
