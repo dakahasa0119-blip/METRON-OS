@@ -46,6 +46,7 @@ class ArcWorker(
     
     private var currentDoneCallback: (() -> Unit)? = null
     private var timeoutJob: Job? = null
+    private var taskHeartbeatJob: Job? = null
     private fun perAttemptTimeoutMsFor(target: String): Long {
         return when (target.lowercase()) {
             "copilot" -> 90_000L
@@ -73,9 +74,16 @@ class ArcWorker(
         web.onAiResult = { result ->
             if (!isAborted) {
                 onGlobalAiResult?.invoke(result)
-                if (currentQid != null) {
+                val qid = currentQid
+                if (qid != null) {
                     cancelActiveJobs()
-                    handleAiResult(result)
+                    if (qid.startsWith("PIPE_")) {
+                        emitStatus("PIPE_STEP_DONE")
+                        pipelineProvider().onAiResult(result)
+                        finishTask(currentDoneCallback)
+                    } else {
+                        handleAiResult(result)
+                    }
                 } else pipelineProvider().onAiResult(result)
             }
         }
@@ -102,7 +110,14 @@ class ArcWorker(
                     lastFailedSelector = type.substringAfter(":")
                     handleOperationFailure(data)
                 } else if (currentQid != null) {
-                    handleDomError(type, data)
+                    val qid = currentQid ?: ""
+                    if (qid.startsWith("PIPE_")) {
+                        emitStatus("PIPE_STEP_ERROR:$type")
+                        pipelineProvider().onAiResult("")
+                        finishTask(currentDoneCallback)
+                    } else {
+                        handleDomError(type, data)
+                    }
                 } else {
                     onSystemErrorRequest?.invoke(type, data)
                 }
@@ -183,6 +198,8 @@ class ArcWorker(
     private fun cancelActiveJobs() {
         timeoutJob?.cancel()
         timeoutJob = null
+        taskHeartbeatJob?.cancel()
+        taskHeartbeatJob = null
     }
 
     fun abortCurrent() { 
@@ -218,7 +235,7 @@ class ArcWorker(
                 emitStatus("MISSION START")
                 announceStatus("running")
                 pipelineProvider().start(task.prompt, task.missionId) {
-                    web.refreshProcess()
+                    currentMissionId = null
                     announceStatus("idle")
                     done() 
                 }
@@ -234,6 +251,7 @@ class ArcWorker(
                 }
                 currentDoneCallback = done
                 announceStatus("running")
+                startTaskHeartbeat(task.qid)
                 executeAiTask(task)
             }
             is ArcTask.VisionRequest -> {
@@ -360,6 +378,14 @@ class ArcWorker(
                     }
                 }
 
+                if (elapsed >= 6_000L) {
+                    val urlNow = web.currentUrl()
+                    if (isLoginRequiredUrl(target, urlNow)) {
+                        handleDomError("LOGIN_REQUIRED", urlNow)
+                        return@launch
+                    }
+                }
+
                 if (noProgressMs >= noProgressLimitMsFor(target)) {
                     val bot = detectBotWallQuick()
                     if (bot.first) {
@@ -379,6 +405,16 @@ class ArcWorker(
             if (!d.isCompleted) d.complete(blocked to mark)
         }
         return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
+    }
+
+    private fun startTaskHeartbeat(qid: String) {
+        taskHeartbeatJob?.cancel()
+        taskHeartbeatJob = workerScope.launch {
+            while (isActive && !isAborted && currentQid == qid) {
+                announceStatus("running")
+                delay(8_000L)
+            }
+        }
     }
 
     private fun handleAiResult(result: String) {
@@ -449,6 +485,26 @@ class ArcWorker(
         return marks.any { lower.contains(it.lowercase()) }
     }
 
+    private fun isLoginRequiredUrl(target: String, url: String): Boolean {
+        val u = url.lowercase()
+        if (u.isBlank()) return false
+        if (u.contains("bot.sannysoft.com") && target != "mobile_browser" && target != "full_browser") return true
+        return when (target.lowercase()) {
+            "gemini" ->
+                u.contains("accounts.google.com") || u.contains("/signin") || u.contains("/serviceLogin".lowercase())
+            "chatgpt" ->
+                u.contains("auth.openai.com") || u.contains("chatgpt.com/auth") || u.contains("/login")
+            "copilot" ->
+                u.contains("login.live.com") ||
+                    u.contains("microsoftonline.com") ||
+                    u.contains("/signin") ||
+                    u.contains("/login") ||
+                    u == "https://copilot.microsoft.com/" ||
+                    u == "https://copilot.microsoft.com"
+            else -> false
+        }
+    }
+
     private fun isBotBlocked(type: String, data: String?): Boolean {
         val text = (type + " " + (data ?: "")).lowercase()
         val marks = listOf(
@@ -506,14 +562,13 @@ class ArcWorker(
             persistFallbackResult(qid, type)
         }
 
-        if (!isCopilotHardBlocked && currentQid != null && !currentQid!!.startsWith("HEAL_") && isBotBlocked(type, data) && stealthRetryCount < 2) {
+        if (!isCopilotHardBlocked && currentQid != null && !currentQid!!.startsWith("HEAL_") && isBotBlocked(type, data) && stealthRetryCount < 1) {
             stealthRetryCount++
-            emitStatus("STEALTH_RETRY_$stealthRetryCount")
-            web.rotateStealthPersona(lastTarget)
+            emitStatus("SAFE_RETRY_$stealthRetryCount")
             val retryTask = lastAiTask?.copy(forceReload = true)
             if (retryTask != null) {
                 workerScope.launch {
-                    delay(2500)
+                    delay(1500)
                     if (!isAborted && currentQid != null) {
                         executeAiTask(retryTask)
                     }
@@ -768,7 +823,11 @@ class ArcWorker(
     }
 
     private fun finishTask(d: (() -> Unit)?) {
+        val wasQid = currentQid ?: ""
         currentQid = null
+        if (!wasQid.startsWith("PIPE_")) {
+            currentMissionId = null
+        }
         currentDoneCallback = null
         isFinalizingResult = false
         d?.invoke()

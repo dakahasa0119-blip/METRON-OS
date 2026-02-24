@@ -1,7 +1,5 @@
 package com.arc
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.*
 
@@ -11,8 +9,7 @@ import kotlinx.coroutines.*
  */
 class HallucinationPipeline(
     private val prefs: Prefs,
-    private val loadAi: (AiTarget) -> Unit,
-    private val injectPrompt: (String) -> Unit
+    private val injectPrompt: (AiTarget, String) -> Unit
 ) {
 
     private var onDone: ((String) -> Unit)? = null
@@ -49,14 +46,13 @@ class HallucinationPipeline(
         val finalPrompt = template.replace("{CONTENT}", combined)
 
         Log.d("ARC_HALLUCINATION", "🚀 Starting Summary Phase...")
-        loadAi(AiTarget.GEMINI)
         
         startPhaseTimeout()
 
         injectionJob?.cancel()
         injectionJob = scope.launch {
             delay(2000)
-            if (isProcessing) injectPrompt(finalPrompt)
+            if (isProcessing) injectPrompt(AiTarget.GEMINI, finalPrompt)
         }
     }
 
@@ -75,7 +71,7 @@ class HallucinationPipeline(
         phase = 1
 
         Log.d("ARC_HALLUCINATION", "🔍 Starting Fact Check Phase...")
-        loadAi(AiTarget.COPILOT)
+        // Copilot は bot/challenge 影響を受けやすいため、最終検証は ChatGPT 側で実施
         
         val factCheckPrompt = """
             以下の内容に事実誤認や矛盾がないか最終確認し、必要なら修正して完成させてください。
@@ -89,7 +85,7 @@ class HallucinationPipeline(
         injectionJob?.cancel()
         injectionJob = scope.launch {
             delay(2000)
-            if (isProcessing) injectPrompt(factCheckPrompt)
+            if (isProcessing) injectPrompt(AiTarget.CHATGPT, factCheckPrompt)
         }
     }
 
@@ -101,7 +97,7 @@ class HallucinationPipeline(
         if (summaryBuffer.isNotEmpty()) {
             complete(summaryBuffer)
         } else {
-            complete("Error: Hallucination pipeline failed.")
+            complete("Error: Hallucination pipeline failed")
         }
     }
 

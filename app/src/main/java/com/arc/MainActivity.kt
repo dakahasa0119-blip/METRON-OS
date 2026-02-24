@@ -169,7 +169,7 @@ class MainActivity : AppCompatActivity() {
         heartbeatJob = mainScope.launch {
             val intervalMs = prefs.heartbeatIntervalMs.coerceIn(5000L, 120000L)
             while (isActive) {
-                val busy = arcQueue.pendingCount() > 0
+                val busy = arcWorker.currentQid != null
                 if (!busy) {
                     arcWorker.announceStatus("heartbeat") { instruction ->
                         handleGatewayInstruction(instruction)
@@ -193,17 +193,11 @@ class MainActivity : AppCompatActivity() {
                 val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
                 val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
                 val target = instruction.optString("target", currentTarget.name)
-                val retryCount = instruction.optInt("retry_count", 0).coerceAtLeast(0)
                 val prompt = instruction.optString("prompt", "")
                 if (prompt.isNotBlank()) {
                     ensureOperationalForeground("gateway_instruction_request_arc")
                     if (target.equals("ALL", ignoreCase = true)) {
-                        val routedTarget = when (retryCount % 3) {
-                            0 -> AiTarget.GEMINI.name
-                            1 -> AiTarget.CHATGPT.name
-                            else -> AiTarget.COPILOT.name
-                        }
-                        arcQueue.enqueue(ArcTask.AI(qid, routedTarget, prompt, missionId = missionId))
+                        arcQueue.enqueue(ArcTask.Pipeline(prompt, missionId = missionId))
                     } else {
                         arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId))
                     }
@@ -295,23 +289,48 @@ class MainActivity : AppCompatActivity() {
     private fun setupPipelines() {
         val hallucinationPipeline = HallucinationPipeline(
             prefs = prefs,
-            loadAi = { target -> arcQueue.enqueue(ArcTask.AI("HAL_RECON", target.name, "Recovery", missionId = "HAL_FIX")) },
-            injectPrompt = { text -> arcQueue.enqueue(ArcTask.AI("HAL_INJECT", currentTarget.name, text, missionId = "HAL_FIX")) }
+            injectPrompt = { target, text ->
+                arcWorker.process(
+                    ArcTask.AI(
+                        qid = "PIPE_${System.currentTimeMillis()}",
+                        target = target.name,
+                        prompt = text,
+                        missionId = "HAL_FIX"
+                    )
+                ) { }
+            }
         )
 
         allAiPipeline = AllAiPipeline(
             prefs = prefs,
             requestExecution = { target, prompt, missionId ->
-                arcQueue.enqueue(ArcTask.AI(qid = "PIPE_${System.currentTimeMillis()}", target = target.name, prompt = prompt, missionId = missionId))
+                arcWorker.process(
+                    ArcTask.AI(
+                        qid = "PIPE_${System.currentTimeMillis()}",
+                        target = target.name,
+                        prompt = prompt,
+                        missionId = missionId
+                    )
+                ) { }
             },
-            onFinalResult = { missionId, final ->
+            onFinalResult = { missionId, final, success ->
                 val mid = if (missionId.isBlank()) "ALL_FINAL" else missionId
-                arcGateway.sendArcResult(
-                    qid = mid,
-                    result = final,
-                    missionId = mid,
-                    target = "ALL"
-                )
+                if (success) {
+                    arcGateway.sendArcResult(
+                        qid = mid,
+                        result = final,
+                        missionId = mid,
+                        target = "ALL"
+                    )
+                } else {
+                    arcGateway.sendArcError(
+                        qid = mid,
+                        type = "ALL_PIPELINE_FAILED",
+                        data = final,
+                        missionId = mid,
+                        target = "ALL"
+                    )
+                }
                 runOnUiThread { debugHud.update("ALL_DONE") }
             },
             hallucinationPipeline = hallucinationPipeline,

@@ -14,7 +14,7 @@ class AllAiPipeline(
     private val prefs: Prefs,
     // 司令部への実行依頼 (missionId を伝搬させる)
     private val requestExecution: (target: AiTarget, prompt: String, missionId: String) -> Unit,
-    private val onFinalResult: (String, String) -> Unit,
+    private val onFinalResult: (String, String, Boolean) -> Unit,
     private val hallucinationPipeline: HallucinationPipeline,
     private val requestVisionSolve: (action: String, onSolved: (Int, Int) -> Unit) -> Unit,
     private val consultGateway: (context: String, problem: String, image: String?, callback: (String) -> Unit) -> Unit,
@@ -29,6 +29,7 @@ class AllAiPipeline(
     private var gatewayMissionId = "AUTO"
     private var gatewayAdvice = ""
     private var pipelineActive = false
+    private var finalDispatched = false
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pipelineJob: Job? = null
 
@@ -39,30 +40,19 @@ class AllAiPipeline(
         this.gatewayMissionId = if (gatewayMissionId.isBlank()) "AUTO" else gatewayMissionId
         this.missionId = "MISS_" + System.currentTimeMillis()
         this.results.clear()
+        this.finalDispatched = false
         
         Util.trace(missionId, Util.Level.SUMMARY, "MISSION_INIT", "Mission Start: Neural coordination active.")
 
         pipelineJob = scope.launch {
             try {
-                // 1. 🕵️ [連動偵察] 現場の安全を確保
-                Util.expect(missionId, "RECON_COMPLETE", 45000)
-                if (!performStrictRecon()) {
-                    Util.trace(missionId, Util.Level.SUMMARY, "RECON_FAIL", "Detection triggered. Self-evolution initiated.")
-                    evolveSpoofing()
-                    if (!performStrictRecon()) {
-                        Util.trace(missionId, Util.Level.CRITICAL, "ABORT", "Recon failure chain. Aborting for safety.")
-                        onFinalResult(this@AllAiPipeline.gatewayMissionId, "Error: Recon Blocked")
-                        return@launch
-                    }
-                }
-                Util.trace(missionId, Util.Level.THOUGHT, "RECON_COMPLETE", "Recon verified.")
-
-                // 2. 🧠 [知能相談] Gatewayの知恵を借りる
+                // 1. 🧠 [知能相談] Gatewayの知恵を借りる
                 Util.expect(missionId, "ADVICE_RECEIVED", 30000)
                 fetchVisualGatewayAdvice()
 
-                // 3. 🚀 [統合リレー] 司令部を介した実行連鎖
-                val targets = listOf(AiTarget.GEMINI, AiTarget.CHATGPT, AiTarget.COPILOT)
+                // 2. 🚀 [統合リレー] 司令部を介した実行連鎖
+                // Copilot は bot/challenge で停止しやすいため、ALL は安定2系統で完走させる。
+                val targets = listOf(AiTarget.GEMINI, AiTarget.CHATGPT)
                 for (target in targets) {
                     if (!pipelineActive) break
                     
@@ -83,17 +73,24 @@ class AllAiPipeline(
                     }
                 }
 
-                // 4. [最終統合]
-                if (pipelineActive && results.isNotEmpty()) {
-                    Util.expect(missionId, "SYNTHESIS_COMPLETE", 150000)
-                    finalizePipelineSuspending()
+                // 3. [最終統合]
+                if (pipelineActive) {
+                    if (results.isNotEmpty()) {
+                        Util.expect(missionId, "SYNTHESIS_COMPLETE", 150000)
+                        finalizePipelineSuspending()
+                    } else {
+                        dispatchFinal("Error: No valid outputs from ALL pipeline", false)
+                    }
                 }
 
             } catch (e: Exception) {
                 Util.trace(missionId, Util.Level.CRITICAL, "PIPELINE_ANOMALY", "Exception: ${e.message}")
-                if (e !is CancellationException) onFinalResult(this@AllAiPipeline.gatewayMissionId, "Mission Failure")
+                if (e !is CancellationException) dispatchFinal("Mission Failure", false)
             } finally {
                 Util.checkAnomalies(missionId) 
+                if (!finalDispatched) {
+                    dispatchFinal("Error: Pipeline aborted", false)
+                }
                 pipelineActive = false
                 onComplete()
                 Util.trace(missionId, Util.Level.SUMMARY, "MISSION_END", "Mission sequence finished.")
@@ -111,27 +108,6 @@ class AllAiPipeline(
         // ArcWorker からの onAiResult 信号を待機 (最大110秒)
         return withTimeoutOrNull(110000) {
             resultDeferred?.await()
-        }
-    }
-
-    private suspend fun performStrictRecon(): Boolean {
-        pageLoadDeferred = CompletableDeferred()
-        requestExecution(AiTarget.MOBILE_BROWSER, "Reconnaissance Mode", gatewayMissionId)
-        
-        // ページ読み込み完了を待機
-        withTimeoutOrNull(30000) { pageLoadDeferred?.await() }
-        delay(3000)
-
-        val isSafe = CompletableDeferred<Boolean>()
-        requestVisionSolve("Bot Check") { x, y -> isSafe.complete(x == 0 && y == 0) }
-        return withTimeoutOrNull(25000) { isSafe.await() } ?: true
-    }
-
-    private suspend fun evolveSpoofing() {
-        val newUA = executeViaCommandCenter(AiTarget.GEMINI, "Generate new realistic Mobile User-Agent string. Result only.")
-        if (newUA != null && newUA.contains("Mozilla")) {
-            prefs.mobileUserAgent = newUA.trim()
-            Util.trace(missionId, Util.Level.SUMMARY, "EVOLUTION", "Persona updated.")
         }
     }
 
@@ -166,7 +142,15 @@ class AllAiPipeline(
         if (gatewayAdvice.isNotEmpty()) Util.trace(missionId, Util.Level.SUMMARY, "ADVICE", "Strategy acquired.")
     }
 
-    private fun isResponseQualityGood(res: String) = res.length > 30 && !res.lowercase().contains("access denied")
+    private fun isResponseQualityGood(res: String): Boolean {
+        val lowerPrompt = currentPrompt.lowercase()
+        val expectsShort = lowerPrompt.contains("のみ返答") ||
+            lowerPrompt.contains("だけ返答") ||
+            lowerPrompt.contains("only reply") ||
+            lowerPrompt.contains(" ok")
+        val minLen = if (expectsShort) 2 else 30
+        return res.trim().length >= minLen && !res.lowercase().contains("access denied")
+    }
     
     private fun buildAdaptivePrompt(count: Int, prev: List<String>, name: String): String {
         val context = if (prev.isNotEmpty()) "\n[Prev Result: ${prev.last().take(300)}...]" else ""
@@ -179,8 +163,18 @@ class AllAiPipeline(
         val d = CompletableDeferred<String>()
         hallucinationPipeline.process(currentPrompt, results) { d.complete(it) }
         val final = withTimeoutOrNull(120000) { d.await() }
-        if (final != null) Util.trace(missionId, Util.Level.SUMMARY, "COMPLETE", "Final synthesis success.")
-        onFinalResult(gatewayMissionId, final ?: "Failed to synthesize.")
+        val text = final ?: "Failed to synthesize."
+        val ok = text.isNotBlank() &&
+            !text.startsWith("Error:", ignoreCase = true) &&
+            !text.contains("failed to synthesize", ignoreCase = true)
+        if (ok) Util.trace(missionId, Util.Level.SUMMARY, "COMPLETE", "Final synthesis success.")
+        dispatchFinal(text, ok)
+    }
+
+    private fun dispatchFinal(text: String, success: Boolean) {
+        if (finalDispatched) return
+        finalDispatched = true
+        onFinalResult(gatewayMissionId, text, success)
     }
 
     fun stop() { pipelineActive = false; pipelineJob?.cancel(); resultDeferred?.cancel(); pageLoadDeferred?.cancel() }

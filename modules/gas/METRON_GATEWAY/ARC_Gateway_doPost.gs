@@ -677,6 +677,16 @@ function doPost(e) {
     const payload = found.payload;
     const target = lower(payload.target || "");
     const errType = upper(errorType || "");
+    const loginNoRetry = errType.indexOf("LOGIN_REQUIRED") >= 0;
+    if (loginNoRetry) {
+      return { retried: false, reason: "login_required_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
+    }
+    const allPipelineNoRetry =
+      target === "all" &&
+      errType.indexOf("ALL_PIPELINE_FAILED") >= 0;
+    if (allPipelineNoRetry) {
+      return { retried: false, reason: "all_pipeline_failed_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
+    }
     const copilotNoRetry =
       target === "copilot" &&
       (
@@ -1009,7 +1019,7 @@ function doPost(e) {
   const nextFailoverTarget = (currentTarget) => {
     const t = lower(currentTarget);
     if (t === "chatgpt") return "gemini";
-    if (t === "gemini") return "copilot";
+    if (t === "gemini") return "chatgpt";
     if (t === "copilot") return "chatgpt";
     return "gemini";
   };

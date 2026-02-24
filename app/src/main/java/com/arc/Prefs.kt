@@ -153,19 +153,24 @@ class Prefs(context: Context) {
 
     fun clearContext() { contextHistory = "[]"; summarizedContext = "" }
 
-    fun getFormattedContext(): String {
+    fun getFormattedContext(includeFailures: Boolean = true, maxSuccess: Int = 5): String {
         if (summarizedContext.isNotEmpty()) return "\n【現場の記憶 (要約)】\n$summarizedContext\n"
         return try {
             val list = JSONArray(contextHistory)
             if (list.length() == 0) return ""
             val sb = StringBuilder("\n【現場の短期記憶（直近の経緯）】\n")
             val total = list.length()
+            var successCount = 0
             for (i in 0 until total) {
                 val item = list.getJSONObject(i)
                 val type = item.optString("type", "SUCCESS")
                 val q = item.getString("q"); val a = item.getString("a")
-                if (type == "FAILURE") sb.append("⚠️ 失敗の記録: $q -> $a\n")
-                else if (total - i <= 5) sb.append("Q: ${q.take(100)}\nA: ${a.take(300)}\n---\n")
+                if (type == "FAILURE") {
+                    if (includeFailures) sb.append("⚠️ 失敗の記録: $q -> $a\n")
+                } else if (total - i <= maxSuccess && successCount < maxSuccess) {
+                    sb.append("Q: ${q.take(100)}\nA: ${a.take(300)}\n---\n")
+                    successCount++
+                }
             }
             sb.toString()
         } catch (_: Exception) { "" }
