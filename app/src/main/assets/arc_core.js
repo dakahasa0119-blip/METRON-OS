@@ -87,6 +87,8 @@ window.arc = (() => {
   return {
     __lastPostedResult: "",
     __resultBaseline: "",
+    __pendingResult: "",
+    __pendingCount: 0,
     isLikelyUserNode: (node) => {
         if (!node) return false;
         const selfRole = (node.getAttribute && node.getAttribute('data-message-author-role')) || "";
@@ -174,11 +176,15 @@ window.arc = (() => {
           if (txt.length > 5 && !window.arc.isPromptEcho(txt)) {
             window.arc.__resultBaseline = txt;
             window.arc.__lastPostedResult = txt;
+            window.arc.__pendingResult = "";
+            window.arc.__pendingCount = 0;
             return txt;
           }
         }
         window.arc.__resultBaseline = "";
         window.arc.__lastPostedResult = "";
+        window.arc.__pendingResult = "";
+        window.arc.__pendingCount = 0;
         return "";
     },
     extractCleanResult: (sel) => {
@@ -215,7 +221,20 @@ window.arc = (() => {
         const lastPosted = window.arc.__lastPostedResult || "";
         if (txt === baseline || txt === lastPosted) return txt;
 
+        const generating = !!document.querySelector('[aria-label*="停止"], [aria-label*="Stop"], .result-streaming, .generating');
+        if (txt !== window.arc.__pendingResult) {
+          window.arc.__pendingResult = txt;
+          window.arc.__pendingCount = 1;
+          return txt;
+        } else {
+          window.arc.__pendingCount = (window.arc.__pendingCount || 0) + 1;
+        }
+        // 生成中は送信しない。停止後に同一テキストを2回連続確認してから確定送信。
+        if (generating || window.arc.__pendingCount < 2) return txt;
+
         window.arc.__lastPostedResult = txt;
+        window.arc.__pendingResult = "";
+        window.arc.__pendingCount = 0;
         if (window.AndroidBridge) AndroidBridge.postMessage(txt);
         return txt;
     },

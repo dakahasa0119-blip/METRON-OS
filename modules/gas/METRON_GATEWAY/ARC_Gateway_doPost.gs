@@ -864,6 +864,23 @@ function doPost(e) {
       sheets.jobs.getRange(i + 1, 7).setValue(new Date());
       return { touched: true, job_id: jobId };
     }
+    // フォールバック: running heartbeat なら同一workerの最新 leased を延命
+    const hbStatus = lower(norm(hb.status || ""));
+    if (hbStatus === "running" && workerId) {
+      let latest = null;
+      for (let i = rows.length - 1; i >= 1; i--) {
+        const row = rows[i];
+        if (lower(row[5]) !== "leased") continue;
+        const rowWorker = norm(row[2]);
+        if (!rowWorker || rowWorker !== workerId) continue;
+        latest = { rowIndex: i + 1, jobId: norm(row[1]) };
+        break;
+      }
+      if (latest) {
+        sheets.jobs.getRange(latest.rowIndex, 7).setValue(new Date());
+        return { touched: true, job_id: latest.jobId, reason: "running_fallback_latest_leased" };
+      }
+    }
     return { touched: false, reason: "not_found" };
   };
 

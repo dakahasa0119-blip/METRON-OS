@@ -187,7 +187,7 @@ class AllAiPipeline(
     private suspend fun finalizePipelineSuspending() {
         val rubric = buildRubric(currentPrompt)
         val d = CompletableDeferred<String>()
-        hallucinationPipeline.process(currentPrompt, results) { d.complete(it) }
+        hallucinationPipeline.process(currentPrompt, gatewayMissionId, results) { d.complete(it) }
         val final = withTimeoutOrNull(120000) { d.await() }
         val draft = normalizeFinalOutputForTask(final ?: "Failed to synthesize.")
         val repaired = if (evaluateCandidate(draft, rubric).score >= 60) draft else repairFinalOnce(draft)
@@ -400,6 +400,8 @@ class AllAiPipeline(
     }
 
     fun lastEvalSummary(): String = lastEvalSummaryText
+
+    fun isRunning(): Boolean = pipelineActive
 
     fun stop() { pipelineActive = false; pipelineJob?.cancel(); resultDeferred?.cancel(); pageLoadDeferred?.cancel() }
 }

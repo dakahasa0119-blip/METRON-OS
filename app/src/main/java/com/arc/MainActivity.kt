@@ -169,7 +169,7 @@ class MainActivity : AppCompatActivity() {
         heartbeatJob = mainScope.launch {
             val intervalMs = prefs.heartbeatIntervalMs.coerceIn(5000L, 120000L)
             while (isActive) {
-                val busy = arcWorker.currentQid != null
+                val busy = arcWorker.currentQid != null || allAiPipeline.isRunning()
                 if (!busy) {
                     arcWorker.announceStatus("heartbeat") { instruction ->
                         handleGatewayInstruction(instruction)
@@ -289,13 +289,13 @@ class MainActivity : AppCompatActivity() {
     private fun setupPipelines() {
         val hallucinationPipeline = HallucinationPipeline(
             prefs = prefs,
-            injectPrompt = { target, text ->
+            injectPrompt = { target, text, missionId ->
                 arcWorker.process(
                     ArcTask.AI(
                         qid = "PIPE_${System.currentTimeMillis()}",
                         target = target.name,
                         prompt = text,
-                        missionId = "HAL_FIX"
+                        missionId = missionId
                     )
                 ) { }
             }

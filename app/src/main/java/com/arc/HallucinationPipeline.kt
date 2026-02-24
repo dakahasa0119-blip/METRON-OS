@@ -9,12 +9,13 @@ import kotlinx.coroutines.*
  */
 class HallucinationPipeline(
     private val prefs: Prefs,
-    private val injectPrompt: (AiTarget, String) -> Unit
+    private val injectPrompt: (AiTarget, String, String) -> Unit
 ) {
 
     private var onDone: ((String) -> Unit)? = null
     private var summaryBuffer = ""
     private var originalPrompt = ""
+    private var missionId = ""
 
     var isProcessing = false
         private set
@@ -33,8 +34,9 @@ class HallucinationPipeline(
         }
     }
 
-    fun process(prompt: String, results: List<String>, callback: (String) -> Unit) {
+    fun process(prompt: String, missionId: String, results: List<String>, callback: (String) -> Unit) {
         this.originalPrompt = prompt
+        this.missionId = missionId
         this.onDone = callback
         this.isProcessing = true
         this.phase = 0
@@ -52,7 +54,7 @@ class HallucinationPipeline(
         injectionJob?.cancel()
         injectionJob = scope.launch {
             delay(2000)
-            if (isProcessing) injectPrompt(AiTarget.GEMINI, finalPrompt)
+            if (isProcessing) injectPrompt(AiTarget.GEMINI, finalPrompt, this@HallucinationPipeline.missionId)
         }
     }
 
@@ -85,7 +87,7 @@ class HallucinationPipeline(
         injectionJob?.cancel()
         injectionJob = scope.launch {
             delay(2000)
-            if (isProcessing) injectPrompt(AiTarget.CHATGPT, factCheckPrompt)
+            if (isProcessing) injectPrompt(AiTarget.CHATGPT, factCheckPrompt, this@HallucinationPipeline.missionId)
         }
     }
 
