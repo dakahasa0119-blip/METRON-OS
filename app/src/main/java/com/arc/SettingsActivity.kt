@@ -51,7 +51,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnTestConnection.setOnClickListener {
             val url = binding.gasUrl.text.toString().trim()
             if (url.isEmpty()) {
-                Toast.makeText(this, "URLを入力してください", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.toast_enter_url), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
@@ -60,15 +60,15 @@ class SettingsActivity : AppCompatActivity() {
             val gateway = GatewayClient(prefs)
 
             binding.btnTestConnection.isEnabled = false
-            Toast.makeText(this, "中央知能(Gateway)とハンドシェイク中...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_handshake_start), Toast.LENGTH_SHORT).show()
 
             gateway.performHandshake { success ->
                 runOnUiThread {
                     binding.btnTestConnection.isEnabled = true
                     if (success) {
-                        Toast.makeText(this, "✅ 接続成功！同期が確立されました。", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, getString(R.string.toast_handshake_ok), Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(this, "❌ 接続失敗 (URLかGASの設定を確認してください)", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, getString(R.string.toast_handshake_fail), Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -80,7 +80,7 @@ class SettingsActivity : AppCompatActivity() {
             val sheetId = binding.sheetId.text.toString().trim()
 
             if (url.isEmpty()) {
-                Toast.makeText(this, "先にGASのURLを入力してください", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.toast_enter_gas_url_first), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
@@ -89,19 +89,19 @@ class SettingsActivity : AppCompatActivity() {
             val gateway = GatewayClient(prefs)
 
             binding.btnAutoSetup.isEnabled = false
-            binding.btnAutoSetup.text = "インフラ構築中..."
+            binding.btnAutoSetup.text = getString(R.string.btn_auto_setup_running)
 
             // 🚀 [整合] 司令部のポート情報を添えてインフラ構築依頼
             gateway.sendSetupRequest(MainActivity.serverPort) { success, message ->
                 runOnUiThread {
                     binding.btnAutoSetup.isEnabled = true
-                    binding.btnAutoSetup.text = "全自動セットアップ実行"
+                    binding.btnAutoSetup.text = getString(R.string.btn_auto_setup)
                     
                     if (success) {
-                        Toast.makeText(this@SettingsActivity, "✅ 環境構築成功: $message", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@SettingsActivity, getString(R.string.toast_setup_ok, message), Toast.LENGTH_LONG).show()
                         saveCommonPrefs()
                     } else {
-                        Toast.makeText(this@SettingsActivity, "❌ 構築失敗: $message", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@SettingsActivity, getString(R.string.toast_setup_fail, message), Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -147,7 +147,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun setupSlotSpinner() {
-        val slots = arrayOf("スロット 1 (Basic)", "スロット 2 (Expert)", "スロット 3 (Creative)")
+        val slots = resources.getStringArray(R.array.profile_slots)
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, slots)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.profileSpinner.adapter = adapter
@@ -223,9 +223,9 @@ class SettingsActivity : AppCompatActivity() {
             val json = binding.experimentalJson.text.toString()
             if (isValidJson(json)) {
                 saveSlotData(prefs.selectedSlotIndex, json)
-                Toast.makeText(this, "プロファイルを更新しました", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.toast_profile_updated), Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "JSON形式が不正です", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.toast_json_invalid), Toast.LENGTH_SHORT).show()
             }
         }
         binding.exportButton.setOnClickListener { refreshJsonEditor(prefs.selectedSlotIndex) }
@@ -234,7 +234,7 @@ class SettingsActivity : AppCompatActivity() {
             val currentJson = binding.experimentalJson.text.toString()
             if (isValidJson(currentJson)) saveSlotData(prefs.selectedSlotIndex, currentJson)
             prefs.applyProfile()
-            Toast.makeText(this, "全ての設定を適用しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_all_settings_applied), Toast.LENGTH_SHORT).show()
             finish()
         }
     }

@@ -12,6 +12,8 @@ function doPost(e) {
   const MAX_CHAT_CONTENT = 4000;
   const MAX_USER = 64;
   const MAX_PROMPT = 8000;
+  const MAX_MEMORY_KEY = 128;
+  const MAX_MEMORY_VALUE = 4000;
   const TZ = "Asia/Tokyo";
 
   const ensureSheet = (name, header) => {
@@ -44,6 +46,12 @@ function doPost(e) {
   const leaseTimeoutSecRaw = parseInt(norm(props.getProperty("ARC_LEASE_TIMEOUT_SEC")) || "300", 10);
   const leaseTimeoutSec = Number.isFinite(leaseTimeoutSecRaw) && leaseTimeoutSecRaw >= 30 ? leaseTimeoutSecRaw : 300;
   const leaseTimeoutMs = leaseTimeoutSec * 1000;
+  const leaseExpireMaxRaw = parseInt(norm(props.getProperty("ARC_LEASE_EXPIRE_MAX")) || "2", 10);
+  const leaseExpireMax = Number.isFinite(leaseExpireMaxRaw) && leaseExpireMaxRaw >= 1 ? leaseExpireMaxRaw : 2;
+  const pendingTimeoutSecRaw = parseInt(norm(props.getProperty("ARC_PENDING_TIMEOUT_SEC")) || "420", 10);
+  const pendingTimeoutSec = Number.isFinite(pendingTimeoutSecRaw) && pendingTimeoutSecRaw >= 60 ? pendingTimeoutSecRaw : 420;
+  const pendingTimeoutMs = pendingTimeoutSec * 1000;
+  const targetFailoverEnabled = lower(norm(props.getProperty("ARC_TARGET_FAILOVER_ENABLED") || "true")) === "true";
 
   const maxRetryRaw = parseInt(norm(props.getProperty("ARC_MAX_RETRY")) || "2", 10);
   const maxRetry = Number.isFinite(maxRetryRaw) && maxRetryRaw >= 0 ? maxRetryRaw : 2;
@@ -103,7 +111,9 @@ function doPost(e) {
       ARC_DEFAULT_EXECUTOR: "AUTO",
       ARC_DEFAULT_TARGET: "chatgpt",
       ARC_REPAIR_EXECUTOR: "BAKU",
-      ARC_LEASE_TIMEOUT_SEC: "300",
+      ARC_LEASE_TIMEOUT_SEC: "180",
+      ARC_PENDING_TIMEOUT_SEC: "420",
+      ARC_TARGET_FAILOVER_ENABLED: "true",
       ARC_MAX_RETRY: "2",
       ARC_RETRY_BACKOFF_SEC: "30",
       ARC_AUDIT_RETENTION_DAYS: "14",
@@ -114,6 +124,7 @@ function doPost(e) {
       ARC_REQUIRE_SIGNATURE: "false",
       ARC_SIGNATURE_WINDOW_SEC: "180",
       ARC_NONCE_TTL_SEC: "300"
+      ,ARC_LEASE_EXPIRE_MAX: "2"
     };
     Object.keys(defaults).forEach((k) => {
       if (!norm(props.getProperty(k))) props.setProperty(k, defaults[k]);
@@ -128,7 +139,9 @@ function doPost(e) {
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
     "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
-    "admin_status", "admin_cleanup", "admin_pause", "admin_resume"
+    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts",
+    "gateway_memory_put", "gateway_memory_get", "memory_put", "memory_get",
+    "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get"
   ];
 
   const getRequestTsMs = (v) => {
@@ -212,7 +225,7 @@ function doPost(e) {
 
   const sheets = {
     main: ensureSheet("MAIN_CHAT", ["Timestamp", "User", "Content", "Status", "Response", "MissionID"]),
-    nodes: ensureSheet("ARC_NODES", ["LastSeen", "IP", "Port", "Status", "Capabilities", "Version"]),
+    nodes: ensureSheet("ARC_NODES", ["LastSeen", "IP", "Port", "Status", "Capabilities", "Version", "WorkerID", "Executor", "CurrentHost", "CurrentUrl", "CurrentTitle", "HudTail"]),
     jobs: ensureSheet("ARC_JOBS", ["Timestamp", "JobID", "Worker", "Mode", "Payload", "Status", "LeasedAt"]),
     results: ensureSheet("ARC_RESULTS", ["Timestamp", "MissionID", "Target", "Prompt", "Result", "ImageURL"]),
     errors: ensureSheet("ARC_ERRORS", ["Timestamp", "QID", "Type", "Data"]),
@@ -222,7 +235,9 @@ function doPost(e) {
     audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     dead: ensureSheet("ARC_DEAD_JOBS", ["Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload"]),
     auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
-    alerts: ensureSheet("ARC_ALERTS", ["Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID"])
+    alerts: ensureSheet("ARC_ALERTS", ["Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID"]),
+    gatewayMemory: ensureSheet("GATEWAY_LONG_MEMORY", ["Timestamp", "Key", "Value", "Source", "TraceID", "Tags"]),
+    arcShortMemory: ensureSheet("ARC_SHORT_MEMORY", ["Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID"])
   };
 
   const addAudit = (traceId, event, jobId, worker, status, detail) => {
@@ -317,6 +332,111 @@ function doPost(e) {
     }
   };
 
+  const parseIntSafe = (v, fallback) => {
+    const n = parseInt(norm(v), 10);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const clamp = (n, minV, maxV) => Math.max(minV, Math.min(maxV, n));
+
+  const setGatewayLongMemory = (key, value, source, traceId, tags) => {
+    const k = norm(key).slice(0, MAX_MEMORY_KEY);
+    if (!k) return { ok: false, error: "key_required" };
+    const val = norm(value).slice(0, MAX_MEMORY_VALUE);
+    sheets.gatewayMemory.appendRow([new Date(), k, val, norm(source), norm(traceId), norm(tags)]);
+    return { ok: true, key: k };
+  };
+
+  const getGatewayLongMemory = (key, limitRaw) => {
+    const k = norm(key).slice(0, MAX_MEMORY_KEY);
+    if (!k) return [];
+    const limit = clamp(parseIntSafe(limitRaw, 1), 1, 50);
+    const rows = sheets.gatewayMemory.getDataRange().getValues();
+    const out = [];
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if (norm(rows[i][1]) !== k) continue;
+      out.push({
+        timestamp: rows[i][0],
+        key: norm(rows[i][1]),
+        value: norm(rows[i][2]),
+        source: norm(rows[i][3]),
+        trace_id: norm(rows[i][4]),
+        tags: norm(rows[i][5])
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+
+  const cleanupArcShortMemory = (maxRowsToScan) => {
+    const limit = clamp(parseIntSafe(maxRowsToScan, 500), 50, 5000);
+    const last = sheets.arcShortMemory.getLastRow();
+    if (last <= 1) return 0;
+    const startRow = Math.max(2, last - limit + 1);
+    const rows = sheets.arcShortMemory.getRange(startRow, 1, last - startRow + 1, 8).getValues();
+    const now = Date.now();
+    let removed = 0;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const expiresAtMs = new Date(rows[i][6]).getTime();
+      if (Number.isFinite(expiresAtMs) && expiresAtMs <= now) {
+        sheets.arcShortMemory.deleteRow(startRow + i);
+        removed++;
+      }
+    }
+    return removed;
+  };
+
+  const putArcShortMemory = (workerId, sessionId, key, value, ttlSecRaw, traceId) => {
+    const worker = norm(workerId).slice(0, MAX_USER);
+    const session = norm(sessionId).slice(0, 120);
+    const k = norm(key).slice(0, MAX_MEMORY_KEY);
+    if (!worker) return { ok: false, error: "worker_id_required" };
+    if (!k) return { ok: false, error: "key_required" };
+    const ttlSec = clamp(parseIntSafe(ttlSecRaw, 1800), 30, 86400);
+    const expiresAt = new Date(Date.now() + ttlSec * 1000);
+    sheets.arcShortMemory.appendRow([
+      new Date(),
+      worker,
+      session,
+      k,
+      norm(value).slice(0, MAX_MEMORY_VALUE),
+      ttlSec,
+      expiresAt,
+      norm(traceId)
+    ]);
+    return { ok: true, worker_id: worker, key: k, ttl_sec: ttlSec, expires_at: expiresAt.toISOString() };
+  };
+
+  const getArcShortMemory = (workerId, sessionId, key, limitRaw) => {
+    const worker = norm(workerId);
+    const session = norm(sessionId);
+    const k = norm(key);
+    const limit = clamp(parseIntSafe(limitRaw, 5), 1, 50);
+    const rows = sheets.arcShortMemory.getDataRange().getValues();
+    const now = Date.now();
+    const out = [];
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const r = rows[i];
+      const expiresAtMs = new Date(r[6]).getTime();
+      if (Number.isFinite(expiresAtMs) && expiresAtMs <= now) continue;
+      if (worker && norm(r[1]) !== worker) continue;
+      if (session && norm(r[2]) !== session) continue;
+      if (k && norm(r[3]) !== k) continue;
+      out.push({
+        timestamp: r[0],
+        worker_id: norm(r[1]),
+        session_id: norm(r[2]),
+        key: norm(r[3]),
+        value: norm(r[4]),
+        ttl_sec: parseIntSafe(r[5], 0),
+        expires_at: r[6],
+        trace_id: norm(r[7])
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+
   const parseCommandTags = (text) => {
     const raw = norm(text);
     const l = raw.toLowerCase();
@@ -331,10 +451,18 @@ function doPost(e) {
     else if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy")) executor = "ARC";
 
     let target = defaultTarget;
-    if (has("#chatgpt") || has("@chatgpt")) target = "chatgpt";
-    else if (has("#copilot") || has("@copilot")) target = "copilot";
+    let targetPinned = false;
+    if (has("#chatgpt") || has("@chatgpt") || has("[chatgpt]")) target = "chatgpt";
+    else if (has("#copilot") || has("@copilot") || has("[copilot]")) target = "copilot";
     else if (has("#all") || has("@all")) target = "ALL";
-    else if (has("#gemini") || has("@gemini")) target = "gemini";
+    else if (has("#gemini") || has("@gemini") || has("[gemini]")) target = "gemini";
+    if (
+      has("#chatgpt") || has("@chatgpt") || has("[chatgpt]") ||
+      has("#gemini") || has("@gemini") || has("[gemini]") ||
+      has("#copilot") || has("@copilot") || has("[copilot]")
+    ) targetPinned = true;
+    if (has("#pin_target") || has("@pin_target") || has("#locktarget") || has("#target_fixed")) targetPinned = true;
+    if (has("#allow_failover") || has("@allow_failover")) targetPinned = false;
 
     let opMode = "request_arc";
     if (has("#refresh")) opMode = "arc_refresh";
@@ -359,7 +487,7 @@ function doPost(e) {
     if (!cleanPrompt) cleanPrompt = raw;
     if (cleanPrompt.length > MAX_PROMPT) cleanPrompt = cleanPrompt.slice(0, MAX_PROMPT);
 
-    return { route: route, target: target, opMode: opMode, script: script, prompt: cleanPrompt, executor: executor };
+    return { route: route, target: target, opMode: opMode, script: script, prompt: cleanPrompt, executor: executor, pinTarget: targetPinned };
   };
 
   const upsertMothershipNode = (workerId, status, version) => {
@@ -421,6 +549,7 @@ function doPost(e) {
     const payload = {
       qid: norm(job.qid) || jobId,
       target: norm(job.target) || "gemini",
+      pin_target: lower(norm(job.pinTarget || "false")) === "true" ? "true" : "false",
       prompt: norm(job.prompt).slice(0, MAX_PROMPT),
       script: norm(job.script),
       executor: norm(job.executor) || "AUTO",
@@ -443,6 +572,27 @@ function doPost(e) {
       }
     }
     return null;
+  };
+
+  const findJobIdByPayloadQid = (qid) => {
+    const targetQid = norm(qid);
+    if (!targetQid) return "";
+    const rows = sheets.jobs.getDataRange().getValues();
+    // 新しい行を優先して逆順検索
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      const payload = parseJsonSafe(norm(row[4]));
+      if (norm(payload.qid) === targetQid) return norm(row[1]);
+    }
+    return "";
+  };
+
+  const resolveMissionJobId = (rawId) => {
+    const direct = norm(rawId);
+    if (!direct) return "";
+    if (findJobRowById(direct)) return direct;
+    const viaQid = findJobIdByPayloadQid(direct);
+    return viaQid || direct;
   };
 
   const markDeadJob = (jobId, traceId, failedWorker, errorType, errorData, reason) => {
@@ -470,6 +620,55 @@ function doPost(e) {
     addAudit(norm(traceId) || norm(payload.trace_id), "JOB_DEAD", norm(jobId), norm(failedWorker), "dead", norm(reason));
   };
 
+  const countActiveArcNodes = (activeSec) => {
+    const limitSec = Number.isFinite(activeSec) ? activeSec : 240;
+    const now = Date.now();
+    const rows = sheets.nodes.getDataRange().getValues();
+    let n = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const ts = new Date(rows[i][0]).getTime();
+      if (!Number.isFinite(ts)) continue;
+      if ((now - ts) / 1000 > limitSec) continue;
+      n++;
+    }
+    return n;
+  };
+
+  const countActiveMothershipNodes = (activeSec) => {
+    const limitSec = Number.isFinite(activeSec) ? activeSec : 240;
+    const now = Date.now();
+    const rows = sheets.mothershipNodes.getDataRange().getValues();
+    let n = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const ts = new Date(rows[i][0]).getTime();
+      const st = lower(rows[i][2]);
+      if (!Number.isFinite(ts)) continue;
+      if ((now - ts) / 1000 > limitSec) continue;
+      if (st === "offline" || st === "error") continue;
+      n++;
+    }
+    return n;
+  };
+
+  const resolveRetryExecutor = () => {
+    const arcActive = countActiveArcNodes(240);
+    const mothershipActive = countActiveMothershipNodes(240);
+
+    if (repairExecutor === "BAKU") {
+      if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_baku_available" };
+      if (arcActive > 0) return { executor: "ARC", reason: "repair_baku_unavailable_fallback_arc" };
+      return { executor: "AUTO", reason: "no_active_worker_auto" };
+    }
+    if (repairExecutor === "ARC") {
+      if (arcActive > 0) return { executor: "ARC", reason: "repair_arc_available" };
+      if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_arc_unavailable_fallback_baku" };
+      return { executor: "AUTO", reason: "no_active_worker_auto" };
+    }
+    if (arcActive > 0) return { executor: "ARC", reason: "repair_auto_pick_arc" };
+    if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_auto_pick_baku" };
+    return { executor: "AUTO", reason: "no_active_worker_auto" };
+  };
+
   const tryScheduleRetry = (jobId, traceId, errorType, errorData, failedWorker) => {
     const found = findJobRowById(jobId);
     if (!found) return { retried: false, reason: "job_not_found" };
@@ -490,8 +689,8 @@ function doPost(e) {
     payload.last_error_data = norm(errorData).slice(0, 1200);
     payload.next_retry_at = nextRetryAt;
 
-    // Repair path can be rerouted to BAKU (default) so BAKU can salvage failed jobs.
-    payload.executor = repairExecutor;
+    const retryExec = resolveRetryExecutor();
+    payload.executor = retryExec.executor;
 
     const keepWorker = lower(payload.pin_worker) === "true";
     sheets.jobs.getRange(found.rowIndex, 5).setValue(JSON.stringify(payload));
@@ -499,7 +698,14 @@ function doPost(e) {
     sheets.jobs.getRange(found.rowIndex, 7).setValue("");
     if (!keepWorker) sheets.jobs.getRange(found.rowIndex, 3).setValue("");
 
-    addAudit(norm(traceId) || norm(payload.trace_id), "JOB_RETRY_SCHEDULED", norm(jobId), norm(failedWorker), "pending", "retry=" + payload.retry_count + ",executor=" + payload.executor);
+    addAudit(
+      norm(traceId) || norm(payload.trace_id),
+      "JOB_RETRY_SCHEDULED",
+      norm(jobId),
+      norm(failedWorker),
+      "pending",
+      "retry=" + payload.retry_count + ",executor=" + payload.executor + ",reason=" + retryExec.reason
+    );
     return { retried: true, retry_count: payload.retry_count, next_retry_at: nextRetryAt, executor: payload.executor };
   };
 
@@ -516,14 +722,17 @@ function doPost(e) {
 
     if (cmd.route === "ARC") {
       const effectiveMode = cmd.opMode;
+      const resolvedId = missionId || ("CHAT_" + rowIndex + "_" + Date.now());
       const jobRes = enqueueArcJob({
-        jobId: missionId || ("CHAT_" + rowIndex + "_" + Date.now()),
-        qid: missionId || ("CHAT_" + rowIndex),
+        // qid と jobId は同一にして、結果報告の突合失敗を防ぐ
+        jobId: resolvedId,
+        qid: resolvedId,
         target: cmd.target,
         prompt: cmd.prompt,
         script: cmd.script,
         mode: effectiveMode,
         executor: cmd.executor,
+        pinTarget: cmd.pinTarget ? "true" : "false",
         user: user,
         workerId: "",
         traceId: traceId,
@@ -555,26 +764,125 @@ function doPost(e) {
     return routed;
   };
 
-  const requeueExpiredLeases = () => {
+  const requeueExpiredLeases = (leaseThresholdMsOverride) => {
     const rows = sheets.jobs.getDataRange().getValues();
     const now = Date.now();
+    const thresholdMs = Number.isFinite(leaseThresholdMsOverride) && leaseThresholdMsOverride > 0
+      ? leaseThresholdMsOverride
+      : leaseTimeoutMs;
+    const thresholdSec = Math.floor(thresholdMs / 1000);
     let recovered = 0;
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       const status = lower(row[5]);
       if (status !== "leased") continue;
       const leasedAt = new Date(row[6]).getTime();
-      if (!Number.isFinite(leasedAt) || now - leasedAt < leaseTimeoutMs) continue;
+      if (!Number.isFinite(leasedAt) || now - leasedAt < thresholdMs) continue;
 
       const payload = parseJsonSafe(norm(row[4]));
+      const leaseExpiredCountRaw = parseInt(norm(payload.lease_expire_count) || "0", 10);
+      const leaseExpiredCount = (Number.isFinite(leaseExpiredCountRaw) ? leaseExpiredCountRaw : 0) + 1;
+      payload.lease_expire_count = leaseExpiredCount;
+      const failoverRes = maybeSwitchJobTargetForRecovery(i + 1, row, payload, "lease_expire_" + leaseExpiredCount);
+
+      if (leaseExpiredCount >= leaseExpireMax) {
+        if (failoverRes.switched && leaseExpiredCount === leaseExpireMax) {
+          const keepWorkerFailover = lower(payload.pin_worker) === "true";
+          if (!keepWorkerFailover) sheets.jobs.getRange(i + 1, 3).setValue("");
+          sheets.jobs.getRange(i + 1, 5).setValue(JSON.stringify(payload));
+          sheets.jobs.getRange(i + 1, 6).setValue("pending");
+          sheets.jobs.getRange(i + 1, 7).setValue("");
+          recovered++;
+          addAudit(norm(payload.trace_id), "LEASE_EXPIRED_FAILOVER", norm(row[1]), norm(row[2]), "pending", "count=" + leaseExpiredCount);
+          noteLinkedChatProgress(norm(row[1]), "ARC再投入: lease timeout で " + failoverRes.to + " へ切替");
+          continue;
+        }
+        sheets.jobs.getRange(i + 1, 5).setValue(JSON.stringify(payload));
+        markDeadJob(norm(row[1]), norm(payload.trace_id), norm(row[2]), "LEASE_EXPIRE_MAX", "lease_expire_count=" + leaseExpiredCount, "lease_expire_max");
+        completeLinkedChat(norm(row[1]), "[LEASE_EXPIRE_MAX] ARC実行が完了しませんでした", "error");
+        continue;
+      }
+
       const keepWorker = lower(payload.pin_worker) === "true";
       if (!keepWorker) sheets.jobs.getRange(i + 1, 3).setValue("");
+      sheets.jobs.getRange(i + 1, 5).setValue(JSON.stringify(payload));
       sheets.jobs.getRange(i + 1, 6).setValue("pending");
       sheets.jobs.getRange(i + 1, 7).setValue("");
       recovered++;
-      addAudit(norm(payload.trace_id), "LEASE_EXPIRED", norm(row[1]), norm(row[2]), "pending", "timeout_sec=" + leaseTimeoutSec);
+      addAudit(norm(payload.trace_id), "LEASE_EXPIRED", norm(row[1]), norm(row[2]), "pending", "timeout_sec=" + thresholdSec);
+      noteLinkedChatProgress(norm(row[1]), "ARC待機再投入: lease timeout / " + thresholdSec + "秒");
     }
     return recovered;
+  };
+
+  const touchLeaseFromHeartbeat = (workerId, hb) => {
+    const candidates = [
+      norm(hb.mission_id),
+      norm(hb.mission),
+      norm(hb.qid),
+      norm(hb.arc_qid)
+    ].filter((v, idx, arr) => v && arr.indexOf(v) === idx);
+    if (candidates.length === 0) return { touched: false, reason: "no_mission" };
+
+    const rows = sheets.jobs.getDataRange().getValues();
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      if (lower(row[5]) !== "leased") continue;
+      const rowWorker = norm(row[2]);
+      if (rowWorker && workerId && rowWorker !== workerId) continue;
+
+      const payload = parseJsonSafe(norm(row[4]));
+      const jobId = norm(row[1]);
+      const payloadQid = norm(payload.qid);
+      const matched = candidates.some((id) => id === jobId || id === payloadQid);
+      if (!matched) continue;
+
+      if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
+      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+      return { touched: true, job_id: jobId };
+    }
+    return { touched: false, reason: "not_found" };
+  };
+
+  const recoverStalePendingJobs = (pendingThresholdMsOverride) => {
+    const rows = sheets.jobs.getDataRange().getValues();
+    const now = Date.now();
+    const thresholdMs = Number.isFinite(pendingThresholdMsOverride) && pendingThresholdMsOverride > 0
+      ? pendingThresholdMsOverride
+      : pendingTimeoutMs;
+    const thresholdSec = Math.floor(thresholdMs / 1000);
+    let touched = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (lower(row[5]) !== "pending") continue;
+      const createdAtMs = new Date(row[0]).getTime();
+      if (!Number.isFinite(createdAtMs) || now - createdAtMs < thresholdMs) continue;
+
+      const payload = parseJsonSafe(norm(row[4]));
+      const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
+      if (Number.isFinite(nextRetryAtMs) && now < nextRetryAtMs) continue;
+
+      const pendingRecoverCount = (parseInt(norm(payload.pending_recover_count) || "0", 10) || 0) + 1;
+      payload.pending_recover_count = pendingRecoverCount;
+
+      const switched = maybeSwitchJobTargetForRecovery(i + 1, row, payload, "pending_timeout_" + pendingRecoverCount);
+      if (switched.switched && pendingRecoverCount <= 2) {
+        sheets.jobs.getRange(i + 1, 5).setValue(JSON.stringify(payload));
+        sheets.jobs.getRange(i + 1, 6).setValue("pending");
+        sheets.jobs.getRange(i + 1, 7).setValue("");
+        addAudit(norm(payload.trace_id), "PENDING_TIMEOUT_RECOVER", norm(row[1]), norm(row[2]), "pending", "switched");
+        noteLinkedChatProgress(norm(row[1]), "ARC再投入: pending timeout から " + switched.to + " へ切替");
+        touched++;
+        continue;
+      }
+
+      sheets.jobs.getRange(i + 1, 5).setValue(JSON.stringify(payload));
+      markDeadJob(norm(row[1]), norm(payload.trace_id), norm(row[2]), "PENDING_TIMEOUT", "pending_for_sec>=" + thresholdSec, "pending_timeout");
+      completeLinkedChat(norm(row[1]), "[PENDING_TIMEOUT] ARC実行が開始されませんでした", "error");
+      addAudit(norm(payload.trace_id), "PENDING_TIMEOUT_DEAD", norm(row[1]), norm(row[2]), "dead", "sec=" + thresholdSec);
+      touched++;
+    }
+    return touched;
   };
 
   const claimNextInstruction = (workerId, consumer) => {
@@ -587,11 +895,13 @@ function doPost(e) {
     }
 
     try {
+      recoverStalePendingJobs();
       requeueExpiredLeases();
       routePendingChatCommands();
 
       const rows = sheets.jobs.getDataRange().getValues();
-      for (let i = 1; i < rows.length; i++) {
+      // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
+      for (let i = rows.length - 1; i >= 1; i--) {
         const row = rows[i];
         const rowWorker = norm(row[2]);
         const rowMode = norm(row[3]) || "request_arc";
@@ -614,6 +924,21 @@ function doPost(e) {
         if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
 
         addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
+        if (workerId) {
+          putArcShortMemory(
+            workerId,
+            norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
+            "last_instruction",
+            JSON.stringify({
+              job_id: norm(row[1]),
+              mode: rowMode,
+              target: norm(payload.target),
+              prompt: norm(payload.prompt).slice(0, 500)
+            }),
+            1800,
+            norm(payload.trace_id)
+          );
+        }
         return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
       }
       return null;
@@ -623,21 +948,76 @@ function doPost(e) {
   };
 
   const findTraceByMissionId = (missionId) => {
-    const found = findJobRowById(missionId);
+    const found = findJobRowById(resolveMissionJobId(missionId));
     if (!found) return "";
     return norm(found.payload.trace_id);
   };
 
   const completeLinkedChat = (missionId, output, type) => {
-    const mid = norm(missionId);
-    if (!mid) return;
+    const mid = resolveMissionJobId(missionId);
+    if (!mid) return false;
     const rows = sheets.main.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
       if (norm(rows[i][5]) !== mid) continue;
       sheets.main.getRange(i + 1, 4).setValue(type === "error" ? "ARC_ERROR" : "ARC_DONE");
       sheets.main.getRange(i + 1, 5).setValue(output);
+      return true;
+    }
+    return false;
+  };
+
+  const appendOrphanChatResult = (missionId, output, type, target) => {
+    const status = type === "error" ? "ARC_ERROR" : "ARC_DONE";
+    const user = type === "error" ? "ARC(ORPHAN_ERR)" : "ARC(ORPHAN)";
+    sheets.main.appendRow([
+      new Date(),
+      user,
+      "[" + (norm(target) || "unknown") + "] " + norm(missionId),
+      status,
+      norm(output),
+      norm(missionId)
+    ]);
+  };
+
+  const noteLinkedChatProgress = (missionId, note) => {
+    const mid = resolveMissionJobId(missionId);
+    if (!mid) return;
+    const rows = sheets.main.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (norm(rows[i][5]) !== mid) continue;
+      const st = lower(rows[i][3]);
+      if (st === "arc_done" || st === "arc_error") return;
+      sheets.main.getRange(i + 1, 4).setValue("QUEUED_ARC");
+      sheets.main.getRange(i + 1, 5).setValue(norm(note));
       return;
     }
+  };
+
+  const nextFailoverTarget = (currentTarget) => {
+    const t = lower(currentTarget);
+    if (t === "chatgpt") return "gemini";
+    if (t === "gemini") return "copilot";
+    if (t === "copilot") return "chatgpt";
+    return "gemini";
+  };
+
+  const maybeSwitchJobTargetForRecovery = (jobRowIndex, row, payload, reasonTag) => {
+    if (!targetFailoverEnabled) return { switched: false, reason: "disabled" };
+    const modeName = lower(row[3]);
+    if (modeName !== "request_arc") return { switched: false, reason: "mode_not_supported" };
+    if (lower(payload.pin_target) === "true") return { switched: false, reason: "target_pinned" };
+    const from = lower(payload.target || "");
+    if (!from || from === "all") return { switched: false, reason: "invalid_target" };
+    const to = nextFailoverTarget(from);
+    if (from === to) return { switched: false, reason: "same_target" };
+    payload.target = to;
+    payload.target_failover_count = (parseInt(norm(payload.target_failover_count) || "0", 10) || 0) + 1;
+    payload.target_failover_reason = norm(reasonTag);
+    payload.target_failover_at = nowIso();
+    sheets.jobs.getRange(jobRowIndex, 5).setValue(JSON.stringify(payload));
+    addAudit(norm(payload.trace_id), "TARGET_FAILOVER", norm(row[1]), norm(row[2]), "pending", from + "->" + to + " / " + norm(reasonTag));
+    noteLinkedChatProgress(norm(row[1]), "ARC自動切替: " + from + " -> " + to + " (" + norm(reasonTag) + ")");
+    return { switched: true, from: from, to: to };
   };
 
   const completeArcJob = (missionId, status) => {
@@ -700,7 +1080,18 @@ function doPost(e) {
   if (mode === "arc_setup") {
     const setupSheets = (data.blueprint && data.blueprint.sheets) || {};
     Object.keys(setupSheets).forEach((name) => ensureSheet(name, setupSheets[name]));
-    return textOut("Setup Success");
+    // ARC起動時の自動セットアップで認証キーを同期する。
+    // ここがズレると heartbeat/lease/result がすべて unauthorized になり、PENDING_TIMEOUT化する。
+    const incomingAuth =
+      norm((data.blueprint && data.blueprint.auth_key) || data.auth_key || "");
+    if (incomingAuth) {
+      props.setProperty("ARC_AUTH_KEY", incomingAuth);
+    }
+    return jsonOut({
+      status: "ok",
+      setup: "success",
+      auth_synced: !!incomingAuth
+    });
   }
 
   if (mode === "handshake") {
@@ -710,10 +1101,12 @@ function doPost(e) {
       version: "arc-gateway-20.0",
       control: "gateway_primary",
       lease_timeout_sec: leaseTimeoutSec,
+      pending_timeout_sec: pendingTimeoutSec,
       max_retry: maxRetry,
       retry_backoff_sec: retryBackoffSec,
       repair_executor: repairExecutor,
       default_route: defaultRoute,
+      target_failover_enabled: targetFailoverEnabled,
       require_signature: requireSignature,
       autonomy_paused: autonomyPaused
     });
@@ -731,8 +1124,15 @@ function doPost(e) {
 
   if (mode === "route_chat") {
     if (autonomyPaused) return jsonOut({ status: "paused", routed: 0 });
-    const routed = routePendingChatCommands();
-    return jsonOut({ status: "ok", routed: routed.length, details: routed });
+    const lock = LockService.getScriptLock();
+    const locked = lock.tryLock(5000);
+    if (!locked) return jsonOut({ status: "busy", routed: 0, error: "route_lock_timeout" });
+    try {
+      const routed = routePendingChatCommands();
+      return jsonOut({ status: "ok", routed: routed.length, details: routed });
+    } finally {
+      lock.releaseLock();
+    }
   }
 
   if (mode === "mothership_submit") {
@@ -788,12 +1188,14 @@ function doPost(e) {
       status: "ok",
       gateway_version: "arc-gateway-20.0",
       lease_timeout_sec: leaseTimeoutSec,
+      pending_timeout_sec: pendingTimeoutSec,
       max_retry: maxRetry,
       retry_backoff_sec: retryBackoffSec,
       repair_executor: repairExecutor,
       default_route: defaultRoute,
       default_executor: defaultExecutor,
       default_target: defaultTarget,
+      target_failover_enabled: targetFailoverEnabled,
       require_signature: requireSignature,
       autonomy_paused: autonomyPaused,
       jobs: counts,
@@ -801,6 +1203,296 @@ function doPost(e) {
       dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
       audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
       mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1)
+    });
+  }
+
+  if (mode === "admin_set_timeouts") {
+    const current = {
+      ARC_LEASE_TIMEOUT_SEC: String(leaseTimeoutSec),
+      ARC_PENDING_TIMEOUT_SEC: String(pendingTimeoutSec),
+      ARC_LEASE_EXPIRE_MAX: String(leaseExpireMax),
+      ARC_RETRY_BACKOFF_SEC: String(retryBackoffSec)
+    };
+
+    const profileName = lower(data.profile || "");
+    const profileMap = {
+      safe: { lease: 180, pending: 420, lease_expire_max: 2, retry_backoff: 30 },
+      balanced: { lease: 120, pending: 300, lease_expire_max: 2, retry_backoff: 20 },
+      fast: { lease: 90, pending: 240, lease_expire_max: 1, retry_backoff: 15 }
+    };
+    const fromProfile = profileMap[profileName] || {};
+    const leaseIn = parseInt(norm(data.lease_timeout_sec || fromProfile.lease), 10);
+    const pendingIn = parseInt(norm(data.pending_timeout_sec || fromProfile.pending), 10);
+    const leaseExpireIn = parseInt(norm(data.lease_expire_max || fromProfile.lease_expire_max), 10);
+    const retryBackoffIn = parseInt(norm(data.retry_backoff_sec || fromProfile.retry_backoff), 10);
+
+    const leaseNew = Number.isFinite(leaseIn) && leaseIn >= 60 && leaseIn <= 600 ? leaseIn : leaseTimeoutSec;
+    const pendingNew = Number.isFinite(pendingIn) && pendingIn >= 180 && pendingIn <= 1800 ? pendingIn : pendingTimeoutSec;
+    const leaseExpireNew = Number.isFinite(leaseExpireIn) && leaseExpireIn >= 1 && leaseExpireIn <= 5 ? leaseExpireIn : leaseExpireMax;
+    const retryBackoffNew = Number.isFinite(retryBackoffIn) && retryBackoffIn >= 5 && retryBackoffIn <= 120 ? retryBackoffIn : retryBackoffSec;
+    const dryRun = lower(norm(data.dry_run || "false")) === "true";
+
+    const next = {
+      ARC_LEASE_TIMEOUT_SEC: String(leaseNew),
+      ARC_PENDING_TIMEOUT_SEC: String(pendingNew),
+      ARC_LEASE_EXPIRE_MAX: String(leaseExpireNew),
+      ARC_RETRY_BACKOFF_SEC: String(retryBackoffNew)
+    };
+
+    if (!dryRun) {
+      props.setProperty("ARC_LEASE_TIMEOUT_SEC", next.ARC_LEASE_TIMEOUT_SEC);
+      props.setProperty("ARC_PENDING_TIMEOUT_SEC", next.ARC_PENDING_TIMEOUT_SEC);
+      props.setProperty("ARC_LEASE_EXPIRE_MAX", next.ARC_LEASE_EXPIRE_MAX);
+      props.setProperty("ARC_RETRY_BACKOFF_SEC", next.ARC_RETRY_BACKOFF_SEC);
+      addAudit(norm(data.trace_id), "ADMIN_SET_TIMEOUTS", "", norm(data.worker_id), "ok", JSON.stringify(next));
+    }
+
+    return jsonOut({
+      status: "ok",
+      dry_run: dryRun,
+      profile: profileName || "",
+      before: current,
+      after: next
+    });
+  }
+
+  if (mode === "admin_debug_snapshot") {
+    const snapshot = fetchDebugSnapshot();
+    const truncate = (v, maxLen) => {
+      const s = norm(v);
+      if (!s) return "";
+      if (s.length <= maxLen) return s;
+      return s.slice(0, maxLen) + "...(truncated)";
+    };
+    const compactRows = (rows, maxRows, maxCellLen) => {
+      const src = Array.isArray(rows) ? rows.slice(-maxRows) : [];
+      return src.map((row) => {
+        if (!Array.isArray(row)) return row;
+        return row.map((cell) => {
+          if (cell === null || cell === undefined) return "";
+          if (typeof cell === "string") return truncate(cell, maxCellLen);
+          return cell;
+        });
+      });
+    };
+    return jsonOut({
+      status: "ok",
+      ai_packet: snapshot.ai_packet || {},
+      jobs_recent: compactRows(snapshot.jobs && snapshot.jobs.recent, 10, 320),
+      audit_recent: compactRows(snapshot.audit && snapshot.audit.recent, 20, 240),
+      errors_recent: compactRows(snapshot.errors && snapshot.errors.recent, 8, 240),
+      results_recent: compactRows(snapshot.results && snapshot.results.recent, 8, 320),
+      main_chat_recent: compactRows(snapshot.main_chat && snapshot.main_chat.recent, 8, 320)
+    });
+  }
+
+  if (mode === "admin_job_probe") {
+    const jobId = norm(data.job_id || data.mission_id || data.qid);
+    if (!jobId) return jsonOut({ status: "error", error: "job_id_required" });
+
+    let job = null;
+    const jobRows = sheets.jobs.getDataRange().getValues();
+    for (let i = jobRows.length - 1; i >= 1; i--) {
+      const row = jobRows[i];
+      if (norm(row[1]) !== jobId) continue;
+      const payload = parseJsonSafe(norm(row[4]));
+      job = {
+        row_index: i + 1,
+        job_id: norm(row[1]),
+        worker_id: norm(row[2]),
+        mode: norm(row[3]) || "request_arc",
+        status_value: norm(row[5]),
+        leased_at: norm(row[6]),
+        trace_id: norm(payload.trace_id),
+        target: norm(payload.target),
+        executor: norm(payload.executor),
+        retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0),
+        pending_recover_count: Number(parseInt(norm(payload.pending_recover_count) || "0", 10) || 0),
+        lease_expire_count: Number(parseInt(norm(payload.lease_expire_count) || "0", 10) || 0),
+        target_failover_count: Number(parseInt(norm(payload.target_failover_count) || "0", 10) || 0)
+      };
+      break;
+    }
+
+    let mainChat = null;
+    const mainRows = sheets.main.getDataRange().getValues();
+    for (let i = mainRows.length - 1; i >= 1; i--) {
+      const row = mainRows[i];
+      if (norm(row[5]) !== jobId) continue;
+      mainChat = {
+        row_index: i + 1,
+        ts: norm(row[0]),
+        user: norm(row[1]),
+        content: norm(row[2]).slice(0, 500),
+        status: norm(row[3]),
+        response: norm(row[4]).slice(0, 800),
+        mission_id: norm(row[5])
+      };
+      break;
+    }
+
+    let nodeInfo = null;
+    const nodeRows = sheets.nodes.getDataRange().getValues();
+    const workerHint = job ? norm(job.worker_id) : "";
+    if (workerHint) {
+      for (let i = nodeRows.length - 1; i >= 1; i--) {
+        const row = nodeRows[i];
+        if (norm(row[6]) !== workerHint) continue;
+        nodeInfo = {
+          ts: norm(row[0]),
+          ip: norm(row[1]),
+          port: norm(row[2]),
+          status: norm(row[3]),
+          current_target: norm(row[4]),
+          version: norm(row[5]),
+          worker_id: norm(row[6]),
+          executor: norm(row[7]),
+          current_host: norm(row[8]),
+          current_url: norm(row[9]),
+          current_title: norm(row[10]),
+          hud_tail: norm(row[11])
+        };
+        break;
+      }
+    }
+    if (!nodeInfo) {
+      for (let i = nodeRows.length - 1; i >= 1; i--) {
+        const row = nodeRows[i];
+        nodeInfo = {
+          ts: norm(row[0]),
+          ip: norm(row[1]),
+          port: norm(row[2]),
+          status: norm(row[3]),
+          current_target: norm(row[4]),
+          version: norm(row[5]),
+          worker_id: norm(row[6]),
+          executor: norm(row[7]),
+          current_host: norm(row[8]),
+          current_url: norm(row[9]),
+          current_title: norm(row[10]),
+          hud_tail: norm(row[11])
+        };
+        break;
+      }
+    }
+
+    return jsonOut({
+      status: "ok",
+      found: !!job,
+      job: job,
+      main_chat: mainChat,
+      node: nodeInfo
+    });
+  }
+
+  if (mode === "admin_chat_probe") {
+    const query = norm(data.query || data.tag || data.text);
+    if (!query) return jsonOut({ status: "error", error: "query_required" });
+    const rows = sheets.main.getDataRange().getValues();
+    let hit = null;
+    const q = lower(query);
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      const content = norm(row[2]);
+      const response = norm(row[4]);
+      if (lower(content).indexOf(q) < 0 && lower(response).indexOf(q) < 0) continue;
+      hit = {
+        row_index: i + 1,
+        ts: norm(row[0]),
+        user: norm(row[1]),
+        content: content.slice(0, 500),
+        status: norm(row[3]),
+        response: response.slice(0, 800),
+        mission_id: norm(row[5])
+      };
+      break;
+    }
+    return jsonOut({
+      status: "ok",
+      found: !!hit,
+      row: hit
+    });
+  }
+
+  if (mode === "admin_mission_timing") {
+    const missionId = norm(data.mission_id || data.job_id || data.qid);
+    if (!missionId) return jsonOut({ status: "error", error: "mission_id_required" });
+
+    const parseTs = (v) => {
+      const t = new Date(v).getTime();
+      return Number.isFinite(t) ? t : NaN;
+    };
+
+    let mainRow = null;
+    const mains = sheets.main.getDataRange().getValues();
+    for (let i = mains.length - 1; i >= 1; i--) {
+      if (norm(mains[i][5]) !== missionId) continue;
+      mainRow = mains[i];
+      break;
+    }
+
+    let resultRow = null;
+    const results = sheets.results.getDataRange().getValues();
+    for (let i = results.length - 1; i >= 1; i--) {
+      if (norm(results[i][1]) !== missionId) continue;
+      resultRow = results[i];
+      break;
+    }
+
+    let errorRow = null;
+    const errors = sheets.errors.getDataRange().getValues();
+    for (let i = errors.length - 1; i >= 1; i--) {
+      if (norm(errors[i][1]) !== missionId) continue;
+      errorRow = errors[i];
+      break;
+    }
+
+    const foundJob = findJobRowById(missionId);
+    const createdAtMs = parseTs(mainRow ? mainRow[0] : "");
+    const resultAtMs = parseTs(resultRow ? resultRow[0] : "");
+    const errorAtMs = parseTs(errorRow ? errorRow[0] : "");
+
+    const doneLatencySec = Number.isFinite(createdAtMs) && Number.isFinite(resultAtMs)
+      ? Math.max(0, Math.floor((resultAtMs - createdAtMs) / 1000))
+      : null;
+    const errorLatencySec = Number.isFinite(createdAtMs) && Number.isFinite(errorAtMs)
+      ? Math.max(0, Math.floor((errorAtMs - createdAtMs) / 1000))
+      : null;
+
+    return jsonOut({
+      status: "ok",
+      mission_id: missionId,
+      main: mainRow ? {
+        ts: norm(mainRow[0]),
+        user: norm(mainRow[1]),
+        content: norm(mainRow[2]).slice(0, 500),
+        status: norm(mainRow[3]),
+        response: norm(mainRow[4]).slice(0, 800)
+      } : null,
+      job: foundJob ? {
+        status_value: norm(foundJob.row[5]),
+        worker_id: norm(foundJob.row[2]),
+        mode: norm(foundJob.row[3]),
+        leased_at: norm(foundJob.row[6]),
+        payload: foundJob.payload
+      } : null,
+      result: resultRow ? {
+        ts: norm(resultRow[0]),
+        mission_id: norm(resultRow[1]),
+        target: norm(resultRow[2]),
+        prompt: norm(resultRow[3]).slice(0, 400),
+        result: norm(resultRow[4]).slice(0, 400)
+      } : null,
+      error: errorRow ? {
+        ts: norm(errorRow[0]),
+        qid: norm(errorRow[1]),
+        type: norm(errorRow[2]),
+        data: norm(errorRow[3]).slice(0, 400)
+      } : null,
+      timing: {
+        done_latency_sec: doneLatencySec,
+        error_latency_sec: errorLatencySec
+      }
     });
   }
 
@@ -821,33 +1513,114 @@ function doPost(e) {
     return jsonOut({ status: "ok", cleanup: res });
   }
 
+  if (mode === "admin_recover_queues") {
+    const scope = lower(data.scope || "both");
+    const leasedMinSecRaw = parseInt(norm(data.leased_min_sec || ""), 10);
+    const pendingMinSecRaw = parseInt(norm(data.pending_min_sec || ""), 10);
+    const leasedMinSec = Number.isFinite(leasedMinSecRaw) && leasedMinSecRaw >= 30 ? leasedMinSecRaw : leaseTimeoutSec;
+    const pendingMinSec = Number.isFinite(pendingMinSecRaw) && pendingMinSecRaw >= 60 ? pendingMinSecRaw : pendingTimeoutSec;
+
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(5000)) return jsonOut({ status: "busy", error: "lease_lock_timeout" });
+    try {
+      let leasedRecovered = 0;
+      let pendingRecovered = 0;
+      if (scope === "leased" || scope === "both") {
+        leasedRecovered = requeueExpiredLeases(leasedMinSec * 1000);
+      }
+      if (scope === "pending" || scope === "both") {
+        pendingRecovered = recoverStalePendingJobs(pendingMinSec * 1000);
+      }
+      const routed = routePendingChatCommands();
+      return jsonOut({
+        status: "ok",
+        scope: scope,
+        leased_recovered: leasedRecovered,
+        pending_recovered: pendingRecovered,
+        routed: routed.length
+      });
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  if (mode === "gateway_memory_put" || mode === "memory_put") {
+    const mem = setGatewayLongMemory(data.key, data.value, data.source || data.user || "gateway", data.trace_id, data.tags);
+    if (!mem.ok) return jsonOut({ status: "error", error: mem.error });
+    addAudit(norm(data.trace_id), "GATEWAY_MEMORY_PUT", "", norm(data.worker_id), "ok", mem.key);
+    return jsonOut({ status: "ok", key: mem.key });
+  }
+
+  if (mode === "gateway_memory_get" || mode === "memory_get") {
+    const rows = getGatewayLongMemory(data.key, data.limit);
+    return jsonOut({ status: "ok", key: norm(data.key), rows: rows, count: rows.length });
+  }
+
+  if (mode === "arc_memory_put" || mode === "arc_short_memory_put") {
+    cleanupArcShortMemory(500);
+    const mem = putArcShortMemory(data.worker_id, data.session_id, data.key, data.value, data.ttl_sec, data.trace_id);
+    if (!mem.ok) return jsonOut({ status: "error", error: mem.error });
+    addAudit(norm(data.trace_id), "ARC_SHORT_MEMORY_PUT", "", norm(data.worker_id), "ok", norm(data.key));
+    return jsonOut(Object.assign({ status: "ok" }, mem));
+  }
+
+  if (mode === "arc_memory_get" || mode === "arc_short_memory_get") {
+    cleanupArcShortMemory(500);
+    const rows = getArcShortMemory(data.worker_id, data.session_id, data.key, data.limit);
+    return jsonOut({ status: "ok", rows: rows, count: rows.length });
+  }
+
   if (mode === "arc_result" || mode === "report_result") {
-    const missionId = norm(data.qid || data.mission_id);
+    const missionIdRaw = norm(data.qid || data.mission_id);
+    const missionId = resolveMissionJobId(missionIdRaw);
     const result = norm(data.text);
-    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId);
+    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
     completeArcJob(missionId, "done");
-    completeLinkedChat(missionId, result, "result");
+    const linked = completeLinkedChat(missionId, result, "result");
+    if (!linked) appendOrphanChatResult(missionId, result, "result", data.target || "");
     const bakuReport = parseBakuStructuredReport(result);
     if (bakuReport) {
       addAudit(traceId, "BAKU_REPORT_PARSED", missionId, norm(data.worker_id), "ok", norm(bakuReport.domain) + " / " + norm(bakuReport.mode));
       maybeEnqueueBakuFollowup(missionId, traceId, bakuReport);
+    }
+    if (norm(data.worker_id)) {
+      putArcShortMemory(
+        norm(data.worker_id),
+        norm(data.session_id) || traceId || missionId,
+        "last_result",
+        result.slice(0, MAX_MEMORY_VALUE),
+        1800,
+        traceId
+      );
     }
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
     return jsonOut({ status: "ok", trace_id: traceId });
   }
 
   if (mode === "arc_error" || mode === "report_error") {
-    const missionId = norm(data.qid || data.mission_id);
+    const missionIdRaw = norm(data.qid || data.mission_id);
+    const missionId = resolveMissionJobId(missionIdRaw);
     const err = norm(data.error_type);
     const errData = norm(data.data);
-    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId);
+    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     const workerId = norm(data.worker_id);
 
     sheets.errors.appendRow([new Date(), missionId, err, errData]);
-    completeLinkedChat(missionId, "[" + err + "] " + errData, "error");
+    const linked = completeLinkedChat(missionId, "[" + err + "] " + errData, "error");
+    if (!linked) appendOrphanChatResult(missionId, "[" + err + "] " + errData, "error", data.target || "");
 
     const retry = tryScheduleRetry(missionId, traceId, err, errData, workerId);
+    if (workerId) {
+      putArcShortMemory(
+        workerId,
+        norm(data.session_id) || traceId || missionId,
+        "last_error",
+        ("[" + err + "] " + errData).slice(0, MAX_MEMORY_VALUE),
+        1800,
+        traceId
+      );
+    }
     if (retry.retried) {
       addAudit(traceId, "ARC_ERROR_RETRY", missionId, workerId, "pending", "retry=" + retry.retry_count + ",executor=" + retry.executor);
       return jsonOut({ status: "retry_scheduled", trace_id: traceId, retry: retry });
@@ -872,16 +1645,61 @@ function doPost(e) {
     const all = sheets.nodes.getDataRange().getValues();
     let foundRow = -1;
     for (let i = 1; i < all.length; i++) {
+      const rowWorker = norm(all[i][6]);
+      if (workerId && rowWorker && rowWorker === workerId) {
+        foundRow = i + 1;
+        break;
+      }
       if (norm(all[i][1]) === ip && norm(all[i][2]) === port) {
         foundRow = i + 1;
         break;
       }
     }
-    const row = [new Date(), ip, port, data.status || "", data.target || "", data.version || ""];
+    const currentTarget = norm(data.current_target || data.target || "");
+    const currentHost = norm(data.current_host).slice(0, 200);
+    const currentUrl = norm(data.current_url).slice(0, 800);
+    const currentTitle = norm(data.current_title).slice(0, 200);
+    const hudTail = (function(v) {
+      try {
+        if (Array.isArray(v)) return v.map((x) => norm(x)).join(" > ").slice(0, 1200);
+        const s = norm(v);
+        if (!s) return "";
+        if (s.charAt(0) === "[" && s.charAt(s.length - 1) === "]") {
+          const arr = JSON.parse(s);
+          if (Array.isArray(arr)) return arr.map((x) => norm(x)).join(" > ").slice(0, 1200);
+        }
+        return s.slice(0, 1200);
+      } catch (_) {
+        return norm(v).slice(0, 1200);
+      }
+    })(data.hud_tail);
+    const row = [
+      new Date(),
+      ip,
+      port,
+      data.status || "",
+      currentTarget,
+      data.version || "",
+      workerId,
+      consumer,
+      currentHost,
+      currentUrl,
+      currentTitle,
+      hudTail
+    ];
     if (foundRow > 0) sheets.nodes.getRange(foundRow, 1, 1, row.length).setValues([row]);
     else sheets.nodes.appendRow(row);
 
-    const instruction = claimNextInstruction(workerId, consumer);
+    const workerStatus = lower(norm(data.status || ""));
+    if (workerStatus === "running") touchLeaseFromHeartbeat(workerId, data);
+    const canLease =
+      workerStatus === "" ||
+      workerStatus === "online" ||
+      workerStatus === "idle" ||
+      workerStatus === "heartbeat" ||
+      workerStatus === "success" ||
+      workerStatus === "error";
+    const instruction = canLease ? claimNextInstruction(workerId, consumer) : null;
     addAudit(norm(data.trace_id), "ARC_HEARTBEAT", "", workerId, "ok", consumer);
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
   }

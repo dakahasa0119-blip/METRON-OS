@@ -101,7 +101,7 @@ function loadMemory(key) {
    Gateway UI / ARC 質問取得
 ================================================== */
 
-function doGet(e) {
+function doGetLegacyGatewayQuestions_(e) {
 
   // ARC → 質問取得
   if (e && e.parameter && e.parameter.mode === "pending") {
@@ -179,14 +179,15 @@ function handleVision(payload) {
 
 function saveToMainChat(text, type = "INFO") {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName("MainChat");
+  let sheet = ss.getSheetByName("MAIN_CHAT");
 
   if (!sheet) {
-    sheet = ss.insertSheet("MainChat");
-    sheet.appendRow(["Timestamp", "Source", "Message", "Type"]);
+    sheet = ss.insertSheet("MAIN_CHAT");
+    sheet.appendRow(["Timestamp", "User", "Content", "Status", "Response", "MissionID"]);
   }
 
-  sheet.appendRow([new Date(), "Gateway", text, type]);
+  const status = String(type || "INFO");
+  sheet.appendRow([new Date(), "Gateway", String(text || ""), status, "", ""]);
 }
 
 function ensureSheet_(name, header) {

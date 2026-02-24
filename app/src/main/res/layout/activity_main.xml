@@ -40,6 +40,7 @@
                 android:padding="8dp">
 
                 <LinearLayout
+                    android:id="@+id/aiTabRow"
                     style="?android:attr/buttonBarStyle"
                     android:orientation="horizontal"
                     android:layout_width="match_parent"
@@ -77,6 +78,18 @@
                         android:textAllCaps="false" />
                 </LinearLayout>
 
+                <TextView
+                    android:id="@+id/modeBanner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:padding="8dp"
+                    android:background="#E8F0FE"
+                    android:textColor="#174EA6"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:text="@string/banner_headless" />
+
                 <EditText
                     android:id="@+id/promptInput"
                     android:layout_width="match_parent"
@@ -90,6 +103,7 @@
                     android:inputType="textMultiLine"/>
 
                 <LinearLayout
+                    android:id="@+id/actionRow"
                     style="?android:attr/buttonBarStyle"
                     android:orientation="horizontal"
                     android:layout_width="match_parent"
@@ -104,6 +118,14 @@
                         android:layout_height="wrap_content"
                         android:text="@string/btn_send"
                         android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/modeToggleButton"
+                        style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_mode_headless" />
 
                     <Button
                         android:id="@+id/settingsButton"

@@ -17,7 +17,8 @@ class LocalHttpServer(
     private val gateway: GatewayClient,
     private val prefs: Prefs,
     private val initialPort: Int,
-    private val onRequested: () -> Unit
+    private val onRequested: () -> Unit,
+    private val onExecutionRequested: () -> Unit
 ) : NanoHTTPD(initialPort) {
 
     var actualPort: Int = initialPort
@@ -94,6 +95,7 @@ class LocalHttpServer(
                         newFixedLengthResponse(Response.Status.OK, "application/json", health.toString())
                     }
                     "request_arc" -> {
+                        onExecutionRequested()
                         val qid = obj.optString("qid")
                         val targetTag = obj.optString("target").uppercase()
                         val prompt = obj.optString("prompt")
@@ -113,11 +115,13 @@ class LocalHttpServer(
                         successResponse("enqueued")
                     }
                     "arc_execute_js" -> {
+                        onExecutionRequested()
                         val script = obj.optString("script")
                         web.webView?.post { web.webView?.evaluateJavascript(script, null) }
                         successResponse("injected")
                     }
                     "arc_refresh" -> {
+                        onExecutionRequested()
                         // 🛡️ プロセスのリフレッシュ命令
                         web.refreshProcess()
                         successResponse("refreshing")
@@ -127,9 +131,22 @@ class LocalHttpServer(
                             val out = ByteArrayOutputStream()
                             bmp.compress(Bitmap.CompressFormat.JPEG, 70, out)
                             val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-                            gateway.sendArcError("manual", "screenshot", b64)
+                            gateway.sendArcResult(
+                                qid = "manual_shot",
+                                result = "screenshot_captured",
+                                image = b64,
+                                missionId = "manual_shot",
+                                target = "gateway"
+                            )
                         }
                         successResponse("capturing")
+                    }
+                    "gw_probe_result" -> {
+                        val qid = obj.optString("qid")
+                        val text = obj.optString("text", "GW_PROBE_OK")
+                        if (qid.isBlank()) return errorResponse("Missing qid")
+                        gateway.sendArcResult(qid = qid, result = text, missionId = qid, target = "gateway")
+                        successResponse("probe_sent")
                     }
                     else -> errorResponse("Unknown mode")
                 }

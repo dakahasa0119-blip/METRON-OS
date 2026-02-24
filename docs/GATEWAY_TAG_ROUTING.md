@@ -72,6 +72,10 @@ Chat commands in `MAIN_CHAT` are routed by tags to either ARC or MOTHERSHIP.
 - `admin_cleanup`: force audit archive cleanup run
 - `admin_pause`: set `ARC_AUTONOMY_PAUSED=true`
 - `admin_resume`: set `ARC_AUTONOMY_PAUSED=false`
+- `gateway_memory_put` / `memory_put`: write Gateway long-term memory (`GATEWAY_LONG_MEMORY`)
+- `gateway_memory_get` / `memory_get`: read Gateway long-term memory by key
+- `arc_memory_put` / `arc_short_memory_put`: write ARC short-term memory (`ARC_SHORT_MEMORY`)
+- `arc_memory_get` / `arc_short_memory_get`: read ARC short-term memory by worker/session/key
 
 ## Reliability and Safety
 

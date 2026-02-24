@@ -14,7 +14,7 @@ class AllAiPipeline(
     private val prefs: Prefs,
     // 司令部への実行依頼 (missionId を伝搬させる)
     private val requestExecution: (target: AiTarget, prompt: String, missionId: String) -> Unit,
-    private val onFinalResult: (String) -> Unit,
+    private val onFinalResult: (String, String) -> Unit,
     private val hallucinationPipeline: HallucinationPipeline,
     private val requestVisionSolve: (action: String, onSolved: (Int, Int) -> Unit) -> Unit,
     private val consultGateway: (context: String, problem: String, image: String?, callback: (String) -> Unit) -> Unit,
@@ -26,15 +26,17 @@ class AllAiPipeline(
     private var pageLoadDeferred: CompletableDeferred<Unit>? = null
     private var currentPrompt = ""
     private var missionId = ""
+    private var gatewayMissionId = "AUTO"
     private var gatewayAdvice = ""
     private var pipelineActive = false
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pipelineJob: Job? = null
 
-    fun start(prompt: String, onComplete: () -> Unit) {
+    fun start(prompt: String, gatewayMissionId: String, onComplete: () -> Unit) {
         pipelineJob?.cancel()
         pipelineActive = true
         this.currentPrompt = prompt
+        this.gatewayMissionId = if (gatewayMissionId.isBlank()) "AUTO" else gatewayMissionId
         this.missionId = "MISS_" + System.currentTimeMillis()
         this.results.clear()
         
@@ -49,7 +51,7 @@ class AllAiPipeline(
                     evolveSpoofing()
                     if (!performStrictRecon()) {
                         Util.trace(missionId, Util.Level.CRITICAL, "ABORT", "Recon failure chain. Aborting for safety.")
-                        onFinalResult("Error: Recon Blocked")
+                        onFinalResult(this@AllAiPipeline.gatewayMissionId, "Error: Recon Blocked")
                         return@launch
                     }
                 }
@@ -89,7 +91,7 @@ class AllAiPipeline(
 
             } catch (e: Exception) {
                 Util.trace(missionId, Util.Level.CRITICAL, "PIPELINE_ANOMALY", "Exception: ${e.message}")
-                if (e !is CancellationException) onFinalResult("Mission Failure")
+                if (e !is CancellationException) onFinalResult(this@AllAiPipeline.gatewayMissionId, "Mission Failure")
             } finally {
                 Util.checkAnomalies(missionId) 
                 pipelineActive = false
@@ -104,7 +106,7 @@ class AllAiPipeline(
      */
     private suspend fun executeViaCommandCenter(target: AiTarget, prompt: String): String? {
         resultDeferred = CompletableDeferred() 
-        requestExecution(target, prompt, missionId)
+        requestExecution(target, prompt, gatewayMissionId)
         
         // ArcWorker からの onAiResult 信号を待機 (最大110秒)
         return withTimeoutOrNull(110000) {
@@ -114,7 +116,7 @@ class AllAiPipeline(
 
     private suspend fun performStrictRecon(): Boolean {
         pageLoadDeferred = CompletableDeferred()
-        requestExecution(AiTarget.MOBILE_BROWSER, "Reconnaissance Mode", missionId)
+        requestExecution(AiTarget.MOBILE_BROWSER, "Reconnaissance Mode", gatewayMissionId)
         
         // ページ読み込み完了を待機
         withTimeoutOrNull(30000) { pageLoadDeferred?.await() }
@@ -178,7 +180,7 @@ class AllAiPipeline(
         hallucinationPipeline.process(currentPrompt, results) { d.complete(it) }
         val final = withTimeoutOrNull(120000) { d.await() }
         if (final != null) Util.trace(missionId, Util.Level.SUMMARY, "COMPLETE", "Final synthesis success.")
-        onFinalResult(final ?: "Failed to synthesize.")
+        onFinalResult(gatewayMissionId, final ?: "Failed to synthesize.")
     }
 
     fun stop() { pipelineActive = false; pipelineJob?.cancel(); resultDeferred?.cancel(); pageLoadDeferred?.cancel() }

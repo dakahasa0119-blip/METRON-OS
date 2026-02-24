@@ -18,9 +18,10 @@ class Prefs(context: Context) {
     var gasUrl: String by StringPref("gas_url", "")
     var sheetId: String by StringPref("sheet_id", "")
     var keepScreenAwake: Boolean by BoolPref("keep_screen_awake", false)
+    var headlessMode: Boolean by BoolPref("headless_mode", true)
     var heartbeatIntervalMs: Long
-        get() = sp.getLong("heartbeat_interval_ms", 180000L)
-        set(v) { edit { putLong("heartbeat_interval_ms", v.coerceAtLeast(60000L)) } }
+        get() = sp.getLong("heartbeat_interval_ms", 15000L)
+        set(v) { edit { putLong("heartbeat_interval_ms", v.coerceIn(5000L, 120000L)) } }
 
     /** ローカル HTTP API 用の認証トークン。初回アクセス時に自動生成 */
     var authToken: String
@@ -66,7 +67,10 @@ class Prefs(context: Context) {
     var geminiResponseSelector: String by StringPref("gemini_resp", "article")
     var geminiUrl: String by StringPref("gemini_url", "https://gemini.google.com/")
 
-    var chatGptInputSelector: String by StringPref("chatgpt_input", "#prompt-textarea")
+    var chatGptInputSelector: String by StringPref(
+        "chatgpt_input",
+        "#prompt-textarea, textarea[placeholder*='Message'], textarea[data-id='root'], div[contenteditable='true'][role='textbox']"
+    )
     var chatGptSendSelector: String by StringPref("chatgpt_send", "button[data-testid*='send']")
     var chatGptResponseSelector: String by StringPref("chatgpt_resp", "div[data-message-author-role='assistant']")
     var chatGptUrl: String by StringPref("chatgpt_url", "https://chatgpt.com/")
@@ -74,7 +78,7 @@ class Prefs(context: Context) {
     var copilotInputSelector: String by StringPref("copilot_input", "cib-text-input > #searchbox")
     var copilotSendSelector: String by StringPref("copilot_send", "#send-button")
     var copilotResponseSelector: String by StringPref("copilot_resp", "cib-message-group.response-message-group")
-    var copilotUrl: String by StringPref("copilot_url", "https://www.bing.com/chat?q=Microsoft+Copilot&FORM=hpcodp")
+    var copilotUrl: String by StringPref("copilot_url", "https://copilot.microsoft.com/")
 
     fun getUrlFor(target: String): String = when (target.lowercase()) {
         "gemini" -> geminiUrl
@@ -102,11 +106,29 @@ class Prefs(context: Context) {
 
     fun getResponseSelectorFor(currentUrl: String): String {
         return when {
-            currentUrl.contains("gemini") -> geminiResponseSelector
-            currentUrl.contains("chatgpt") -> chatGptResponseSelector
-            currentUrl.contains("bing") || currentUrl.contains("copilot") -> copilotResponseSelector
-            else -> "article"
+            currentUrl.contains("gemini") -> sanitizeResponseSelector("gemini", geminiResponseSelector)
+            currentUrl.contains("chatgpt") -> sanitizeResponseSelector("chatgpt", chatGptResponseSelector)
+            currentUrl.contains("bing") || currentUrl.contains("copilot") -> sanitizeResponseSelector("copilot", copilotResponseSelector)
+            else -> "article, [data-message-author-role='assistant'], .markdown, .model-response-text"
         }
+    }
+
+    private fun sanitizeResponseSelector(target: String, raw: String): String {
+        val sel = raw.trim()
+        val fallback = when (target) {
+            "chatgpt" -> "[data-message-author-role='assistant'], article, .markdown"
+            "gemini" -> "article, .markdown, [data-message-author-role='assistant']"
+            "copilot" -> "cib-message-group.response-message-group, .model-response-text, article"
+            else -> "article, [data-message-author-role='assistant'], .markdown, .model-response-text"
+        }
+        if (sel.isBlank()) return fallback
+
+        // 固定ターンや過度に脆いクラス指定は実運用で壊れやすいため回避する
+        val lowerSel = sel.lowercase()
+        if (lowerSel.contains("conversation-turn-1")) return fallback
+        if (target == "gemini" && lowerSel.contains("markdown-main-panel")) return fallback
+        if (sel.length > 160) return fallback
+        return sel
     }
 
     // --- 🧠 現場記憶 ---

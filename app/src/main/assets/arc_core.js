@@ -2,7 +2,8 @@
 // Arc AutoDom v10.1 (Field Mastery & Semantic Recon - Typo Fixed)
 // ===============================
 
-const arc = (() => {
+if (!window.arc || typeof window.arc.performFill !== 'function') {
+window.arc = (() => {
 
   function isOperable(el) {
     if (!el) return false;
@@ -24,6 +25,15 @@ const arc = (() => {
       if (found) return found;
     }
     return null;
+  }
+
+  function collectDeepNodes(root, selector, out) {
+    if (!root || !selector) return;
+    root.querySelectorAll(selector).forEach((n) => out.push(n));
+    const hosts = Array.from(root.querySelectorAll('*')).filter(e => e.shadowRoot);
+    for (const host of hosts) {
+      collectDeepNodes(host.shadowRoot, selector, out);
+    }
   }
 
   function buildStableSelector(el) {
@@ -75,15 +85,33 @@ const arc = (() => {
   }
 
   return {
+    __lastPostedResult: "",
+    __resultBaseline: "",
     deepQuerySelector,
     performFill: (sel, txt) => {
         let el = deepQuerySelector(document, sel);
         if (!el) {
-            el = Array.from(document.querySelectorAll('textarea, input, [contenteditable="true"]'))
-                 .find(e => {
-                    const label = (e.placeholder || e.getAttribute('aria-label') || "").toLowerCase();
-                    return label.includes("ask") || label.includes("prompt") || label.includes("メッセージ");
-                 });
+            const candidates = [];
+            collectDeepNodes(document, 'textarea, input[type="text"], [contenteditable="true"], [role="textbox"]', candidates);
+            el = candidates.find(e => {
+                if (!isOperable(e)) return false;
+                const hint = (
+                  e.placeholder ||
+                  e.getAttribute('aria-label') ||
+                  e.getAttribute('data-testid') ||
+                  e.getAttribute('name') ||
+                  e.getAttribute('id') ||
+                  ''
+                ).toLowerCase();
+                return (
+                  hint.includes("message") ||
+                  hint.includes("chatgpt") ||
+                  hint.includes("ask") ||
+                  hint.includes("prompt") ||
+                  hint.includes("メッセージ") ||
+                  hint.includes("入力")
+                );
+            }) || candidates.find(e => isOperable(e));
         }
         if (!el) {
             if (window.AndroidBridge) AndroidBridge.domError("FILL_FAIL_REPORT:" + sel, JSON.stringify(getElementContext(sel)));
@@ -105,13 +133,72 @@ const arc = (() => {
         }
         return false;
     },
+    armResultBaseline: (sel) => {
+        const collectCandidates = () => {
+          const sels = [];
+          if (sel && sel !== "null") sels.push(sel);
+          sels.push('[data-message-author-role="assistant"]', '.model-response-text', '.markdown', 'article');
+          const out = [];
+          const seen = new Set();
+          sels.forEach((s) => {
+            document.querySelectorAll(s).forEach((el) => {
+              if (!el || seen.has(el)) return;
+              seen.add(el);
+              out.push(el);
+            });
+          });
+          return out;
+        };
+        const nodes = collectCandidates();
+        for (let i = nodes.length - 1; i >= 0; i--) {
+          const clone = nodes[i].cloneNode(true);
+          clone.querySelectorAll('button, style, script, .sr-only').forEach(el => el.remove());
+          const txt = (clone.innerText || clone.textContent || "").trim();
+          if (txt.length > 5) {
+            window.arc.__resultBaseline = txt;
+            window.arc.__lastPostedResult = txt;
+            return txt;
+          }
+        }
+        window.arc.__resultBaseline = "";
+        window.arc.__lastPostedResult = "";
+        return "";
+    },
     extractCleanResult: (sel) => {
-        let target = deepQuerySelector(document, sel) || document.querySelector('article, .markdown, [data-message-author-role="assistant"]');
-        if (!target) return "";
-        const clone = target.cloneNode(true);
-        clone.querySelectorAll('button, style, script, .sr-only').forEach(el => el.remove());
-        const txt = (clone.innerText || clone.textContent).trim();
-        if (window.AndroidBridge && txt.length > 5) AndroidBridge.postMessage(txt);
+        const sels = [];
+        if (sel && sel !== "null") sels.push(sel);
+        sels.push('[data-message-author-role="assistant"]', '.model-response-text', '.markdown', 'article');
+
+        const nodes = [];
+        const seen = new Set();
+        sels.forEach((s) => {
+          document.querySelectorAll(s).forEach((el) => {
+            if (!el || seen.has(el)) return;
+            seen.add(el);
+            nodes.push(el);
+          });
+        });
+        if (!nodes.length) return "";
+
+        let txt = "";
+        for (let i = nodes.length - 1; i >= 0; i--) {
+          const node = nodes[i];
+          const clone = node.cloneNode(true);
+          clone.querySelectorAll('button, style, script, .sr-only').forEach(el => el.remove());
+          const candidate = (clone.innerText || clone.textContent || "").trim();
+          if (candidate.length > 5) {
+            txt = candidate;
+            break;
+          }
+        }
+        if (!txt) return "";
+
+        const baseline = window.arc.__resultBaseline || "";
+        const lastPosted = window.arc.__lastPostedResult || "";
+        if (txt === baseline || txt === lastPosted) return txt;
+
+        window.arc.__lastPostedResult = txt;
+        if (window.AndroidBridge) AndroidBridge.postMessage(txt);
         return txt;
     },
     getAutoDomData: () => ({ meta: getMetaInfo(), uiMap: Array.from(document.querySelectorAll('button, input, textarea')).map(e => ({ tag: e.tagName, text: (e.innerText || e.placeholder || "").substring(0,20), selector: buildStableSelector(e) })).filter(i => i.selector !== "") }),
@@ -119,4 +206,7 @@ const arc = (() => {
     getElementContext
   };
 })();
-console.log("Arc Core v10.1 Ready.");
+console.log("Arc Core v10.3 Ready.");
+} else {
+console.log("Arc Core already loaded.");
+}

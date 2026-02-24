@@ -64,7 +64,15 @@ object Http {
             if (!location.isNullOrBlank()) {
                 Log.d("Http", "Redirect($code): $urlStr -> $location")
                 conn.disconnect()
-                return executePost(location, json, redirectCount + 1)
+                return if (code == HttpURLConnection.HTTP_MOVED_TEMP ||
+                    code == HttpURLConnection.HTTP_MOVED_PERM ||
+                    code == HttpURLConnection.HTTP_SEE_OTHER) {
+                    // Apps Script WebApp の 302/303 は結果取得用URL。GETで追従しないとHTMLへ迷子になる。
+                    executeGet(location, redirectCount + 1)
+                } else {
+                    // 307/308 はメソッド維持
+                    executePost(location, json, redirectCount + 1)
+                }
             }
         }
 
@@ -75,6 +83,36 @@ object Http {
         }
 
         Log.d("Http", "POST Success: $urlStr")
+        return response
+    }
+
+    private fun executeGet(urlStr: String, redirectCount: Int = 0): String {
+        if (redirectCount > 5) {
+            throw IllegalStateException("Too many redirects for $urlStr")
+        }
+        val url = URL(urlStr)
+        val conn = url.openConnection() as HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.instanceFollowRedirects = false
+        conn.connectTimeout = 15000
+        conn.readTimeout = 15000
+
+        val code = conn.responseCode
+        if (code in 300..399) {
+            val location = conn.getHeaderField("Location")
+            if (!location.isNullOrBlank()) {
+                Log.d("Http", "Redirect($code): $urlStr -> $location")
+                conn.disconnect()
+                return executeGet(location, redirectCount + 1)
+            }
+        }
+
+        val response = if (code in 200..299) {
+            conn.inputStream.bufferedReader().use(BufferedReader::readText)
+        } else {
+            conn.errorStream?.bufferedReader()?.use(BufferedReader::readText) ?: "HTTP $code"
+        }
+        Log.d("Http", "GET Success: $urlStr")
         return response
     }
 }

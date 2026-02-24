@@ -3,6 +3,7 @@ package com.arc
 import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
@@ -16,6 +17,11 @@ class ArcWorker(
     private val prefs: Prefs,
     private val pipelineProvider: () -> AllAiPipeline
 ) {
+    private data class ScreenDecision(
+        val action: String,
+        val note: String = ""
+    )
+
     private val workerScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val visionClient by lazy { VisionClient(prefs.gasUrl) }
     
@@ -25,16 +31,44 @@ class ArcWorker(
     private var lastTarget: String = ""
     private var lastFailedSelector: String = ""
     private var lastFailedType: String = ""
+    private var lastAiTask: ArcTask.AI? = null
+    private var stealthRetryCount: Int = 0
+    private var adaptiveRetryCount: Int = 0
+    private var isFinalizingResult: Boolean = false
+    private val statusTrail = ArrayDeque<String>()
+    private var statusSeq: Long = 0L
 
     // 🚀 [統合信号系]
     var onGlobalAiResult: ((String) -> Unit)? = null
     var onSystemStatusUpdate: ((String) -> Unit)? = null
     var onSystemErrorRequest: ((String, String?) -> Unit)? = null 
+    var onGatewayInstruction: ((JSONObject) -> Unit)? = null
     
     private var currentDoneCallback: (() -> Unit)? = null
     private var timeoutJob: Job? = null
+    private fun perAttemptTimeoutMsFor(target: String): Long {
+        return when (target.lowercase()) {
+            "copilot" -> 90_000L
+            else -> 45_000L
+        }
+    }
+
+    private fun noProgressLimitMsFor(target: String): Long {
+        return when (target.lowercase()) {
+            // Copilot の bot 壁は早めに見切って failover を促進
+            "copilot" -> 18_000L
+            else -> 28_000L
+        }
+    }
 
     init {
+        gateway.telemetrySupplier = {
+            JSONObject().apply {
+                put("hud_tail", snapshotStatusTrail())
+                put("hud_last", latestStatus())
+                put("arc_qid", currentQid ?: "")
+            }
+        }
         // 🚀 現場(WebView)からの全信号を掌握し、ミッション文脈に合わせてルーティング
         web.onAiResult = { result ->
             if (!isAborted) {
@@ -55,7 +89,7 @@ class ArcWorker(
         // 🛡️ [信号同期] 生成完了信号を受け取り、ミッションステータスを更新
         web.onGenerationDone = {
             if (!isAborted) {
-                onSystemStatusUpdate?.invoke("GEN_READY")
+                emitStatus("GEN_READY")
                 // 必要に応じて次のステップを急がせるトリガーに使用
             }
         }
@@ -80,7 +114,7 @@ class ArcWorker(
      * 🧠 [知能統合] 現場の失敗を、Gatewayの長期記憶または外部AIで連動解決する
      */
     private fun handleOperationFailure(precisionData: String) {
-        onSystemStatusUpdate?.invoke("CONSULTING BRAIN...")
+        emitStatus("CONSULTING BRAIN...")
         gateway.consultGateway("Failed at $lastFailedSelector", precisionData) { advice ->
             if (advice.isNullOrBlank()) {
                 startExpertHealing(precisionData)
@@ -90,12 +124,12 @@ class ArcWorker(
             when {
                 // 🧬 コードパッチなら自己進化プロセスへ
                 advice.contains("function") || advice.contains("arc.") -> {
-                    onSystemStatusUpdate?.invoke("EVOLVING CORE...")
+                    emitStatus("EVOLVING CORE...")
                     web.applyAndVerifyPatch(advice)
                 }
                 // 💡 セレクタなら即座に適用
                 advice.startsWith(".") || advice.startsWith("#") || advice.contains("[") -> {
-                    onSystemStatusUpdate?.invoke("RECOVERING...")
+                    emitStatus("RECOVERING...")
                     applyHealing(advice)
                 }
                 else -> startExpertHealing(precisionData)
@@ -105,6 +139,47 @@ class ArcWorker(
 
     private fun validateSelector(s: String?) = !s.isNullOrBlank() && s.length < 100 && (s.startsWith(".") || s.startsWith("#") || s.contains("["))
 
+    @Synchronized
+    private fun rememberStatus(status: String) {
+        val ts = System.currentTimeMillis()
+        statusTrail.addLast("${ts}:${status.take(120)}")
+        while (statusTrail.size > 20) statusTrail.removeFirst()
+    }
+
+    private fun emitStatus(status: String) {
+        rememberStatus(status)
+        val seq = nextStatusSeq()
+        val url = web.currentUrl()
+        val inferred = inferTargetFromUrl(url).ifBlank { lastTarget }
+        val shortUrl = if (url.length > 180) url.take(180) + "...(len=" + url.length + ")" else url
+        Log.d(
+            "ARC_HUD_EVT",
+            "seq=$seq qid=${currentQid ?: "-"} target=${inferred.ifBlank { "-" }} status=${status.take(120)} url=$shortUrl"
+        )
+        onSystemStatusUpdate?.invoke(status)
+    }
+
+    @Synchronized
+    private fun snapshotStatusTrail(): JSONArray {
+        return JSONArray(statusTrail.toList())
+    }
+
+    @Synchronized
+    private fun latestStatus(): String {
+        return statusTrail.lastOrNull() ?: ""
+    }
+
+    @Synchronized
+    private fun nextStatusSeq(): Long {
+        statusSeq += 1
+        return statusSeq
+    }
+
+    @Synchronized
+    private fun currentStatusSeq(): Long {
+        return statusSeq
+    }
+
     private fun cancelActiveJobs() {
         timeoutJob?.cancel()
         timeoutJob = null
@@ -112,7 +187,27 @@ class ArcWorker(
 
     fun abortCurrent() { 
         isAborted = true; currentQid = null; currentDoneCallback = null
+        isFinalizingResult = false
         cancelActiveJobs()
+    }
+
+    fun forceFailCurrent(errorType: String, data: String) {
+        val qid = currentQid ?: lastAiTask?.qid ?: "SYSTEM"
+        val missionId = currentMissionId
+        val target = lastAiTask?.target
+        val prompt = lastAiTask?.prompt
+        prefs.addContext("Task: $qid", "ERROR: $errorType $data", isSuccess = false)
+        if (qid != "SYSTEM") {
+            gateway.sendArcError(qid, errorType, data, missionId = missionId, target = target, prompt = prompt)
+        } else {
+            gateway.sendArcError("SYSTEM", errorType, data, missionId = missionId, target = target, prompt = prompt)
+        }
+        announceStatus("error")
+        val done = currentDoneCallback
+        currentQid = null
+        currentDoneCallback = null
+        isFinalizingResult = false
+        done?.invoke()
     }
 
     fun process(task: ArcTask, done: () -> Unit) {
@@ -120,9 +215,9 @@ class ArcWorker(
         when (task) {
             is ArcTask.Pipeline -> {
                 currentMissionId = task.missionId
-                onSystemStatusUpdate?.invoke("MISSION START")
+                emitStatus("MISSION START")
                 announceStatus("running")
-                pipelineProvider().start(task.prompt) { 
+                pipelineProvider().start(task.prompt, task.missionId) {
                     web.refreshProcess()
                     announceStatus("idle")
                     done() 
@@ -131,6 +226,12 @@ class ArcWorker(
             is ArcTask.AI -> {
                 currentQid = task.qid
                 currentMissionId = task.missionId
+                lastAiTask = task
+                isFinalizingResult = false
+                if (!task.isSelfHealing) {
+                    stealthRetryCount = 0
+                    adaptiveRetryCount = 0
+                }
                 currentDoneCallback = done
                 announceStatus("running")
                 executeAiTask(task)
@@ -144,23 +245,43 @@ class ArcWorker(
     }
 
     private fun executeAiTask(task: ArcTask.AI) {
+        lastAiTask = task
         val target = task.target.lowercase()
         val parsedTarget = Util.parseTarget(target)
-        val shouldLoad = lastTarget != target || task.forceReload
+        val currentUrl = web.currentUrl()
+        val currentPageTarget = inferTargetFromUrl(currentUrl)
+        val targetMismatch = currentPageTarget.isNotBlank() && currentPageTarget != target
+        val shouldLoad = lastTarget != target || task.forceReload || targetMismatch
         lastTarget = target
         cancelActiveJobs()
 
         if (shouldLoad) {
-            onSystemStatusUpdate?.invoke("LOADING $target")
-            web.applyPersona(parsedTarget ?: AiTarget.GEMINI)
+            if (targetMismatch) {
+                emitStatus("TARGET_MISMATCH:${currentPageTarget}->${target}")
+                Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target url=$currentUrl")
+            }
+            emitStatus("LOADING $target")
+            // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
+            web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
             web.webView?.post { web.webView?.loadUrl(prefs.getUrlFor(target)) }
+            // 遷移失敗時の保険: 8秒後も別ターゲットなら再度明示遷移
+            workerScope.launch {
+                delay(8000)
+                if (isAborted || currentQid != task.qid) return@launch
+                val nowTarget = inferTargetFromUrl(web.currentUrl())
+                if (nowTarget != target) {
+                    Log.w("ARC_TASK", "force nav retry current=$nowTarget requested=$target")
+                    emitStatus("FORCE_NAV_RETRY:$target")
+                    web.webView?.post { web.webView?.loadUrl(prefs.getUrlFor(target)) }
+                }
+            }
         }
 
         val isReconTarget = parsedTarget == AiTarget.MOBILE_BROWSER || parsedTarget == AiTarget.FULL_BROWSER
         if (isReconTarget) {
             val done = currentDoneCallback
             val finishRecon = {
-                onSystemStatusUpdate?.invoke("RECON_READY")
+                emitStatus("RECON_READY")
                 finishTask(done)
             }
             if (shouldLoad) {
@@ -180,7 +301,7 @@ class ArcWorker(
 
         val action = {
             if (!isAborted) {
-                onSystemStatusUpdate?.invoke("INJECTING...")
+                emitStatus("INJECTING...")
                 val (inS, sendS) = prefs.getSelectorsFor(target)
                 web.injectPromptForcefully(inS, sendS, buildFinalPrompt(task))
             }
@@ -193,52 +314,386 @@ class ArcWorker(
             workerScope.launch { delay(1000); if(!isAborted) action() }
         }
         
+        val timeoutMs = perAttemptTimeoutMsFor(target)
         timeoutJob = workerScope.launch {
-            delay(60000)
-            if (!isAborted && currentQid == task.qid) handleDomError("TIMEOUT", null)
+            val startedAt = System.currentTimeMillis()
+            var lastSeq = currentStatusSeq()
+            var lastProgressAt = startedAt
+            while (isActive) {
+                delay(2000)
+                if (isAborted || currentQid != task.qid) return@launch
+
+                val now = System.currentTimeMillis()
+                val elapsed = now - startedAt
+                val seqNow = currentStatusSeq()
+                if (seqNow != lastSeq) {
+                    lastSeq = seqNow
+                    lastProgressAt = now
+                }
+                val noProgressMs = now - lastProgressAt
+
+                if (elapsed >= timeoutMs) {
+                    handleDomError("TIMEOUT", "elapsed_ms=$elapsed")
+                    return@launch
+                }
+
+                if (elapsed >= 12_000L) {
+                    val bot = detectBotWallQuick()
+                    if (bot.first) {
+                        handleDomError("COPILOT_BOT_BLOCKED", bot.second)
+                        return@launch
+                    }
+                }
+
+                if (elapsed >= 15_000L) {
+                    val currentT = inferTargetFromUrl(web.currentUrl())
+                    if (currentT.isNotBlank() && currentT != target) {
+                        handleDomError("TARGET_STALL:${currentT}->${target}", web.currentUrl())
+                        return@launch
+                    }
+                }
+
+                if (noProgressMs >= noProgressLimitMsFor(target)) {
+                    val bot = detectBotWallQuick()
+                    if (bot.first) {
+                        handleDomError("COPILOT_BOT_BLOCKED", bot.second)
+                        return@launch
+                    }
+                    handleDomError("STALL_NO_PROGRESS", "no_status_change_ms=$noProgressMs")
+                    return@launch
+                }
+            }
         }
+    }
+
+    private suspend fun detectBotWallQuick(): Pair<Boolean, String> {
+        val d = CompletableDeferred<Pair<Boolean, String>>()
+        web.detectBotWall { blocked, mark ->
+            if (!d.isCompleted) d.complete(blocked to mark)
+        }
+        return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
     }
 
     private fun handleAiResult(result: String) {
         val qid = currentQid ?: return
+        if (isFinalizingResult) return
+        isFinalizingResult = true
         val done = currentDoneCallback
+        val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
+        if (target == "copilot" && looksLikeCopilotBotWall(result)) {
+            emitStatus("COPILOT_BOT_BLOCKED_RESULT")
+            gateway.sendArcError(
+                qid,
+                "COPILOT_BOT_BLOCKED",
+                "challenge_detected_in_result",
+                missionId = currentMissionId,
+                target = lastAiTask?.target,
+                prompt = lastAiTask?.prompt
+            )
+            announceStatus("error")
+            finishTask(done)
+            return
+        }
         if (qid.startsWith("HEAL_")) {
             gateway.reportLearning(lastTarget, result)
             applyHealing(result); finishTask(done)
         } else {
-            web.captureBitmap { bmp ->
-                gateway.sendArcResult(qid, result, bitmapToBase64(bmp))
-                prefs.addContext("Task: $qid", result)
-                onSystemStatusUpdate?.invoke("MISSION OK")
-                announceStatus("success")
+            stealthRetryCount = 0
+            adaptiveRetryCount = 0
+            gateway.sendArcResult(
+                qid,
+                result,
+                missionId = currentMissionId,
+                target = lastAiTask?.target,
+                prompt = lastAiTask?.prompt
+            ) { ok ->
+                if (ok) {
+                    prefs.addContext("Task: $qid", result)
+                    emitStatus("MISSION OK")
+                    announceStatus("success")
+                } else {
+                    gateway.sendArcError(
+                        qid,
+                        "RESULT_POST_FAIL",
+                        "arc_result_send_failed",
+                        missionId = currentMissionId,
+                        target = lastAiTask?.target,
+                        prompt = lastAiTask?.prompt
+                    )
+                    emitStatus("RESULT_SEND_FAIL")
+                    announceStatus("error")
+                }
                 finishTask(done)
             }
         }
     }
 
+    private fun looksLikeCopilotBotWall(text: String): Boolean {
+        val lower = text.lowercase()
+        val marks = listOf(
+            "検証に失敗しました",
+            "トラブルシューティング",
+            "challenge.cloudflare.com",
+            "cloudflare",
+            "verify you are human",
+            "i am not a robot",
+            "security check"
+        )
+        return marks.any { lower.contains(it.lowercase()) }
+    }
+
+    private fun isBotBlocked(type: String, data: String?): Boolean {
+        val text = (type + " " + (data ?: "")).lowercase()
+        val marks = listOf(
+            "captcha",
+            "recaptcha",
+            "verify you are human",
+            "checking your browser",
+            "just a moment",
+            "turnstile",
+            "このページにアクセスしています",
+            "unusual traffic",
+            "access denied",
+            "forbidden",
+            "cloudflare",
+            "bot detected",
+            "security check",
+            "human verification",
+            "verify you are not a robot",
+            "bot check"
+        )
+        return marks.any { text.contains(it) }
+    }
+
     private fun handleDomError(type: String, data: String?) {
         onSystemErrorRequest?.invoke(type, data)
-        if (type.contains("FAIL") && currentQid != null && !currentQid!!.startsWith("HEAL_")) {
+        val qid = currentQid ?: ""
+
+        if (type.contains("COPILOT_BOT_BLOCKED", ignoreCase = true)) {
+            handleDomErrorFallback("COPILOT_BOT_BLOCKED", data ?: "cloudflare_challenge_persistent")
+            return
+        }
+
+        val maybeRecoverable = currentQid != null &&
+            qid != "manual" &&
+            !qid.startsWith("HEAL_") &&
+            (type.contains("TIMEOUT") || type.contains("FAIL") || isBotBlocked(type, data))
+        if (maybeRecoverable) {
+            attemptAdaptiveRecovery(type, data) { recovered ->
+                if (!recovered) {
+                    handleDomErrorFallback(type, data)
+                }
+            }
+            return
+        }
+
+        handleDomErrorFallback(type, data)
+    }
+
+    private fun handleDomErrorFallback(type: String, data: String?) {
+        val qid = currentQid ?: lastAiTask?.qid ?: "SYSTEM"
+        val isCopilotHardBlocked = type.contains("COPILOT_BOT_BLOCKED", ignoreCase = true)
+
+        if (type.contains("TIMEOUT") && currentQid != null && !currentQid!!.startsWith("HEAL_")) {
+            // 最終失敗時は、画面情報を結果として残してからエラー終了
+            persistFallbackResult(qid, type)
+        }
+
+        if (!isCopilotHardBlocked && currentQid != null && !currentQid!!.startsWith("HEAL_") && isBotBlocked(type, data) && stealthRetryCount < 2) {
+            stealthRetryCount++
+            emitStatus("STEALTH_RETRY_$stealthRetryCount")
+            web.rotateStealthPersona(lastTarget)
+            val retryTask = lastAiTask?.copy(forceReload = true)
+            if (retryTask != null) {
+                workerScope.launch {
+                    delay(2500)
+                    if (!isAborted && currentQid != null) {
+                        executeAiTask(retryTask)
+                    }
+                }
+                return
+            }
+        }
+        if (type.contains("FAIL") &&
+            currentQid != null &&
+            qid != "manual" &&
+            !currentQid!!.startsWith("HEAL_")
+        ) {
             web.capturePageSource { html -> 
                 startSelfHealing(html) 
             }
         } else {
-            gateway.sendArcError(currentQid ?: "SYSTEM", type, data)
+            prefs.addContext("Task: $qid", "ERROR: $type ${data ?: ""}", isSuccess = false)
+            gateway.sendArcError(
+                qid,
+                type,
+                data,
+                missionId = currentMissionId,
+                target = lastAiTask?.target,
+                prompt = lastAiTask?.prompt
+            )
             announceStatus("error")
             finishTask(currentDoneCallback)
         }
     }
 
+    private fun persistFallbackResult(qid: String, reason: String) {
+        web.capturePageSource { html ->
+            val text = html
+                .replace("\\n", " ")
+                .replace("\\\"", "\"")
+                .replace(Regex("\\s+"), " ")
+                .take(900)
+            gateway.sendArcResult(
+                qid,
+                "FALLBACK($reason): $text",
+                missionId = currentMissionId,
+                target = lastAiTask?.target,
+                prompt = lastAiTask?.prompt
+            )
+        }
+    }
+
+    private fun attemptAdaptiveRecovery(type: String, data: String?, onDone: (Boolean) -> Unit) {
+        val task = lastAiTask
+        if (task == null || adaptiveRetryCount >= 2) {
+            onDone(false)
+            return
+        }
+
+        emitStatus("SCREEN_ANALYZE")
+        web.captureBitmap { bmp ->
+            val image = bitmapToBase64(bmp)
+            web.capturePageSource { html ->
+                val problem = buildString {
+                    append("reason=").append(type)
+                    if (!data.isNullOrBlank()) append(", data=").append(data.take(600))
+                    append("\npage=").append(html.take(2500))
+                    append("\nReturn JSON only: {\"action\":\"RETRY|CLICK_UNBLOCK|REFRESH|WAIT|ESCALATE\",\"note\":\"short\"}")
+                }
+                gateway.consultGateway("ARC_SCREEN_DECISION", problem, image) { advice ->
+                    val decision = decodeDecision(advice)
+                    executeDecision(decision, task, onDone)
+                }
+            }
+        }
+    }
+
+    private fun decodeDecision(advice: String): ScreenDecision {
+        if (advice.isBlank()) return ScreenDecision("RETRY", note = "empty_advice")
+        try {
+            val obj = JSONObject(advice)
+            val action = obj.optString("action", "").uppercase()
+            if (action.isNotBlank()) return ScreenDecision(action, obj.optString("note", "json"))
+        } catch (_: Exception) {}
+
+        val lower = advice.lowercase()
+        return when {
+            lower.contains("cookie") || lower.contains("consent") || lower.contains("同意") -> ScreenDecision("CLICK_UNBLOCK", note = "consent")
+            lower.contains("refresh") || lower.contains("reload") || lower.contains("再読み込み") -> ScreenDecision("REFRESH", note = "refresh")
+            lower.contains("switch") && lower.contains("gemini") -> ScreenDecision("RETRY", note = "target_switch_blocked")
+            lower.contains("switch") && lower.contains("chatgpt") -> ScreenDecision("RETRY", note = "target_switch_blocked")
+            lower.contains("switch") && lower.contains("copilot") -> ScreenDecision("RETRY", note = "target_switch_blocked")
+            lower.contains("captcha") || lower.contains("login") || lower.contains("認証") -> ScreenDecision("ESCALATE", note = "blocked")
+            lower.contains("wait") || lower.contains("待機") -> ScreenDecision("WAIT", note = "wait")
+            else -> ScreenDecision("RETRY", note = "fallback")
+        }
+    }
+
+    private fun executeDecision(decision: ScreenDecision, task: ArcTask.AI, onDone: (Boolean) -> Unit) {
+        adaptiveRetryCount++
+        emitStatus("SCREEN_ACTION:${decision.action}")
+
+        when (decision.action) {
+            "CLICK_UNBLOCK" -> {
+                web.attemptUiUnblock { clicked ->
+                    if (!clicked) {
+                        onDone(false)
+                        return@attemptUiUnblock
+                    }
+                    workerScope.launch {
+                        delay(1200)
+                        if (!isAborted && currentQid != null) executeAiTask(task.copy(forceReload = false))
+                    }
+                    onDone(true)
+                }
+            }
+            "REFRESH" -> {
+                web.refreshProcess()
+                workerScope.launch {
+                    delay(2200)
+                    if (!isAborted && currentQid != null) executeAiTask(task.copy(forceReload = false))
+                }
+                onDone(true)
+            }
+            // target切替はGateway側の明示failoverのみ許可する
+            "SWITCH_TARGET" -> {
+                workerScope.launch {
+                    delay(1000)
+                    if (!isAborted && currentQid != null) executeAiTask(task.copy(forceReload = false))
+                }
+                onDone(true)
+            }
+            "WAIT" -> {
+                workerScope.launch {
+                    delay(2500)
+                    if (!isAborted && currentQid != null) executeAiTask(task.copy(forceReload = false))
+                }
+                onDone(true)
+            }
+            "RETRY" -> {
+                workerScope.launch {
+                    delay(1000)
+                    if (!isAborted && currentQid != null) executeAiTask(task.copy(forceReload = false))
+                }
+                onDone(true)
+            }
+            else -> {
+                gateway.sendArcError(
+                    currentQid ?: "SYSTEM",
+                    "SCREEN_BLOCKED",
+                    decision.note,
+                    missionId = currentMissionId,
+                    target = lastAiTask?.target,
+                    prompt = lastAiTask?.prompt
+                )
+                onDone(false)
+            }
+        }
+    }
+
+    private fun currentRecoveryTarget(): String {
+        val t = lastAiTask?.target?.lowercase()?.trim().orEmpty()
+        if (t == "chatgpt" || t == "gemini" || t == "copilot") return t
+        val fallback = lastTarget.lowercase().trim()
+        if (fallback == "chatgpt" || fallback == "gemini" || fallback == "copilot") return fallback
+        return "gemini"
+    }
+
     private fun startSelfHealing(html: String) {
-        onSystemStatusUpdate?.invoke("REPAIRING...")
+        val target = currentRecoveryTarget()
+        emitStatus("REPAIRING:$target")
         val expertPrompt = "Extract selector from HTML:\n$html"
-        val healingTask = ArcTask.AI(qid = "HEAL_$currentQid", target = if (lastTarget == "gemini") "chatgpt" else "gemini", prompt = expertPrompt, isSelfHealing = true)
+        val healingTask = ArcTask.AI(
+            qid = "HEAL_$currentQid",
+            target = target,
+            prompt = expertPrompt,
+            isSelfHealing = true
+        )
         executeAiTask(healingTask)
     }
 
     private fun startExpertHealing(data: String) {
-        onSystemStatusUpdate?.invoke("ESCALATING...")
-        executeAiTask(ArcTask.AI(qid = "HEAL_$currentQid", target = "gemini", prompt = "Fix this precision fragment:\n$data", isSelfHealing = true))
+        val target = currentRecoveryTarget()
+        emitStatus("ESCALATING:$target")
+        executeAiTask(
+            ArcTask.AI(
+                qid = "HEAL_$currentQid",
+                target = target,
+                prompt = "Fix this precision fragment:\n$data",
+                isSelfHealing = true
+            )
+        )
     }
 
     private fun applyHealing(res: String) {
@@ -246,7 +701,7 @@ class ArcWorker(
         match?.value?.let { selector ->
             if (validateSelector(selector)) {
                 updateSelectorForFailure(selector)
-                onSystemStatusUpdate?.invoke("LEARNED")
+                emitStatus("LEARNED")
             }
         }
     }
@@ -270,22 +725,55 @@ class ArcWorker(
         }
     }
 
-    fun announceStatus(status: String, onInstruction: (JSONObject) -> Unit = {}) {
+    fun announceStatus(status: String, onInstruction: ((JSONObject) -> Unit)? = null) {
+        val currentUrl = web.currentUrl()
+        val currentHost = web.currentHost()
+        val inferredTarget = inferTargetFromUrl(currentUrl).ifBlank { lastTarget }
+        val instructionHandler = onInstruction ?: onGatewayInstruction
         val json = JSONObject().apply {
             put("mode", "arc_heartbeat"); put("status", status)
             put("ip", Util.getLocalIpAddress()); put("target", lastTarget); put("mission", currentMissionId ?: "NONE")
+            put("mission_id", currentMissionId ?: "")
+            put("qid", currentQid ?: "")
+            put("current_target", inferredTarget)
+            put("current_url", currentUrl)
+            put("current_host", currentHost)
+            put("current_title", web.currentTitle())
             put("port", MainActivity.serverPort); put("version", ArcCore.VERSION)
             put("worker_id", prefs.workerId)
             put("executor", "ARC")
         }
-        workerScope.launch { gateway.sendHeartbeat(json.toString(), onInstruction) }
+        workerScope.launch {
+            gateway.sendHeartbeat(json.toString()) { instruction ->
+                instructionHandler?.invoke(instruction)
+            }
+        }
     }
 
-    private fun finishTask(d: (() -> Unit)?) { currentQid = null; currentDoneCallback = null; d?.invoke() }
+    private fun inferTargetFromUrl(url: String): String {
+        val u = url.lowercase()
+        return when {
+            u.contains("chatgpt.com") -> "chatgpt"
+            u.contains("gemini.google.com") -> "gemini"
+            u.contains("copilot.microsoft.com") || u.contains("bing.com/chat") -> "copilot"
+            else -> ""
+        }
+    }
+
+    private fun finishTask(d: (() -> Unit)?) {
+        currentQid = null
+        currentDoneCallback = null
+        isFinalizingResult = false
+        d?.invoke()
+    }
     private fun executeVisionTask(t: ArcTask.VisionRequest) { 
         val done = currentDoneCallback
         web.captureBitmap { b -> visionClient.ask(bitmap = b, prompt = "Find ${t.action}") { x, y -> t.onResult(x, y); finishTask(done) } } 
     }
-    private fun buildFinalPrompt(t: ArcTask.AI) = "${prefs.getFormattedContext()}\n\n依頼: ${t.prompt}"
+    private fun buildFinalPrompt(t: ArcTask.AI): String {
+        // ARC UI からの手動送信は、入力した文面をそのまま送る
+        if (t.qid == "manual") return t.prompt
+        return "${prefs.getFormattedContext()}\n\n依頼: ${t.prompt}"
+    }
     private fun bitmapToBase64(b: Bitmap) = ByteArrayOutputStream().let { o -> b.compress(Bitmap.CompressFormat.JPEG, 70, o); Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP) }
 }

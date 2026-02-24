@@ -155,7 +155,7 @@
 
   <!-- 外部AI選択 -->
   <div class="ios-card">
-    <label style="font-size:14px; font-weight:600;">External AI</label>
+    <label style="font-size:14px; font-weight:600;">外部AI</label>
     <select id="external-ai"
             style="width:100%; margin-top:8px; padding:10px; border-radius:var(--radius);
                    border:1px solid var(--border); font-size:14px;">
@@ -168,21 +168,21 @@
 
   <!-- Chat Log -->
   <div class="ios-card" style="padding:0;">
-    <div id="chat-log"
+      <div id="chat-log"
          style="padding:16px; height:420px; overflow-y:auto;
                 display:flex; flex-direction:column; gap:10px;">
-      Loading...
+      読み込み中...
     </div>
 
     <div id="ai-typing" style="display:none; padding:10px 16px; color:var(--text-secondary); font-size:13px;">
-      External AI is typing
+      外部AIが応答を生成中
       <span class="typing-dot"></span>
       <span class="typing-dot"></span>
       <span class="typing-dot"></span>
     </div>
 
     <div id="external-loading" style="display:none; padding:10px 16px; color:var(--text-secondary); font-size:13px;">
-      Sending to External AI…
+      外部AIへ送信中…
       <span class="typing-dot"></span>
       <span class="typing-dot"></span>
       <span class="typing-dot"></span>
@@ -192,7 +192,7 @@
   <!-- Input -->
   <div class="ios-card" style="padding:14px;">
     <textarea id="chat-input"
-              placeholder="Send a message..."
+              placeholder="メッセージを入力..."
               style="width:100%; height:80px; padding:12px;
                      border-radius:var(--radius); border:1px solid var(--border);
                      font-size:14px;"></textarea>
@@ -201,15 +201,18 @@
             style="margin-top:10px; width:100%; padding:14px;
                    border-radius:var(--radius); background:var(--accent-blue);
                    color:white; border:none; font-weight:600; font-size:15px;">
-      Send to MainChat
+      MainChatへ送信
     </button>
 
     <button onclick="sendToExternalAI()"
             style="margin-top:10px; width:100%; padding:14px;
                    border-radius:var(--radius); background:var(--accent-green);
                    color:white; border:none; font-weight:600; font-size:15px;">
-      Ask External AI
+      外部AIに相談
     </button>
+    <div id="gateway-status"
+         style="display:none; margin-top:10px; padding:10px 12px; border-radius:12px; font-size:13px;">
+    </div>
   </div>
 
 </div>
@@ -219,8 +222,8 @@
 =========================== -->
 <div id="page-logs" class="page">
   <div class="ios-card">
-    <h3>System Logs</h3>
-    <div id="logs-area">Loading...</div>
+    <h3>システムログ</h3>
+    <div id="logs-area">読み込み中...</div>
   </div>
 </div>
 
@@ -229,8 +232,8 @@
 =========================== -->
 <div id="page-evolution" class="page">
   <div class="ios-card">
-    <h3>Evolution Engine</h3>
-    <div id="evolution-list">Loading...</div>
+    <h3>進化エンジン</h3>
+    <div id="evolution-list">読み込み中...</div>
   </div>
 </div>
 
@@ -239,8 +242,8 @@
 =========================== -->
 <div id="page-staging" class="page">
   <div class="ios-card">
-    <h3>Staging Area</h3>
-    <div id="staging-area">Loading...</div>
+    <h3>ステージング</h3>
+    <div id="staging-area">読み込み中...</div>
   </div>
 </div>
 
@@ -249,21 +252,31 @@
 =========================== -->
 <div id="page-settings" class="page">
   <div class="ios-card">
-    <h3>Settings</h3>
-    <p>Theme, preferences, etc.</p>
+    <h3>設定</h3>
+    <p>テーマや表示設定を管理します。</p>
   </div>
 </div>
 
 <!-- Bottom Tabs -->
 <div id="bottom-tabs">
-  <button class="tab-btn active" onclick="switchTab('chat')">Chat</button>
-  <button class="tab-btn" onclick="switchTab('logs')">Logs</button>
-  <button class="tab-btn" onclick="switchTab('evolution')">Evolution</button>
-  <button class="tab-btn" onclick="switchTab('staging')">Staging</button>
-  <button class="tab-btn" onclick="switchTab('settings')">Settings</button>
+  <button class="tab-btn active" data-tab="chat" onclick="switchTab('chat')">チャット</button>
+  <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">ログ</button>
+  <button class="tab-btn" data-tab="evolution" onclick="switchTab('evolution')">進化</button>
+  <button class="tab-btn" data-tab="staging" onclick="switchTab('staging')">ステージ</button>
+  <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">設定</button>
 </div>
 
 <script>
+const chatUiState = {
+  lastFingerprint: "",
+  pending: []
+};
+const logsUiState = {
+  aiCopyText: "",
+  autoRecoverRunning: false,
+  autoRecoverLastAtMs: 0
+};
+
 /* ============================================================
    Theme
 ============================================================ */
@@ -289,7 +302,7 @@ function switchTab(name) {
   document.getElementById("page-" + name).classList.add("active");
 
   document.querySelectorAll(".tab-btn").forEach(b => {
-    if (b.textContent.toLowerCase() === name) b.classList.add("active");
+    if ((b.dataset.tab || "") === name) b.classList.add("active");
   });
 }
 
@@ -369,11 +382,234 @@ function scrollChatToBottom() {
   log.scrollTop = log.scrollHeight;
 }
 
+function showGatewayStatus(message, kind) {
+  const el = document.getElementById("gateway-status");
+  if (!el) return;
+  const palette = {
+    info: { bg: "#e8f2ff", text: "#0b3d91" },
+    ok: { bg: "#eaf8ef", text: "#1b5e20" },
+    warn: { bg: "#fff6e6", text: "#8a4b00" },
+    err: { bg: "#ffebee", text: "#8b1e1e" }
+  };
+  const color = palette[kind] || palette.info;
+  el.style.display = "block";
+  el.style.background = color.bg;
+  el.style.color = color.text;
+  el.textContent = message;
+}
+
+function queuePendingMessage(label, text) {
+  const id = "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+  chatUiState.pending.push({
+    id: id,
+    ts: new Date().toISOString(),
+    source: label,
+    message: text
+  });
+  chatUiState.lastFingerprint = "";
+  return id;
+}
+
+function resolvePendingMessage(id) {
+  chatUiState.pending = chatUiState.pending.filter(p => p.id !== id);
+  chatUiState.lastFingerprint = "";
+}
+
+function reconcilePendingByServerRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) return;
+  chatUiState.pending = chatUiState.pending.filter((p) => {
+    const matched = rows.some((r) => {
+      const source = String((r && r[1]) || "");
+      const msg = String((r && r[2]) || "");
+      if (!source.includes("USER")) return false;
+      return msg === p.message;
+    });
+    return !matched;
+  });
+}
+
+function normalizeChatRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => {
+    const ts = (r && r[0] != null) ? String(r[0]) : "";
+    const source = (r && r[1] != null) ? String(r[1]) : "";
+    const message = (r && r[2] != null) ? String(r[2]) : "";
+    return [ts, source, message];
+  }).filter((r) => r[1] || r[2]);
+}
+
+function buildFingerprint(rows) {
+  if (!rows.length) return "empty";
+  const last = rows[rows.length - 1];
+  return rows.length + "|" + last.join("|");
+}
+
+function formatChatTime(ts) {
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString("ja-JP", { hour12: false });
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildAIDebugCopyPayload(snap) {
+  const packet = (snap && snap.ai_packet) ? snap.ai_packet : {};
+  return {
+    version: packet.version || "gw-debug-ai-v1",
+    generated_at: packet.generated_at || "",
+    hypothesis: packet.hypothesis || "n/a",
+    metrics: packet.metrics || {},
+    anomalies: packet.anomalies || {},
+    candidates: packet.candidates || {},
+    next_actions: packet.next_actions || []
+  };
+}
+
+async function copyAIDebugPacket() {
+  const text = logsUiState.aiCopyText || "";
+  if (!text) {
+    alert("コピー対象がありません。ログを再読み込みしてください。");
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    alert("AI向けデバッグ要約をコピーしました。");
+  } catch (e) {
+    alert("コピーに失敗しました: " + e);
+  }
+}
+
+function recoverStaleLeasedJobs() {
+  runManualQueueRecovery("leased");
+}
+
+function recoverStalePendingJobs() {
+  runManualQueueRecovery("pending");
+}
+
+function runManualQueueRecovery(scope) {
+  showLoading();
+  const isLeased = scope === "leased";
+  const label = isLeased ? "滞留実行中ジョブ" : "滞留待機ジョブ";
+  showGatewayStatus(label + "を救済中...", "info");
+  const runner = isLeased ? "recoverStaleLeasedJobsFromUi" : "recoverStalePendingJobsFromUi";
+  const arg = isLeased ? 180 : 120;
+  const req = google.script.run.withSuccessHandler((res) => {
+    hideLoading();
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("救済失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    const recovered = Number((res && res.recovered) || 0);
+    const switched = Number((res && res.switched_target) || 0);
+    const routed = res && res.routed && typeof res.routed.routed !== "undefined"
+      ? Number(res.routed.routed)
+      : null;
+    if (recovered > 0) {
+      showSuccess(`救済完了: ${recovered}件`);
+      if (isLeased) {
+        const routedTxt = routed != null ? ` / 再振り分け=${routed}` : "";
+        showGatewayStatus(`滞留実行中ジョブ救済: ${recovered}件${routedTxt}`, "ok");
+      } else {
+        showGatewayStatus(`滞留待機ジョブ救済: ${recovered}件 / ターゲット切替=${switched}`, "ok");
+      }
+    } else {
+      showGatewayStatus("救済対象はありませんでした", "info");
+    }
+    loadLogs();
+    autoUpdateChat();
+  }).withFailureHandler((err) => {
+    hideLoading();
+    showGatewayStatus("救済失敗: " + err, "err");
+  });
+  if (runner === "recoverStaleLeasedJobsFromUi") {
+    req.recoverStaleLeasedJobsFromUi(arg);
+  } else {
+    req.recoverStalePendingJobsFromUi(arg);
+  }
+}
+
+function tryAutoRecoverQueues(snap) {
+  const anomalies = (snap && snap.ai_packet && snap.ai_packet.anomalies) ? snap.ai_packet.anomalies : {};
+  const stalePending = Number(anomalies.stale_pending_count || 0);
+  const staleLeased = Number(anomalies.stale_leased_count || 0);
+  if (stalePending <= 0 && staleLeased <= 0) return;
+  if (logsUiState.autoRecoverRunning) return;
+
+  const now = Date.now();
+  const cooldownMs = 90000;
+  if (now - logsUiState.autoRecoverLastAtMs < cooldownMs) return;
+
+  logsUiState.autoRecoverRunning = true;
+  logsUiState.autoRecoverLastAtMs = now;
+  showGatewayStatus(`自動救済を実行中... 待機=${stalePending}, 実行中=${staleLeased}`, "info");
+  google.script.run.withSuccessHandler((res) => {
+    logsUiState.autoRecoverRunning = false;
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") return;
+    const total = Number((res && res.recovered_total) || 0);
+    const leased = Number((res && res.leased && res.leased.recovered) || 0);
+    const pending = Number((res && res.pending && res.pending.recovered) || 0);
+    if (total > 0) {
+      showGatewayStatus(`自動救済完了: 合計${total}件（実行中=${leased}, 待機=${pending}）`, "ok");
+      setTimeout(loadLogs, 1200);
+    }
+  }).withFailureHandler((err) => {
+    logsUiState.autoRecoverRunning = false;
+    showGatewayStatus("自動救済失敗: " + err, "warn");
+  }).recoverGatewayQueuesFromUi({ leased_min_sec: 180, pending_min_sec: 120 });
+}
+
+function toJpHypothesis(h) {
+  const map = {
+    auth_mismatch_or_signature: "認証不一致または署名不整合",
+    arc_result_delivery_unstable: "結果返却経路が不安定",
+    job_lifecycle_stuck: "ジョブ状態遷移の停滞",
+    no_critical_anomaly_detected: "重大な異常は未検出",
+    snapshot_error: "診断スナップショット取得エラー"
+  };
+  const key = String(h || "");
+  return map[key] || (key || "不明");
+}
+
+function toJpStatusKey(s) {
+  const map = {
+    pending: "待機",
+    leased: "実行中",
+    done: "完了",
+    dead: "失効",
+    error: "エラー",
+    empty: "空"
+  };
+  const key = String(s || "").toLowerCase();
+  return map[key] || (key || "不明");
+}
+
 /* ============================================================
    Load Chat（AllAI 統合版）
 ============================================================ */
 function autoUpdateChat() {
   google.script.run.withSuccessHandler((rows) => {
+    const normalized = normalizeChatRows(rows);
+    if (normalized.length === 0) return;
+    reconcilePendingByServerRows(normalized);
+
+    const fingerprint = buildFingerprint(normalized);
+    if (fingerprint === chatUiState.lastFingerprint && chatUiState.pending.length === 0) return;
+    chatUiState.lastFingerprint = fingerprint;
+
     const log = document.getElementById("chat-log");
     log.innerHTML = "";
 
@@ -402,8 +638,10 @@ function autoUpdateChat() {
         margin-bottom: 12px;
       `;
 
+      const stamp = formatChatTime(allAIGroup._ts || "");
       card.innerHTML = `<div style="font-weight:600; margin-bottom:8px;">
-        🌈 AllAI Responses
+        🌈 全AI応答
+        ${stamp ? `<span style="margin-left:8px; font-size:12px; color:var(--text-secondary);">${stamp}</span>` : ""}
       </div>`;
 
       ["ChatGPT", "Gemini", "Copilot"].forEach(ai => {
@@ -429,23 +667,27 @@ function autoUpdateChat() {
       allAIGroup.ChatGPT = null;
       allAIGroup.Gemini = null;
       allAIGroup.Copilot = null;
+      allAIGroup._ts = null;
     }
 
-    rows.forEach(r => {
+    normalized.forEach(r => {
       const source = r[1] || "";
       const msg = r[2] || "";
 
       // AllAI の回答をまとめる
       if (source.includes("ChatGPT") && msg.startsWith("[ChatGPT]")) {
         allAIGroup.ChatGPT = msg.replace("[ChatGPT]", "").trim();
+        allAIGroup._ts = allAIGroup._ts || r[0];
         return;
       }
       if (source.includes("Gemini") && msg.startsWith("[Gemini]")) {
         allAIGroup.Gemini = msg.replace("[Gemini]", "").trim();
+        allAIGroup._ts = allAIGroup._ts || r[0];
         return;
       }
       if (source.includes("Copilot") && msg.startsWith("[Copilot]")) {
         allAIGroup.Copilot = msg.replace("[Copilot]", "").trim();
+        allAIGroup._ts = allAIGroup._ts || r[0];
         return;
       }
 
@@ -454,10 +696,14 @@ function autoUpdateChat() {
 
       // 通常のメッセージ
       const bubble = document.createElement("div");
+      const stamp = formatChatTime(r[0]);
 
       if (source.includes("USER")) {
         bubble.className = "bubble-user";
-        bubble.textContent = msg;
+        bubble.innerHTML = `
+          ${stamp ? `<div style="font-size:11px; opacity:0.85; margin-bottom:4px;">${stamp}</div>` : ""}
+          <div>${msg}</div>
+        `;
       } else {
         bubble.className = "bubble-ai";
 
@@ -467,6 +713,7 @@ function autoUpdateChat() {
         bubble.innerHTML = `
           <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
             ${icon}
+            ${stamp ? `<span style="font-size:11px; color:var(--text-secondary);">${stamp}</span>` : ""}
           </div>
           ${makeCollapsible(msg)}
         `;
@@ -477,24 +724,90 @@ function autoUpdateChat() {
       log.appendChild(bubble);
     });
 
+    // サーバー反映待ちのローカル表示を末尾に表示
+    chatUiState.pending.forEach((p) => {
+      const bubble = document.createElement("div");
+      bubble.className = "bubble-user";
+      bubble.style.opacity = "0.75";
+      const stamp = formatChatTime(p.ts);
+      bubble.innerHTML = `
+        ${stamp ? `<div style="font-size:11px; opacity:0.85; margin-bottom:4px;">${stamp}</div>` : ""}
+        <div>${p.message}（送信中）</div>
+      `;
+      log.appendChild(bubble);
+    });
+
     // 最後に AllAI グループを flush
     flushAllAIGroup();
 
     scrollChatToBottom();
+  }).withFailureHandler((err) => {
+    console.warn("autoUpdateChat failed:", err);
+    showGatewayStatus("チャット更新エラー: " + err, "err");
   }).fetchMainChat();
 }
 
 /* ============================================================
    Send to MainChat
 ============================================================ */
+function extractRoutedCount(res) {
+  if (!res || !res.routed || typeof res.routed.routed === "undefined") return null;
+  return Number(res.routed.routed);
+}
+
+function resolvePendingMessages(ids) {
+  (ids || []).forEach((id) => resolvePendingMessage(id));
+}
+
+function handleSendSuccess(res, opts) {
+  resolvePendingMessages(opts.pendingIds || []);
+  if (opts.hideGlobalLoading) hideLoading();
+  if (opts.hideExternalLoading) document.getElementById("external-loading").style.display = "none";
+  if (opts.clearInput) document.getElementById("chat-input").value = "";
+  autoUpdateChat();
+
+  const routed = extractRoutedCount(res);
+  if (routed != null) {
+    showSuccess(`${opts.successLabel}（振り分け=${routed}）`);
+    showGatewayStatus(`${opts.statusLabel}: 振り分け=${routed}`, "ok");
+    return;
+  }
+  showSuccess(opts.successLabel + "しました");
+  showGatewayStatus(`${opts.statusLabel}`, "ok");
+}
+
+function handleSendFailure(err, opts) {
+  resolvePendingMessages(opts.pendingIds || []);
+  if (opts.hideGlobalLoading) hideLoading();
+  if (opts.hideExternalLoading) document.getElementById("external-loading").style.display = "none";
+  showGatewayStatus(opts.failLabel + ": " + err, "err");
+}
+
 function sendChat() {
   const text = document.getElementById("chat-input").value.trim();
   if (!text) return;
+  const pendingId = queuePendingMessage("USER (GW)", text);
+  showGatewayStatus("MainChatへ送信中...", "info");
+  autoUpdateChat();
 
-  google.script.run.withSuccessHandler(() => {
-    document.getElementById("chat-input").value = "";
-    autoUpdateChat();
-  }).sendToMainChat(text);
+  showLoading();
+  google.script.run.withSuccessHandler((res) => {
+    handleSendSuccess(res, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: true,
+      hideExternalLoading: false,
+      clearInput: true,
+      successLabel: "送信",
+      statusLabel: "送信完了"
+    });
+  }).withFailureHandler((err) => {
+    handleSendFailure(err, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: true,
+      hideExternalLoading: false,
+      failLabel: "送信失敗"
+    });
+  }).submitGatewayChat(text);
 }
 
 /* ============================================================
@@ -505,33 +818,134 @@ function sendToExternalAI() {
   if (!text) return;
 
   const ai = document.getElementById("external-ai").value;
+  showGatewayStatus("外部AIへ送信中: " + ai, "info");
 
   document.getElementById("external-loading").style.display = "block";
 
   if (ai === "AllAI") {
-    ["ChatGPT", "Gemini", "Copilot"].forEach(a => {
-      google.script.run.enqueueQuestion("USER", `[${a}] ${text}`, "USER_UI");
-    });
-
-    document.getElementById("external-loading").style.display = "none";
-    document.getElementById("chat-input").value = "";
+    const labels = ["ChatGPT", "Gemini", "Copilot"];
+    const messages = labels.map((a) => `[${a}] ${text}`);
+    const pendingIds = messages.map((m) => queuePendingMessage("USER (GW)", m));
+    autoUpdateChat();
+    google.script.run.withSuccessHandler((res) => {
+      handleSendSuccess(res, {
+        pendingIds: pendingIds,
+        hideGlobalLoading: false,
+        hideExternalLoading: true,
+        clearInput: true,
+        successLabel: "全AIへ送信",
+        statusLabel: "全AIへ送信完了"
+      });
+    }).withFailureHandler((err) => {
+      handleSendFailure(err, {
+        pendingIds: pendingIds,
+        hideGlobalLoading: false,
+        hideExternalLoading: true,
+        failLabel: "全AI送信失敗"
+      });
+    }).submitGatewayChatBatch(messages);
     return;
   }
 
-  google.script.run.withSuccessHandler(() => {
-    document.getElementById("external-loading").style.display = "none";
-    document.getElementById("chat-input").value = "";
-  }).enqueueQuestion("USER", `[${ai}] ${text}`, "USER_UI");
+  const pendingId = queuePendingMessage("USER (GW)", `[${ai}] ${text}`);
+  autoUpdateChat();
+  google.script.run.withSuccessHandler((res) => {
+    handleSendSuccess(res, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: false,
+      hideExternalLoading: true,
+      clearInput: true,
+      successLabel: ai + "へ送信",
+      statusLabel: ai + "へ送信完了"
+    });
+  }).withFailureHandler((err) => {
+    handleSendFailure(err, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: false,
+      hideExternalLoading: true,
+      failLabel: "外部AI送信失敗"
+    });
+  }).submitGatewayChat(`[${ai}] ${text}`);
 }
 
 /* ============================================================
    Logs
 ============================================================ */
 function loadLogs() {
-  google.script.run.withSuccessHandler((rows) => {
+  const esc = (v) => String(v == null ? "" : v)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  const compactCell = (v, max = 120) => {
+    const s = String(v == null ? "" : v);
+    if (s.length <= max) return s;
+    return s.slice(0, max) + `...(全${s.length}文字)`;
+  };
+  const rowText = (r, take = 6) =>
+    esc((r || []).slice(0, take).map((c) => compactCell(c)).join(" | "));
+
+  google.script.run.withSuccessHandler((snap) => {
     const area = document.getElementById("logs-area");
-    area.innerHTML = rows.map(r => `<div>${r.join(" | ")}</div>`).join("");
-  }).fetchLogs();
+    if (!snap || snap.error) {
+      area.innerHTML = `<div style="color:#b00020;">デバッグ取得失敗: ${esc(snap && snap.error ? snap.error : "不明")}</div>`;
+      return;
+    }
+
+    const by = snap.jobs && snap.jobs.by_status ? snap.jobs.by_status : {};
+    const aiPacket = snap.ai_packet || {};
+    const aiCopyPayload = buildAIDebugCopyPayload(snap);
+    logsUiState.aiCopyText = JSON.stringify(aiCopyPayload, null, 2);
+    const aiJsonRaw = JSON.stringify(aiPacket, null, 2);
+    const aiJson = esc(aiJsonRaw.length > 12000 ? aiJsonRaw.slice(0, 12000) + `\n...(表示省略: 全${aiJsonRaw.length}文字)` : aiJsonRaw);
+    const badges = Object.keys(by).map((k) =>
+      `<span style="display:inline-block; margin-right:8px; padding:3px 8px; border-radius:999px; background:#eef3ff; font-size:12px;">${esc(toJpStatusKey(k))}: ${esc(by[k])}</span>`
+    ).join("");
+    const hudTail = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_node_hud_tail || "") : "";
+
+    const block = (title, rows, take) => `
+      <div style="margin-top:12px; padding:10px; border:1px solid var(--border); border-radius:10px;">
+        <div style="font-weight:600; margin-bottom:6px;">${title}</div>
+        <div style="font-family:monospace; font-size:12px; white-space:pre-wrap;">
+          ${(rows && rows.length ? rows.slice(-10).map((r) => rowText(r, take)).join("<br>") : "（データなし）")}
+        </div>
+      </div>
+    `;
+
+    area.innerHTML = `
+      <div style="padding:4px 0 8px;">
+        <div style="font-weight:700;">統合デバッグ</div>
+        <div style="font-size:12px; color:var(--text-secondary);">ジョブ=${esc(snap.jobs.total)} / 監査=${esc(snap.audit.total)} / エラー=${esc(snap.errors.total)} / 結果=${esc(snap.results.total)} / チャット=${esc(snap.main_chat.total)}</div>
+      </div>
+      <div style="margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+          <div style="font-weight:600;">AIデバッグ要約</div>
+          <div style="display:flex; gap:6px;">
+            <button onclick="recoverStalePendingJobs()" style="padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:#e8f5e9; color:#1b5e20; font-size:12px; cursor:pointer;">滞留待機ジョブ救済</button>
+            <button onclick="recoverStaleLeasedJobs()" style="padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:#fff4e5; color:#8a4b00; font-size:12px; cursor:pointer;">滞留実行中ジョブ救済</button>
+            <button onclick="copyAIDebugPacket()" style="padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:var(--bg-main); color:var(--text-main); font-size:12px; cursor:pointer;">AI向けコピー</button>
+          </div>
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          推定原因=${esc(toJpHypothesis(aiPacket.hypothesis))}
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          ARC最終HUD=${esc(hudTail || "（未取得）")}
+        </div>
+        <pre style="margin:0; max-height:260px; overflow:auto; font-size:12px; white-space:pre;">${aiJson}</pre>
+      </div>
+      <div style="margin-bottom:8px;">${badges || "状態なし"}</div>
+      ${block("ARC_AUDIT（最新）", snap.audit.recent, 7)}
+      ${block("ARC_JOBS（最新）", snap.jobs.recent, 7)}
+      ${block("ARC_ERRORS（最新）", snap.errors.recent, 4)}
+      ${block("ARC_RESULTS（最新）", snap.results.recent, 6)}
+      ${block("ARC_NODES（最新）", snap.nodes.recent, 12)}
+      ${block("MAIN_CHAT（最新）", snap.main_chat.recent, 6)}
+    `;
+    tryAutoRecoverQueues(snap);
+  }).withFailureHandler((err) => {
+    const area = document.getElementById("logs-area");
+    area.innerHTML = `<div style="color:#b00020;">デバッグ取得失敗: ${esc(err || "不明なエラー")}</div>`;
+  }).fetchDebugSnapshot();
 }
 
 /* ============================================================
@@ -576,7 +990,7 @@ ${p.code}
         <button onclick="approveStaged(${p.id})"
                 style="margin-top:10px; width:100%; padding:10px; border-radius:var(--radius);
                        background:var(--accent-green); color:white; border:none;">
-          Promote to PatchSlots
+          PatchSlotsへ反映
         </button>
       </div>`;
     });
@@ -589,7 +1003,7 @@ function approveStaged(id) {
   showLoading();
   google.script.run.withSuccessHandler(() => {
     hideLoading();
-    showSuccess("Promoted");
+    showSuccess("反映しました");
     loadStaging();
     Evolution.reload();
     Evolution.loadList();

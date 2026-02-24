@@ -1,32 +1,59 @@
 <resources>
     <string name="app_name">ARC</string>
-    <string name="btn_gemini">Gemini</string>
-    <string name="btn_chatgpt">ChatGPT</string>
-    <string name="btn_copilot">Copilot</string>
-    <string name="hint_prompt">Ask me anything…</string>
-    <string name="btn_send">Send</string>
-    <string name="btn_settings">Settings</string>
-    <string name="hud_initial_text">ARC SYSTEM HUD\nWAITING…</string>
+    <string name="btn_gemini">ジェミニ</string>
+    <string name="btn_chatgpt">チャットGPT</string>
+    <string name="btn_copilot">コパイロット</string>
+    <string name="hint_prompt">メッセージを入力…</string>
+    <string name="btn_send">送信</string>
+    <string name="btn_settings">設定</string>
+    <string name="btn_mode_headless">本番モード</string>
+    <string name="btn_mode_debug">デバッグモード</string>
+    <string name="banner_headless">Gateway制御中（手動入力は無効）</string>
+    <string name="banner_debug">デバッグ手動入力モード</string>
+    <string name="toast_mode_headless">本番モードに切り替えました</string>
+    <string name="toast_mode_debug">デバッグモードに切り替えました</string>
+    <string name="toast_headless_send_disabled">本番モードでは手動送信できません</string>
+    <string name="hud_initial_text">ARC システム HUD\n待機中…</string>
 
     <!-- 🚀 Settings Activity Resources -->
-    <string name="title_setup">Gateway Zero-Touch Setup</string>
-    <string name="hint_gas_url">GAS Web App URL</string>
-    <string name="btn_test_connection">Test Connection</string>
-    <string name="hint_sheet_id">Spreadsheet ID (Optional)</string>
-    <string name="btn_auto_setup">Run Auto Setup</string>
+    <string name="title_setup">Gateway 自動セットアップ</string>
+    <string name="hint_gas_url">GAS Webアプリ URL</string>
+    <string name="btn_test_connection">接続テスト</string>
+    <string name="hint_sheet_id">スプレッドシート ID（任意）</string>
+    <string name="btn_auto_setup">自動セットアップ実行</string>
+    <string name="btn_auto_setup_running">環境構築中…</string>
 
-    <string name="label_gemini">Google Gemini Config</string>
-    <string name="label_chatgpt">OpenAI ChatGPT Config</string>
-    <string name="label_copilot">MS Copilot Config</string>
-    <string name="hint_url">Service URL</string>
-    <string name="hint_input_sel">Input Selector</string>
-    <string name="hint_send_sel">Send Selector</string>
-    <string name="hint_resp_sel">Response Selector</string>
-    <string name="btn_pick">Pick</string>
+    <string name="label_gemini">Google Gemini 設定</string>
+    <string name="label_chatgpt">OpenAI ChatGPT 設定</string>
+    <string name="label_copilot">Microsoft Copilot 設定</string>
+    <string name="hint_url">サービス URL</string>
+    <string name="hint_input_sel">入力セレクタ</string>
+    <string name="hint_send_sel">送信セレクタ</string>
+    <string name="hint_resp_sel">応答セレクタ</string>
+    <string name="btn_pick">取得</string>
 
-    <string name="label_profiles">Profile Slots (Experimental)</string>
-    <string name="hint_json">Enter JSON Configuration…</string>
-    <string name="btn_import">Import</string>
-    <string name="btn_export">Export</string>
-    <string name="btn_save_apply">Save and Apply All Settings</string>
+    <string name="label_profiles">プロファイルスロット（試験機能）</string>
+    <string name="hint_json">JSON 設定を入力…</string>
+    <string name="btn_import">読み込み</string>
+    <string name="btn_export">書き戻し</string>
+    <string name="btn_save_apply">設定を保存して適用</string>
+
+    <!-- Settings トースト -->
+    <string name="toast_enter_url">URLを入力してください</string>
+    <string name="toast_handshake_start">中央知能(Gateway)と接続確認中…</string>
+    <string name="toast_handshake_ok">接続成功。同期が確立されました。</string>
+    <string name="toast_handshake_fail">接続失敗（URLまたはGAS設定を確認してください）</string>
+    <string name="toast_enter_gas_url_first">先にGASのURLを入力してください</string>
+    <string name="toast_setup_ok">環境構築に成功しました: %1$s</string>
+    <string name="toast_setup_fail">環境構築に失敗しました: %1$s</string>
+    <string name="toast_profile_updated">プロファイルを更新しました</string>
+    <string name="toast_json_invalid">JSON形式が不正です</string>
+    <string name="toast_all_settings_applied">すべての設定を適用しました</string>
+
+    <!-- Settings スロット名 -->
+    <string-array name="profile_slots">
+        <item>スロット 1（基本）</item>
+        <item>スロット 2（拡張）</item>
+        <item>スロット 3（創造）</item>
+    </string-array>
 </resources>

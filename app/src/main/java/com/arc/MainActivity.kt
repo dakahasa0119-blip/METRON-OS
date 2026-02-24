@@ -1,13 +1,18 @@
 package com.arc
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.util.Log
+import android.view.View
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.arc.databinding.ActivityMainBinding
 import org.json.JSONObject
@@ -43,6 +48,30 @@ class MainActivity : AppCompatActivity() {
     private lateinit var arcQueue: ArcTaskQueue
     private lateinit var arcGateway: GatewayClient
     private var arcServer: LocalHttpServer? = null
+
+    private fun ensureOperationalForeground(reason: String) {
+        runOnUiThread {
+            pokeScreen()
+            webViewManager.resumeRuntime()
+            debugHud.update("GW: EXEC")
+            Log.d("ARC_UI", "Foreground ensure requested: $reason")
+            try {
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                am.appTasks.firstOrNull()?.moveToFront()
+            } catch (e: Exception) {
+                Log.w("ARC_UI", "moveToFront failed: ${e.message}")
+            }
+            val intent = Intent(this, MainActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+            }
+            startActivity(intent)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,6 +130,24 @@ class MainActivity : AppCompatActivity() {
                     debugHud.update("PAGE_READY")
                     allAiPipeline.onPageFinished()
                 }
+            },
+            onLoginBlocked = { blockedUrl ->
+                runOnUiThread {
+                    debugHud.update("LOGIN_BLOCK: 外部ブラウザへ切替")
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(blockedUrl)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        Toast.makeText(
+                            this,
+                            "Googleログインは外部ブラウザで続行します",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } catch (_: Exception) {
+                        debugHud.update("LOGIN_BLOCK: 外部ブラウザ起動失敗")
+                    }
+                }
             }
         )
         binding.webViewContainer.addView(webViewManager.createWebView())
@@ -108,6 +155,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleAutoDomResult(json: String) {
         AutoDom.handleAutoDomJson(json, currentTarget, prefs)
+        if (arcWorker.currentQid != null) return
         try {
             val obj = JSONObject(json)
             val status = obj.optJSONObject("meta")?.optString("status", "ready")
@@ -119,14 +167,18 @@ class MainActivity : AppCompatActivity() {
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = mainScope.launch {
-            val intervalMs = prefs.heartbeatIntervalMs.coerceAtLeast(60000L)
+            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(5000L, 120000L)
             while (isActive) {
-                delay(intervalMs)
-                if (arcWorker.currentQid == null) {
+                val busy = arcQueue.pendingCount() > 0
+                if (!busy) {
                     arcWorker.announceStatus("heartbeat") { instruction ->
                         handleGatewayInstruction(instruction)
                     }
+                } else {
+                    // 実行中も生存信号は出す（命令受信はしない）
+                    arcWorker.announceStatus("running")
                 }
+                delay(intervalMs)
             }
         }
     }
@@ -135,36 +187,105 @@ class MainActivity : AppCompatActivity() {
         val mode = instruction.optString("mode")
         if (mode.isBlank() || mode == "arc_heartbeat") return
         val jobId = instruction.optString("job_id", "")
+        Log.d("ARC_GW_INSTR", "mode=$mode job_id=$jobId")
         when (mode) {
             "request_arc" -> {
                 val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
                 val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
                 val target = instruction.optString("target", currentTarget.name)
+                val retryCount = instruction.optInt("retry_count", 0).coerceAtLeast(0)
                 val prompt = instruction.optString("prompt", "")
                 if (prompt.isNotBlank()) {
-                    arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId))
+                    ensureOperationalForeground("gateway_instruction_request_arc")
+                    if (target.equals("ALL", ignoreCase = true)) {
+                        val routedTarget = when (retryCount % 3) {
+                            0 -> AiTarget.GEMINI.name
+                            1 -> AiTarget.CHATGPT.name
+                            else -> AiTarget.COPILOT.name
+                        }
+                        arcQueue.enqueue(ArcTask.AI(qid, routedTarget, prompt, missionId = missionId))
+                    } else {
+                        arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId))
+                    }
                     debugHud.update("GW: ENQUEUED")
+                } else if (jobId.isNotBlank()) {
+                    arcGateway.sendArcError(
+                        qid = jobId,
+                        type = "EMPTY_PROMPT",
+                        data = "gateway_instruction_missing_prompt",
+                        missionId = missionId,
+                        target = target
+                    )
                 }
             }
             "arc_refresh" -> {
                 webViewManager.refreshProcess()
-                if (jobId.isNotBlank()) arcGateway.sendArcResult(jobId, "refresh_done")
+                if (jobId.isNotBlank()) {
+                    arcGateway.sendArcResult(
+                        qid = jobId,
+                        result = "refresh_done",
+                        missionId = jobId,
+                        target = instruction.optString("target", currentTarget.name)
+                    )
+                }
                 debugHud.update("GW: REFRESH")
             }
             "arc_execute_js" -> {
                 val script = instruction.optString("script", "")
                 if (script.isNotBlank()) {
                     webViewManager.webView?.post { webViewManager.webView?.evaluateJavascript(script, null) }
-                    if (jobId.isNotBlank()) arcGateway.sendArcResult(jobId, "js_executed")
+                    if (jobId.isNotBlank()) {
+                        arcGateway.sendArcResult(
+                            qid = jobId,
+                            result = "js_executed",
+                            missionId = jobId,
+                            target = instruction.optString("target", currentTarget.name),
+                            prompt = instruction.optString("prompt", "")
+                        )
+                    }
                     debugHud.update("GW: JS")
+                } else if (jobId.isNotBlank()) {
+                    arcGateway.sendArcError(
+                        qid = jobId,
+                        type = "EMPTY_SCRIPT",
+                        data = "gateway_instruction_missing_script",
+                        missionId = jobId,
+                        target = instruction.optString("target", currentTarget.name)
+                    )
                 }
             }
             "arc_screenshot" -> {
+                Log.d("ARC_GW_INSTR", "arc_screenshot start job_id=$jobId")
+                ensureOperationalForeground("gateway_instruction_arc_screenshot")
+                val target = instruction.optString("target", currentTarget.name)
+                val mid = if (jobId.isNotBlank()) jobId else "gw_manual"
+                var responded = false
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!responded) {
+                        Log.w("ARC_GW_INSTR", "arc_screenshot timeout job_id=$mid")
+                        arcGateway.sendArcError(
+                            qid = mid,
+                            type = "SCREENSHOT_TIMEOUT",
+                            data = "capture_bitmap_no_callback",
+                            missionId = mid,
+                            target = target
+                        )
+                        debugHud.update("GW: SHOT_TIMEOUT")
+                    }
+                }, 12_000)
                 webViewManager.captureBitmap { bmp ->
+                    responded = true
+                    Log.d("ARC_GW_INSTR", "arc_screenshot captured job_id=$mid")
                     val out = java.io.ByteArrayOutputStream()
                     bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
                     val b64 = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
-                    arcGateway.sendArcResult(if (jobId.isNotBlank()) jobId else "gw_manual", "screenshot_captured", b64)
+                    arcGateway.sendArcResult(
+                        qid = mid,
+                        result = "screenshot_captured",
+                        image = b64,
+                        missionId = mid,
+                        target = target
+                    )
                     debugHud.update("GW: SHOT")
                 }
             }
@@ -183,8 +304,14 @@ class MainActivity : AppCompatActivity() {
             requestExecution = { target, prompt, missionId ->
                 arcQueue.enqueue(ArcTask.AI(qid = "PIPE_${System.currentTimeMillis()}", target = target.name, prompt = prompt, missionId = missionId))
             },
-            onFinalResult = { final -> 
-                arcGateway.sendArcResult("ALL_FINAL", final)
+            onFinalResult = { missionId, final ->
+                val mid = if (missionId.isBlank()) "ALL_FINAL" else missionId
+                arcGateway.sendArcResult(
+                    qid = mid,
+                    result = final,
+                    missionId = mid,
+                    target = "ALL"
+                )
                 runOnUiThread { debugHud.update("ALL_DONE") }
             },
             hallucinationPipeline = hallucinationPipeline,
@@ -220,9 +347,18 @@ class MainActivity : AppCompatActivity() {
         }
         arcWorker.onSystemStatusUpdate = { status -> runOnUiThread { debugHud.update(status) } }
         arcWorker.onSystemErrorRequest = { type, _ -> runOnUiThread { debugHud.update("ERR: $type") } }
+        arcWorker.onGatewayInstruction = { instruction -> handleGatewayInstruction(instruction) }
         
         arcQueue = ArcTaskQueue(arcWorker)
-        arcServer = LocalHttpServer(arcQueue, webViewManager, arcGateway, prefs, 8765) { pokeScreen() }
+        arcServer = LocalHttpServer(
+            arcQueue,
+            webViewManager,
+            arcGateway,
+            prefs,
+            8765,
+            onRequested = { pokeScreen() },
+            onExecutionRequested = { ensureOperationalForeground("remote_job") }
+        )
         
         try { 
             arcServer?.safeStart()
@@ -232,14 +368,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUi() {
-        binding.btnGemini.setOnClickListener { arcQueue.enqueue(ArcTask.AI("manual", "gemini", "Hello")) }
-        binding.btnGPT.setOnClickListener { arcQueue.enqueue(ArcTask.AI("manual", "chatgpt", "Hello")) }
-        binding.btnCopilot.setOnClickListener { arcQueue.enqueue(ArcTask.AI("manual", "copilot", "Hello")) }
+        binding.btnGemini.setOnClickListener { switchAiTarget(AiTarget.GEMINI) }
+        binding.btnGPT.setOnClickListener { switchAiTarget(AiTarget.CHATGPT) }
+        binding.btnCopilot.setOnClickListener { switchAiTarget(AiTarget.COPILOT) }
+
+        binding.modeToggleButton.setOnClickListener {
+            prefs.headlessMode = !prefs.headlessMode
+            updateRunModeUi()
+            Toast.makeText(
+                this,
+                if (prefs.headlessMode) getString(R.string.toast_mode_headless) else getString(R.string.toast_mode_debug),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
 
         binding.sendButton.setOnClickListener {
+            if (prefs.headlessMode) {
+                Toast.makeText(this, getString(R.string.toast_headless_send_disabled), Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             val text = binding.promptInput.text?.toString()?.trim() ?: ""
             if (text.isNotEmpty()) {
                 binding.promptInput.setText("")
+                // 手動送信は最優先。残ジョブとの競合を避けるためキューをクリアする。
+                arcQueue.clearAll()
                 if (text.startsWith("/all")) arcQueue.enqueue(ArcTask.Pipeline(text.removePrefix("/all").trim()))
                 else arcQueue.enqueue(ArcTask.AI("manual", currentTarget.name, text))
             }
@@ -247,6 +399,41 @@ class MainActivity : AppCompatActivity() {
         binding.settingsButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+
+        updateRunModeUi()
+        // 初回表示時に現在ターゲットを確実に選択・ロードする
+        switchAiTarget(currentTarget)
+    }
+
+    private fun updateRunModeUi() {
+        val isHeadless = prefs.headlessMode
+        binding.aiTabRow.visibility = if (isHeadless) View.GONE else View.VISIBLE
+        binding.promptInput.visibility = if (isHeadless) View.GONE else View.VISIBLE
+        binding.sendButton.visibility = if (isHeadless) View.GONE else View.VISIBLE
+        binding.modeBanner.text = if (isHeadless) getString(R.string.banner_headless) else getString(R.string.banner_debug)
+        binding.modeBanner.setBackgroundColor(
+            if (isHeadless) android.graphics.Color.parseColor("#E8F0FE")
+            else android.graphics.Color.parseColor("#E6F4EA")
+        )
+        binding.modeBanner.setTextColor(
+            if (isHeadless) android.graphics.Color.parseColor("#174EA6")
+            else android.graphics.Color.parseColor("#137333")
+        )
+        binding.modeToggleButton.text =
+            if (isHeadless) getString(R.string.btn_mode_headless) else getString(R.string.btn_mode_debug)
+    }
+
+    private fun switchAiTarget(target: AiTarget) {
+        currentTarget = target
+        executeLoad(target)
+        val label = when (target) {
+            AiTarget.GEMINI -> "Gemini"
+            AiTarget.CHATGPT -> "ChatGPT"
+            AiTarget.COPILOT -> "Copilot"
+            else -> target.name
+        }
+        Log.d("ARC_UI", "Switched AI target: $label")
+        debugHud.update("AI切替: $label")
     }
 
     /**
@@ -266,6 +453,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         pokeScreen()
+        webViewManager.resumeRuntime()
     }
 
     override fun onPause() {

@@ -14,6 +14,11 @@ This IntelliJ module tracks the canonical Gateway GAS project and deployment met
 
 Central command bridge between METRON OS_B and ARC (Proxy-hand), with zero-touch orchestration entry points.
 
+## Source Of Truth
+
+- Canonical Gateway GAS source lives under `modules/gas/METRON_GATEWAY/`.
+- `gateway/ARC_Gateway_doPost.gs` is a compatibility mirror and should be kept in sync from the canonical file.
+
 ## Command Routing
 
 - Gateway is the primary command center.
