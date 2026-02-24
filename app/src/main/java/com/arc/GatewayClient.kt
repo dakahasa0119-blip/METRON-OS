@@ -11,7 +11,7 @@ import kotlinx.coroutines.*
 class GatewayClient(private val prefs: Prefs) {
 
     private val clientScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val currentVersion = "13.5"
+    private val currentVersion = "13.6"
     private val maxInlineImageB64 = 180_000
     var telemetrySupplier: (() -> JSONObject)? = null
 
@@ -65,12 +65,17 @@ class GatewayClient(private val prefs: Prefs) {
                 put("auth_key", prefs.authToken)
                 put("api_modes", JSONArray(listOf("arc_info", "request_arc", "arc_execute_js", "arc_refresh", "arc_screenshot")))
                 put("sheets", JSONObject().apply {
-                    put("MAIN_CHAT", JSONArray(listOf("Timestamp", "User", "Content", "Status", "Response", "MissionID"))) 
-                    put("ARC_NODES", JSONArray(listOf("LastSeen", "IP", "Port", "Status", "Capabilities", "Version")))
+                    put("MAIN_CHAT", JSONArray(listOf("Timestamp", "User", "Content", "Status", "Response", "MissionID")))
+                    put("ARC_NODES", JSONArray(listOf("LastSeen", "IP", "Port", "Status", "Capabilities", "Version", "WorkerID", "Executor", "CurrentHost", "CurrentUrl", "CurrentTitle", "HudTail")))
+                    put("ARC_JOBS", JSONArray(listOf("Timestamp", "JobID", "Worker", "Mode", "Payload", "Status", "LeasedAt")))
                     put("ARC_RESULTS", JSONArray(listOf("Timestamp", "MissionID", "Target", "Prompt", "Result", "ImageURL")))
                     put("ARC_ERRORS", JSONArray(listOf("Timestamp", "QID", "Type", "Data")))
                     put("ARC_LEARNING", JSONArray(listOf("Timestamp", "Target", "Learned")))
-                    put("ARC_TRACES", JSONArray(listOf("Timestamp", "MissionID", "Level", "Step", "Message", "Data")))
+                    put("ARC_AUDIT", JSONArray(listOf("Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail")))
+                    put("ARC_DEAD_JOBS", JSONArray(listOf("Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload")))
+                    put("ARC_ALERTS", JSONArray(listOf("Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID")))
+                    put("GATEWAY_LONG_MEMORY", JSONArray(listOf("Timestamp", "Key", "Value", "Source", "TraceID", "Tags")))
+                    put("ARC_SHORT_MEMORY", JSONArray(listOf("Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID")))
                 })
             })
             put("suggested_script", generateSuggestedScript())
@@ -121,19 +126,24 @@ class GatewayClient(private val prefs: Prefs) {
                 return ContentService.createTextOutput('ACK');
               }
               if (data.mode === 'arc_heartbeat') {
-                const sh = ensureSheet('ARC_NODES', ['LastSeen', 'IP', 'Port', 'Status', 'Capabilities', 'Version']);
+                const sh = ensureSheet('ARC_NODES', ['LastSeen', 'IP', 'Port', 'Status', 'Capabilities', 'Version', 'WorkerID', 'Executor', 'CurrentHost', 'CurrentUrl', 'CurrentTitle', 'HudTail']);
                 if (sh) {
                   const ip = data.ip || '';
                   const port = data.port || '';
+                  const workerId = data.worker_id || '';
                   const rowValues = sh.getDataRange().getValues();
                   let foundRow = -1;
                   for (let i = 1; i < rowValues.length; i++) {
-                    if (String(rowValues[i][1] || '') === String(ip) && String(rowValues[i][2] || '') === String(port)) {
+                    if ((workerId && String(rowValues[i][6] || '') === String(workerId)) ||
+                        (String(rowValues[i][1] || '') === String(ip) && String(rowValues[i][2] || '') === String(port))) {
                       foundRow = i + 1;
                       break;
                     }
                   }
-                  const payload = [new Date(), ip, port, data.status || '', data.target || '', data.version || ''];
+                  const payload = [
+                    new Date(), ip, port, data.status || '', data.current_target || data.target || '', data.version || '',
+                    workerId, data.executor || 'ARC', data.current_host || '', data.current_url || '', data.current_title || '', data.hud_tail || ''
+                  ];
                   if (foundRow > 0) sh.getRange(foundRow, 1, 1, payload.length).setValues([payload]);
                   else sh.appendRow(payload);
                 }

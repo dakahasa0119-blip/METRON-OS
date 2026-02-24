@@ -299,6 +299,23 @@ function fetchDebugSnapshot() {
     const lockTimeoutHints = detectKeywords(audit, 6, ["route_lock_timeout", "lease_lock_timeout"]);
     const latestNode = nodes.length ? nodes[nodes.length - 1] : null;
     const latestHudTail = latestNode ? compactText(latestNode[11] || "", 320) : "";
+    const parsePayload = (v) => {
+      const s = String(v == null ? "" : v);
+      if (!s) return {};
+      try { return JSON.parse(s); } catch (_) { return {}; }
+    };
+    const latestEvalFromJobs = (() => {
+      for (let i = jobs.length - 1; i >= 0; i--) {
+        const payload = parsePayload(jobs[i][4]);
+        const summary = String(payload.last_eval_summary || "");
+        if (!summary) continue;
+        return {
+          summary: compactText(summary, 400),
+          at: String(payload.last_eval_at || jobs[i][0] || "")
+        };
+      }
+      return { summary: "", at: "" };
+    })();
 
     const hypothesis = (() => {
       if (authHints.length > 0) return "auth_mismatch_or_signature";
@@ -361,6 +378,8 @@ function fetchDebugSnapshot() {
         stale_pending_job_ids: stalePending.slice(-10).map((r) => String(r[1] || "")),
         stale_leased_job_ids: staleLeased.slice(-10).map((r) => String(r[1] || "")),
         latest_node_hud_tail: latestHudTail,
+        latest_eval_summary: latestEvalFromJobs.summary,
+        latest_eval_at: latestEvalFromJobs.at,
         recent_auth_issue: authHints.slice(-5),
         recent_post_fail: postFailHints.slice(-5),
         recent_lock_timeout: lockTimeoutHints.slice(-5)
