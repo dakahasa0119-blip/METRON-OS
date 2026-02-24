@@ -89,6 +89,9 @@ window.arc = (() => {
     __resultBaseline: "",
     __pendingResult: "",
     __pendingCount: 0,
+    __lastGeminiErrorMark: "",
+    __lastGeminiErrorAt: 0,
+    __geminiErrorObserverArmed: false,
     isLikelyUserNode: (node) => {
         if (!node) return false;
         const selfRole = (node.getAttribute && node.getAttribute('data-message-author-role')) || "";
@@ -243,6 +246,53 @@ window.arc = (() => {
     getElementContext
   };
 })();
+try {
+  if (window.arc && !window.arc.__geminiErrorObserverArmed) {
+    window.arc.__geminiErrorObserverArmed = true;
+    const codeRegexes = [
+      /エラーが発生しました\s*[（(]\s*(\d+)\s*[)）]/,
+      /error\s*occurred\s*[（(]\s*(\d+)\s*[)）]/i
+    ];
+    const genericMarks = [
+      "something went wrong",
+      "problem generating response",
+      "try again",
+      "temporarily unavailable",
+      "network error"
+    ];
+    const updateGeminiErrorState = () => {
+      try {
+        const u = (window.location.href || "").toLowerCase();
+        if (!u.includes("gemini.google.com")) return;
+        const text = ((document.body && document.body.innerText) || "").trim();
+        if (!text) return;
+        for (const re of codeRegexes) {
+          const m = text.match(re);
+          if (m && m[1]) {
+            window.arc.__lastGeminiErrorMark = "code:" + String(m[1]);
+            window.arc.__lastGeminiErrorAt = Date.now();
+            return;
+          }
+        }
+        const lower = text.toLowerCase();
+        for (const mk of genericMarks) {
+          if (lower.includes(mk)) {
+            window.arc.__lastGeminiErrorMark = "generic:" + mk;
+            window.arc.__lastGeminiErrorAt = Date.now();
+            return;
+          }
+        }
+      } catch (_) {}
+    };
+    updateGeminiErrorState();
+    const mo = new MutationObserver(() => updateGeminiErrorState());
+    mo.observe(document.documentElement || document, {
+      subtree: true,
+      childList: true,
+      characterData: true
+    });
+  }
+} catch (_) {}
 console.log("Arc Core v10.4 Ready.");
 } else {
 console.log("Arc Core already loaded.");

@@ -290,6 +290,84 @@ class WebViewManager(
         detectAccessInterstitial(webView, callback)
     }
 
+    fun detectGeminiError(callback: (Boolean, String) -> Unit) {
+        val js = """
+            (function() {
+              try {
+                try {
+                  const cachedMark = window.arc && window.arc.__lastGeminiErrorMark
+                    ? String(window.arc.__lastGeminiErrorMark)
+                    : '';
+                  const cachedAt = window.arc && window.arc.__lastGeminiErrorAt
+                    ? Number(window.arc.__lastGeminiErrorAt)
+                    : 0;
+                  const ageMs = Date.now() - cachedAt;
+                  if (cachedMark && cachedAt > 0 && ageMs >= 0 && ageMs <= 45000) {
+                    return JSON.stringify({ blocked: true, mark: cachedMark, source: 'cache' });
+                  }
+                } catch (_) {}
+                const roots = [];
+                const visitRoots = (root) => {
+                  if (!root || !root.querySelectorAll) return;
+                  roots.push(root);
+                  const all = root.querySelectorAll('*');
+                  for (const el of all) {
+                    if (el && el.shadowRoot) visitRoots(el.shadowRoot);
+                  }
+                };
+                visitRoots(document);
+
+                let mergedText = '';
+                try {
+                  const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+                  mergedText += bodyText + '\n';
+                } catch (_) {}
+                for (const r of roots) {
+                  try {
+                    const t = (r && r.textContent) ? r.textContent : '';
+                    if (t) mergedText += t + '\n';
+                  } catch (_) {}
+                }
+
+                const text = mergedText || '';
+                const lower = text.toLowerCase();
+                const codeRegexes = [
+                  /エラーが発生しました\s*[（(]\s*(\d+)\s*[)）]/,
+                  /error\s*occurred\s*[（(]\s*(\d+)\s*[)）]/i
+                ];
+                for (let i = 0; i < codeRegexes.length; i++) {
+                  const m = text.match(codeRegexes[i]) || lower.match(codeRegexes[i]);
+                  if (m && m[1]) {
+                    return JSON.stringify({ blocked: true, mark: 'code:' + String(m[1]), source: 'scan' });
+                  }
+                }
+                const marks = [
+                  'something went wrong',
+                  'problem generating response',
+                  'try again',
+                  'temporarily unavailable',
+                  'network error'
+                ];
+                for (let i = 0; i < marks.length; i++) {
+                  const m = marks[i];
+                  if (text.indexOf(m) >= 0 || lower.indexOf(m.toLowerCase()) >= 0) {
+                    return JSON.stringify({ blocked: true, mark: 'generic:' + m, source: 'scan' });
+                  }
+                }
+                return JSON.stringify({ blocked: false, mark: '' });
+              } catch (_) {
+                return JSON.stringify({ blocked: false, mark: '' });
+              }
+            })();
+        """.trimIndent()
+        webView?.evaluateJavascript(js) { raw ->
+            val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
+            val blocked = parsed.contains("\"blocked\":true")
+            val mark = Regex("\"mark\":\"([^\"]*)\"").find(parsed)?.groupValues?.getOrNull(1) ?: ""
+            callback(blocked, mark)
+        } ?: callback(false, "")
+    }
+
     /**
      * アクセシビリティ・ツリー抽出
      */

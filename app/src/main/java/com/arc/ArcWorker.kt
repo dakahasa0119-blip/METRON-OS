@@ -47,14 +47,43 @@ class ArcWorker(
     private var currentDoneCallback: (() -> Unit)? = null
     private var timeoutJob: Job? = null
     private var taskHeartbeatJob: Job? = null
-    private fun perAttemptTimeoutMsFor(target: String): Long {
+    private fun isDriveReferencePrompt(prompt: String): Boolean {
+        val p = prompt.lowercase()
+        val marks = listOf(
+            "docs.google.com/spreadsheets",
+            "drive.google.com",
+            "@google",
+            "google drive",
+            "spreadsheet",
+            "sheet",
+            "スプレッドシート",
+            "シート参照"
+        )
+        return marks.any { p.contains(it) }
+    }
+
+    private fun perAttemptTimeoutMsFor(target: String, prompt: String): Long {
+        if (isDriveReferencePrompt(prompt)) {
+            return when (target.lowercase()) {
+                "gemini" -> 150_000L
+                "copilot" -> 120_000L
+                else -> 120_000L
+            }
+        }
         return when (target.lowercase()) {
             "copilot" -> 90_000L
             else -> 45_000L
         }
     }
 
-    private fun noProgressLimitMsFor(target: String): Long {
+    private fun noProgressLimitMsFor(target: String, prompt: String): Long {
+        if (isDriveReferencePrompt(prompt)) {
+            return when (target.lowercase()) {
+                "gemini" -> 95_000L
+                "copilot" -> 45_000L
+                else -> 70_000L
+            }
+        }
         return when (target.lowercase()) {
             // Copilot の bot 壁は早めに見切って failover を促進
             "copilot" -> 18_000L
@@ -332,14 +361,21 @@ class ArcWorker(
             workerScope.launch { delay(1000); if(!isAborted) action() }
         }
         
-        val timeoutMs = perAttemptTimeoutMsFor(target)
+        if (isDriveReferencePrompt(task.prompt)) {
+            emitStatus("LONG_WAIT_MODE:DRIVE_REF")
+        }
+        val timeoutMs = perAttemptTimeoutMsFor(target, task.prompt)
         val isCopilot = target == "copilot"
         timeoutJob = workerScope.launch {
             val startedAt = System.currentTimeMillis()
             var lastSeq = currentStatusSeq()
             var lastProgressAt = startedAt
             while (isActive) {
-                delay(2000)
+                val nowBeforeWait = System.currentTimeMillis()
+                val tickMs =
+                    if (target == "gemini" && nowBeforeWait - startedAt <= 20_000L) 500L
+                    else 2_000L
+                delay(tickMs)
                 if (isAborted || currentQid != task.qid) return@launch
 
                 val now = System.currentTimeMillis()
@@ -370,6 +406,20 @@ class ArcWorker(
                     }
                 }
 
+                if (target == "gemini" && elapsed >= 7_000L) {
+                    val gemErr = detectGeminiErrorQuick()
+                    if (gemErr.first) {
+                        val code = Regex("""code[:_](\d+)""", RegexOption.IGNORE_CASE)
+                            .find(gemErr.second)
+                            ?.groupValues
+                            ?.getOrNull(1)
+                            ?.trim()
+                        val errType = if (!code.isNullOrBlank()) "GEMINI_FAIL_$code" else "GEMINI_FAIL_GENERIC"
+                        handleDomError(errType, gemErr.second)
+                        return@launch
+                    }
+                }
+
                 if (elapsed >= 15_000L) {
                     val currentT = inferTargetFromUrl(web.currentUrl())
                     if (currentT.isNotBlank() && currentT != target) {
@@ -386,7 +436,7 @@ class ArcWorker(
                     }
                 }
 
-                if (noProgressMs >= noProgressLimitMsFor(target)) {
+                if (noProgressMs >= noProgressLimitMsFor(target, task.prompt)) {
                     val bot = detectBotWallQuick()
                     if (bot.first) {
                         handleDomError("COPILOT_BOT_BLOCKED", bot.second)
@@ -402,6 +452,14 @@ class ArcWorker(
     private suspend fun detectBotWallQuick(): Pair<Boolean, String> {
         val d = CompletableDeferred<Pair<Boolean, String>>()
         web.detectBotWall { blocked, mark ->
+            if (!d.isCompleted) d.complete(blocked to mark)
+        }
+        return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
+    }
+
+    private suspend fun detectGeminiErrorQuick(): Pair<Boolean, String> {
+        val d = CompletableDeferred<Pair<Boolean, String>>()
+        web.detectGeminiError { blocked, mark ->
             if (!d.isCompleted) d.complete(blocked to mark)
         }
         return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
@@ -531,6 +589,29 @@ class ArcWorker(
     private fun handleDomError(type: String, data: String?) {
         onSystemErrorRequest?.invoke(type, data)
         val qid = currentQid ?: ""
+        val isGeminiTransient = type == "GEMINI_FAIL_2" || type == "GEMINI_FAIL_13"
+
+        if (
+            isGeminiTransient &&
+            currentQid != null &&
+            qid != "manual" &&
+            !qid.startsWith("HEAL_") &&
+            stealthRetryCount < 1
+        ) {
+            stealthRetryCount++
+            emitStatus("GEMINI_RETRY_$stealthRetryCount")
+            val retryTask = lastAiTask?.copy(forceReload = true)
+            if (retryTask != null) {
+                web.refreshProcess()
+                workerScope.launch {
+                    delay(1500)
+                    if (!isAborted && currentQid != null) {
+                        executeAiTask(retryTask)
+                    }
+                }
+                return
+            }
+        }
 
         if (type.contains("COPILOT_BOT_BLOCKED", ignoreCase = true)) {
             handleDomErrorFallback("COPILOT_BOT_BLOCKED", data ?: "cloudflare_challenge_persistent")
