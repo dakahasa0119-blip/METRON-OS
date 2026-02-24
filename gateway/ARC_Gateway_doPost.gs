@@ -1333,7 +1333,9 @@ function doPost(e) {
         retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0),
         pending_recover_count: Number(parseInt(norm(payload.pending_recover_count) || "0", 10) || 0),
         lease_expire_count: Number(parseInt(norm(payload.lease_expire_count) || "0", 10) || 0),
-        target_failover_count: Number(parseInt(norm(payload.target_failover_count) || "0", 10) || 0)
+        target_failover_count: Number(parseInt(norm(payload.target_failover_count) || "0", 10) || 0),
+        last_eval_summary: norm(payload.last_eval_summary),
+        last_eval_at: norm(payload.last_eval_at)
       };
       break;
     }
@@ -1598,8 +1600,16 @@ function doPost(e) {
     const missionIdRaw = norm(data.qid || data.mission_id);
     const missionId = resolveMissionJobId(missionIdRaw);
     const result = norm(data.text);
+    const evalSummary = norm(data.eval_summary);
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
+    const found = findJobRowById(missionId);
+    if (found && evalSummary) {
+      const payload = found.payload || {};
+      payload.last_eval_summary = evalSummary.slice(0, 1200);
+      payload.last_eval_at = nowIso();
+      sheets.jobs.getRange(found.rowIndex, 5).setValue(JSON.stringify(payload));
+    }
     completeArcJob(missionId, "done");
     const linked = completeLinkedChat(missionId, result, "result");
     if (!linked) appendOrphanChatResult(missionId, result, "result", data.target || "");

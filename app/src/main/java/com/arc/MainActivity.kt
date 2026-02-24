@@ -315,12 +315,14 @@ class MainActivity : AppCompatActivity() {
             },
             onFinalResult = { missionId, final, success ->
                 val mid = if (missionId.isBlank()) "ALL_FINAL" else missionId
+                val evalSummary = allAiPipeline.lastEvalSummary()
                 if (success) {
                     arcGateway.sendArcResult(
                         qid = mid,
                         result = final,
                         missionId = mid,
-                        target = "ALL"
+                        target = "ALL",
+                        evalSummary = evalSummary
                     )
                 } else {
                     arcGateway.sendArcError(

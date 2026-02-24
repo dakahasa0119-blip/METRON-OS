@@ -42,6 +42,7 @@ class AllAiPipeline(
     private var gatewayAdvice = ""
     private var pipelineActive = false
     private var finalDispatched = false
+    private var lastEvalSummaryText = ""
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pipelineJob: Job? = null
 
@@ -53,6 +54,7 @@ class AllAiPipeline(
         this.missionId = "MISS_" + System.currentTimeMillis()
         this.results.clear()
         this.finalDispatched = false
+        this.lastEvalSummaryText = ""
         
         Util.trace(missionId, Util.Level.SUMMARY, "MISSION_INIT", "Mission Start: Neural coordination active.")
 
@@ -168,7 +170,7 @@ class AllAiPipeline(
     
     private fun buildAdaptivePrompt(count: Int, prev: List<String>, name: String): String {
         val context = if (prev.isNotEmpty()) "\n[Prev Result: ${prev.last().take(300)}...]" else ""
-        val memory = prefs.getFormattedContext(includeFailures = false, maxSuccess = 2)
+        val memory = if (isCodeTask(currentPrompt)) "" else prefs.getFormattedContext(includeFailures = false, maxSuccess = 2)
         val strict = if (isCodeTask(currentPrompt)) {
             "\n[Output Rules]\n- Return only final code.\n- Do not include operational logs or memory summaries.\n- Include all requested functions and a runnable main/example.\n"
         } else ""
@@ -197,6 +199,7 @@ class AllAiPipeline(
         ).text
         text = normalizeFinalOutputForTask(text)
         val finalEval = evaluateCandidate(text, rubric)
+        lastEvalSummaryText = "score=${finalEval.score};code_task=${rubric.codeTask};required=${rubric.requiredTerms.joinToString("|").take(300)}"
         val ok = text.isNotBlank() &&
             !text.startsWith("Error:", ignoreCase = true) &&
             !text.contains("failed to synthesize", ignoreCase = true) &&
@@ -268,6 +271,9 @@ class AllAiPipeline(
             if (looksLikeProsePrefix(text)) score -= 20
             if (text.length >= 120) score += 10 else score -= 10
             if (hasBalancedBrackets(text)) score += 10
+            if (rubric.preferLanguage == "kotlin") {
+                if (looksLikeKotlinSyntax(text)) score += 15 else score -= 25
+            }
         } else {
             score += 10
         }
@@ -331,6 +337,15 @@ class AllAiPipeline(
         return balanceOf('{', '}') == 0 && balanceOf('(', ')') == 0
     }
 
+    private fun looksLikeKotlinSyntax(text: String): Boolean {
+        val t = text.trim()
+        if (t.isBlank()) return false
+        val hasFun = Regex("\\bfun\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\(").containsMatchIn(t)
+        val hasClassLike = Regex("\\b(class|data\\s+class|object)\\s+[A-Za-z_][A-Za-z0-9_]*").containsMatchIn(t)
+        val badJavaOnly = t.contains("public static void main(")
+        return hasFun && hasClassLike && !badJavaOnly
+    }
+
     private fun buildRubric(prompt: String): EvalRubric {
         val p = prompt.lowercase()
         val codeTask = isCodeTask(prompt)
@@ -383,6 +398,8 @@ class AllAiPipeline(
         finalDispatched = true
         onFinalResult(gatewayMissionId, text, success)
     }
+
+    fun lastEvalSummary(): String = lastEvalSummaryText
 
     fun stop() { pipelineActive = false; pipelineJob?.cancel(); resultDeferred?.cancel(); pageLoadDeferred?.cancel() }
 }

@@ -154,6 +154,7 @@ class GatewayClient(private val prefs: Prefs) {
         missionId: String? = null,
         target: String? = null,
         prompt: String? = null,
+        evalSummary: String? = null,
         callback: (Boolean) -> Unit = {}
     ) {
         clientScope.launch {
@@ -165,6 +166,7 @@ class GatewayClient(private val prefs: Prefs) {
                 prompt = prompt
             ).apply {
                 put("text", result)
+                if (!evalSummary.isNullOrBlank()) put("eval_summary", evalSummary.take(1200))
                 // 大きいBase64画像は送信失敗の原因になるため省略
                 if (!image.isNullOrBlank() && image.length <= maxInlineImageB64) {
                     put("image", image)

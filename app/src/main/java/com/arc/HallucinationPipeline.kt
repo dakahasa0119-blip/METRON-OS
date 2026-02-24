@@ -106,10 +106,20 @@ class HallucinationPipeline(
         phaseTimeoutJob?.cancel()
         injectionJob?.cancel()
         
-        if (finalText.length > 10) {
+        if (finalText.length > 10 && !isCodeTask(originalPrompt)) {
             prefs.addContext(originalPrompt, finalText)
         }
 
         onDone?.invoke(finalText)
+    }
+
+    private fun isCodeTask(prompt: String): Boolean {
+        val p = prompt.lowercase()
+        return p.contains("実装") ||
+            p.contains("コード") ||
+            p.contains("kotlin") ||
+            p.contains("python") ||
+            p.contains("typescript") ||
+            p.contains("java")
     }
 }
