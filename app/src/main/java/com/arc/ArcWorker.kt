@@ -38,6 +38,8 @@ class ArcWorker(
     private var isFinalizingResult: Boolean = false
     private val statusTrail = ArrayDeque<String>()
     private var statusSeq: Long = 0L
+    private var lastFastHeartbeatAtMs: Long = 0L
+    private val fastHeartbeatMinIntervalMs: Long = 1200L
     private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
     private val timingModels = mutableMapOf<String, TimingModel>()
 
@@ -250,6 +252,28 @@ class ArcWorker(
             "seq=$seq qid=${currentQid ?: "-"} target=${inferred.ifBlank { "-" }} status=${status.take(120)} url=$shortUrl"
         )
         onSystemStatusUpdate?.invoke(status)
+        requestFastHeartbeat(status)
+    }
+
+    @Synchronized
+    private fun allowFastHeartbeat(nowMs: Long): Boolean {
+        if (nowMs - lastFastHeartbeatAtMs < fastHeartbeatMinIntervalMs) return false
+        lastFastHeartbeatAtMs = nowMs
+        return true
+    }
+
+    private fun requestFastHeartbeat(status: String) {
+        if (isAborted) return
+        // 実行中コンテキストのみで即時反映。待機中は定期heartbeatに任せる。
+        if (currentQid == null && currentMissionId.isNullOrBlank()) return
+        val nowMs = System.currentTimeMillis()
+        if (!allowFastHeartbeat(nowMs)) return
+        val statusHint = when {
+            status.startsWith("MISSION OK") || status.startsWith("PIPE_STEP_DONE") -> "success"
+            status.startsWith("ERROR") || status.startsWith("COPILOT_BOT_BLOCKED") -> "error"
+            else -> "running"
+        }
+        announceStatus(statusHint)
     }
 
     @Synchronized
@@ -559,7 +583,7 @@ class ArcWorker(
         taskHeartbeatJob = workerScope.launch {
             while (isActive && !isAborted && currentQid == qid) {
                 announceStatus("running")
-                delay(8_000L)
+                delay(4_000L)
             }
         }
     }
@@ -985,6 +1009,7 @@ class ArcWorker(
             put("ip", Util.getLocalIpAddress()); put("target", lastTarget); put("mission", currentMissionId ?: "NONE")
             put("mission_id", currentMissionId ?: "")
             put("qid", currentQid ?: "")
+            put("hud_seq", currentStatusSeq())
             put("current_target", inferredTarget)
             put("current_url", currentUrl)
             put("current_host", currentHost)

@@ -903,6 +903,10 @@ function loadLogs() {
     const hudTail = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_node_hud_tail || "") : "";
     const evalSummary = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_eval_summary || "") : "";
     const evalAt = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_eval_at || "") : "";
+    const metrics = aiPacket && aiPacket.metrics ? aiPacket.metrics : {};
+    const doneRateTxt = metrics.done_rate_recent == null ? "n/a" : (Math.round(Number(metrics.done_rate_recent) * 1000) / 10) + "%";
+    const timeoutRateTxt = metrics.timeout_rate_recent == null ? "n/a" : (Math.round(Number(metrics.timeout_rate_recent) * 1000) / 10) + "%";
+    const compactSavedTxt = Number(metrics.compact_saved_rows_recent || 0);
 
     const block = (title, rows, take) => `
       <div style="margin-top:12px; padding:10px; border:1px solid var(--border); border-radius:10px;">
@@ -936,6 +940,9 @@ function loadLogs() {
         <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
           ALLAI最終評価=${esc(evalSummary || "（未取得）")}
           ${evalAt ? `<span style="margin-left:8px;">@ ${esc(evalAt)}</span>` : ""}
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          運用KPI: DONE率=${esc(doneRateTxt)} / Timeout率=${esc(timeoutRateTxt)} / compact削減=${esc(compactSavedTxt)}行
         </div>
         <pre style="margin:0; max-height:260px; overflow:auto; font-size:12px; white-space:pre;">${aiJson}</pre>
       </div>

@@ -178,7 +178,8 @@ class MainActivity : AppCompatActivity() {
                     // 実行中も生存信号は出す（命令受信はしない）
                     arcWorker.announceStatus("running")
                 }
-                delay(intervalMs)
+                val nextDelay = if (busy) minOf(intervalMs, 3000L) else intervalMs
+                delay(nextDelay)
             }
         }
     }

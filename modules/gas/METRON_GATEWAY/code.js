@@ -265,6 +265,17 @@ function fetchDebugSnapshot() {
       if (s.length <= max) return s;
       return s.slice(0, max) + "...(len=" + s.length + ")";
     };
+    const parseRepeatCount = (raw) => {
+      const txt = String(raw == null ? "" : raw).trim();
+      if (!txt) return 1;
+      try {
+        const obj = JSON.parse(txt);
+        const n = parseInt(String(obj && obj.repeat_count != null ? obj.repeat_count : ""), 10);
+        return Number.isFinite(n) && n >= 1 ? n : 1;
+      } catch (_) {
+        return 1;
+      }
+    };
     const detectKeywords = (rows, colIdx, needles) => {
       const hit = [];
       rows.forEach((r) => {
@@ -316,6 +327,29 @@ function fetchDebugSnapshot() {
       }
       return { summary: "", at: "" };
     })();
+    const terminalMain = main.filter((r) => {
+      const st = String(r[3] || "").toLowerCase();
+      return st === "arc_done" || st === "arc_error";
+    });
+    const doneMain = terminalMain.filter((r) => String(r[3] || "").toLowerCase() === "arc_done").length;
+    const errorMain = terminalMain.length - doneMain;
+    const doneRate = terminalMain.length > 0 ? Number((doneMain / terminalMain.length).toFixed(3)) : null;
+    const timeoutErrCount = errors.filter((r) => {
+      const t = String(r[2] || "").toUpperCase();
+      const d = String(r[3] || "").toUpperCase();
+      return t.indexOf("LEASE_EXPIRE_MAX") >= 0 || t.indexOf("PENDING_TIMEOUT") >= 0 || d.indexOf("LEASE_EXPIRE_MAX") >= 0 || d.indexOf("PENDING_TIMEOUT") >= 0;
+    }).length;
+    const timeoutRate = terminalMain.length > 0 ? Number((timeoutErrCount / terminalMain.length).toFixed(3)) : null;
+    let compactSavedAudit = 0;
+    for (let i = 0; i < audit.length; i++) {
+      const rep = parseRepeatCount(audit[i][6]);
+      if (rep > 1) compactSavedAudit += (rep - 1);
+    }
+    let compactSavedErrors = 0;
+    for (let i = 0; i < errors.length; i++) {
+      const rep = parseRepeatCount(errors[i][3]);
+      if (rep > 1) compactSavedErrors += (rep - 1);
+    }
 
     const hypothesis = (() => {
       if (authHints.length > 0) return "auth_mismatch_or_signature";
@@ -353,7 +387,7 @@ function fetchDebugSnapshot() {
     })();
 
     const aiPacket = {
-      version: "gw-debug-ai-v1",
+      version: "gw-debug-ai-v2",
       generated_at: new Date(),
       metrics: {
         jobs_total: jobs.length,
@@ -365,7 +399,16 @@ function fetchDebugSnapshot() {
         nodes_total: nodes.length,
         errors_total: errors.length,
         results_total: results.length,
-        main_chat_total: main.length
+        main_chat_total: main.length,
+        terminal_main_total: terminalMain.length,
+        done_count_recent: doneMain,
+        error_count_recent: errorMain,
+        done_rate_recent: doneRate,
+        timeout_error_count_recent: timeoutErrCount,
+        timeout_rate_recent: timeoutRate,
+        compact_saved_audit_recent: compactSavedAudit,
+        compact_saved_errors_recent: compactSavedErrors,
+        compact_saved_rows_recent: compactSavedAudit + compactSavedErrors
       },
       anomalies: {
         stale_pending_count: stalePending.length,

@@ -6,12 +6,14 @@ AUTH="${2:?usage: e2e_request_arc.sh <base_url> <auth_key> [recover_mode] [targe
 RECOVER_MODE="${3:-off}" # off|on
 TARGET_TAG="${4:-#chatgpt}"
 ROUTE_MAX_ATTEMPTS="${ROUTE_MAX_ATTEMPTS:-36}"
-ROUTE_RETRY_SEC="${ROUTE_RETRY_SEC:-5}"
+ROUTE_RETRY_SEC="${ROUTE_RETRY_SEC:-1}"
 POLL_FAST_COUNT="${POLL_FAST_COUNT:-20}"
-POLL_FAST_SEC="${POLL_FAST_SEC:-6}"
+POLL_FAST_SEC="${POLL_FAST_SEC:-2}"
 POLL_SLOW_COUNT="${POLL_SLOW_COUNT:-18}"
-POLL_SLOW_SEC="${POLL_SLOW_SEC:-10}"
+POLL_SLOW_SEC="${POLL_SLOW_SEC:-4}"
 TERMINAL_GRACE_POLLS="${TERMINAL_GRACE_POLLS:-3}"
+E2E_MAX_WAIT_SEC="${E2E_MAX_WAIT_SEC:-180}"
+E2E_SKIP_LOGCAT="${E2E_SKIP_LOGCAT:-0}"
 TAG="E2E_REQ_$(date +%H%M%S)"
 PROMPT="@arc ${TARGET_TAG} ${TAG} 受信したら『${TAG} OK』のみ返答してください"
 
@@ -75,13 +77,21 @@ echo "job_id=$job_id"
 
 final_status=""
 terminal_seen=0
-total_polls=$((POLL_FAST_COUNT + POLL_SLOW_COUNT))
-for i in $(seq 1 "$total_polls"); do
-  if [ "$i" -le "$POLL_FAST_COUNT" ]; then
-    sleep "$POLL_FAST_SEC"
-  else
-    sleep "$POLL_SLOW_SEC"
+poll_idx=0
+elapsed_sec=0
+last_job_status=""
+last_main_status=""
+while [ "$elapsed_sec" -le "$E2E_MAX_WAIT_SEC" ]; do
+  poll_idx=$((poll_idx + 1))
+  sleep_sec="$POLL_SLOW_SEC"
+  if [ "$poll_idx" -le "$POLL_FAST_COUNT" ]; then
+    sleep_sec="$POLL_FAST_SEC"
   fi
+  if [ "${last_job_status:-}" = "pending" ] || [ "${last_job_status:-}" = "leased" ] || [ "${last_main_status:-}" = "QUEUED_ARC" ]; then
+    sleep_sec=1
+  fi
+  sleep "$sleep_sec"
+  elapsed_sec=$((elapsed_sec + sleep_sec))
   probe="$(curl -sS -L -m 20 -H "Content-Type: application/json" \
     -d "{\"mode\":\"admin_job_probe\",\"job_id\":\"${job_id}\",\"auth_key\":\"${AUTH}\"}" \
     "$BASE_URL")"
@@ -105,13 +115,15 @@ print(f"ok\t{job_status}\t{main_status}\t{mission}\t{response}")
 
   IFS=$'\t' read -r kind job_status main_status mission response <<<"$parsed"
   if [ "$kind" = "parse_error" ]; then
-    echo "[poll $i] probe=parse_error"
+    echo "[poll $poll_idx] probe=parse_error"
     continue
   fi
-  echo "[poll $i] job=${job_status:-unknown} main=${main_status:-unknown} mission=${mission:-}"
+  echo "[poll $poll_idx] job=${job_status:-unknown} main=${main_status:-unknown} mission=${mission:-}"
   if [ -n "${response:-}" ]; then
     echo "  response=$response"
   fi
+  last_job_status="${job_status:-}"
+  last_main_status="${main_status:-}"
 
   if [ "${main_status:-}" = "ARC_DONE" ]; then
     final_status="$main_status"
@@ -142,9 +154,11 @@ print(f"ok\t{job_status}\t{main_status}\t{mission}\t{response}")
 done
 
 pid="$(adb shell pidof com.arc || true)"
-echo "--- ARC logs ---"
-if [ -n "$pid" ]; then
-  adb logcat --pid="$pid" -d | grep -E "ARC_GW_INSTR|ARC_GW_HB|TIMEOUT_FAILOVER|RESULT_SEND_FAIL|MISSION OK|SCREEN_BLOCKED|WATCHDOG_TIMEOUT" | tail -n 120 || true
+if [ "$E2E_SKIP_LOGCAT" != "1" ]; then
+  echo "--- ARC logs ---"
+  if [ -n "$pid" ]; then
+    adb logcat --pid="$pid" -d | grep -E "ARC_GW_INSTR|ARC_GW_HB|TIMEOUT_FAILOVER|RESULT_SEND_FAIL|MISSION OK|SCREEN_BLOCKED|WATCHDOG_TIMEOUT" | tail -n 120 || true
+  fi
 fi
 
 if [ -z "$final_status" ]; then
