@@ -32,11 +32,14 @@ class ArcWorker(
     private var lastFailedSelector: String = ""
     private var lastFailedType: String = ""
     private var lastAiTask: ArcTask.AI? = null
+    private var currentAttemptStartedAtMs: Long = 0L
     private var stealthRetryCount: Int = 0
     private var adaptiveRetryCount: Int = 0
     private var isFinalizingResult: Boolean = false
     private val statusTrail = ArrayDeque<String>()
     private var statusSeq: Long = 0L
+    private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
+    private val timingModels = mutableMapOf<String, TimingModel>()
 
     // 🚀 [統合信号系]
     var onGlobalAiResult: ((String) -> Unit)? = null
@@ -89,6 +92,52 @@ class ArcWorker(
             "copilot" -> 18_000L
             else -> 28_000L
         }
+    }
+
+    private fun timingKey(target: String, prompt: String): String {
+        val mode = if (isDriveReferencePrompt(prompt)) "drive" else "normal"
+        return "${target.lowercase()}:$mode"
+    }
+
+    private fun recordAttemptTiming(target: String, prompt: String, elapsedMs: Long, success: Boolean) {
+        if (elapsedMs <= 0L) return
+        val key = timingKey(target, prompt)
+        val m = timingModels.getOrPut(key) { TimingModel() }
+        val x = elapsedMs.toDouble()
+        if (m.samples <= 0) {
+            m.emaMs = x
+            m.samples = 1
+            return
+        }
+        val alpha = if (success) 0.25 else 0.12
+        m.emaMs = m.emaMs * (1.0 - alpha) + x * alpha
+        m.samples += 1
+    }
+
+    private fun dynamicNoProgressLimitMs(
+        target: String,
+        prompt: String,
+        baseMs: Long,
+        elapsedMs: Long,
+        generating: Boolean,
+        assistantLen: Int,
+        timeoutMs: Long
+    ): Long {
+        var limit = baseMs
+        val model = timingModels[timingKey(target, prompt)]
+        if (model != null && model.samples >= 2) {
+            val emaBased = (model.emaMs * 0.70).toLong().coerceAtLeast(15_000L)
+            limit = maxOf(limit, emaBased)
+        }
+
+        if (generating || assistantLen > 0) {
+            val longCap = (timeoutMs - 5_000L).coerceAtLeast(limit)
+            limit = minOf(longCap, limit + 25_000L)
+        } else if (elapsedMs >= 20_000L) {
+            val coldCut = if (isDriveReferencePrompt(prompt)) 45_000L else 22_000L
+            limit = minOf(limit, coldCut)
+        }
+        return limit
     }
 
     init {
@@ -242,7 +291,13 @@ class ArcWorker(
         val missionId = currentMissionId
         val target = lastAiTask?.target
         val prompt = lastAiTask?.prompt
-        prefs.addContext("Task: $qid", "ERROR: $errorType $data", isSuccess = false)
+        prefs.addContext(
+            q = "Task: $qid",
+            a = "ERROR: $errorType $data",
+            isSuccess = false,
+            target = target ?: "",
+            sessionId = missionId ?: qid
+        )
         if (qid != "SYSTEM") {
             gateway.sendArcError(qid, errorType, data, missionId = missionId, target = target, prompt = prompt)
         } else {
@@ -293,6 +348,7 @@ class ArcWorker(
 
     private fun executeAiTask(task: ArcTask.AI) {
         lastAiTask = task
+        currentAttemptStartedAtMs = System.currentTimeMillis()
         val target = task.target.lowercase()
         val parsedTarget = Util.parseTarget(target)
         val currentUrl = web.currentUrl()
@@ -370,6 +426,8 @@ class ArcWorker(
             val startedAt = System.currentTimeMillis()
             var lastSeq = currentStatusSeq()
             var lastProgressAt = startedAt
+            var lastAssistantLen = 0
+            var generatingNow = false
             while (isActive) {
                 val nowBeforeWait = System.currentTimeMillis()
                 val tickMs =
@@ -406,17 +464,27 @@ class ArcWorker(
                     }
                 }
 
-                if (target == "gemini" && elapsed >= 7_000L) {
-                    val gemErr = detectGeminiErrorQuick()
-                    if (gemErr.first) {
+                if (target == "gemini") {
+                    val signal = probeProgressQuick()
+                    generatingNow = signal.generating
+                    if (elapsed >= 7_000L && signal.marker.isNotBlank()) {
                         val code = Regex("""code[:_](\d+)""", RegexOption.IGNORE_CASE)
-                            .find(gemErr.second)
+                            .find(signal.marker)
                             ?.groupValues
                             ?.getOrNull(1)
                             ?.trim()
                         val errType = if (!code.isNullOrBlank()) "GEMINI_FAIL_$code" else "GEMINI_FAIL_GENERIC"
-                        handleDomError(errType, gemErr.second)
+                        handleDomError(errType, signal.marker)
                         return@launch
+                    }
+                    if (signal.generating) {
+                        lastProgressAt = now
+                    }
+                    if (signal.assistantLen > lastAssistantLen + 8) {
+                        lastAssistantLen = signal.assistantLen
+                        lastProgressAt = now
+                    } else if (signal.assistantLen > lastAssistantLen) {
+                        lastAssistantLen = signal.assistantLen
                     }
                 }
 
@@ -436,7 +504,16 @@ class ArcWorker(
                     }
                 }
 
-                if (noProgressMs >= noProgressLimitMsFor(target, task.prompt)) {
+                val dynamicNoProgressMs = dynamicNoProgressLimitMs(
+                    target = target,
+                    prompt = task.prompt,
+                    baseMs = noProgressLimitMsFor(target, task.prompt),
+                    elapsedMs = elapsed,
+                    generating = generatingNow,
+                    assistantLen = lastAssistantLen,
+                    timeoutMs = timeoutMs
+                )
+                if (noProgressMs >= dynamicNoProgressMs) {
                     val bot = detectBotWallQuick()
                     if (bot.first) {
                         handleDomError("COPILOT_BOT_BLOCKED", bot.second)
@@ -457,12 +534,24 @@ class ArcWorker(
         return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
     }
 
-    private suspend fun detectGeminiErrorQuick(): Pair<Boolean, String> {
-        val d = CompletableDeferred<Pair<Boolean, String>>()
-        web.detectGeminiError { blocked, mark ->
-            if (!d.isCompleted) d.complete(blocked to mark)
+    private data class ProgressSignal(
+        val generating: Boolean = false,
+        val assistantLen: Int = 0,
+        val marker: String = ""
+    )
+
+    private suspend fun probeProgressQuick(): ProgressSignal {
+        val d = CompletableDeferred<ProgressSignal>()
+        web.detectProgressSignal { generating, assistantLen, marker ->
+            if (!d.isCompleted) d.complete(
+                ProgressSignal(
+                    generating = generating,
+                    assistantLen = assistantLen,
+                    marker = marker
+                )
+            )
         }
-        return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
+        return withTimeoutOrNull(1500) { d.await() } ?: ProgressSignal()
     }
 
     private fun startTaskHeartbeat(qid: String) {
@@ -480,6 +569,7 @@ class ArcWorker(
         if (isFinalizingResult) return
         isFinalizingResult = true
         val done = currentDoneCallback
+        val elapsedMs = (System.currentTimeMillis() - currentAttemptStartedAtMs).coerceAtLeast(0L)
         val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
         if (target == "copilot" && looksLikeCopilotBotWall(result)) {
             emitStatus("COPILOT_BOT_BLOCKED_RESULT")
@@ -509,10 +599,18 @@ class ArcWorker(
                 prompt = lastAiTask?.prompt
             ) { ok ->
                 if (ok) {
-                    prefs.addContext("Task: $qid", result)
+                    recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = true)
+                    prefs.addContext(
+                        q = "Task: $qid",
+                        a = result,
+                        isSuccess = true,
+                        target = target,
+                        sessionId = currentMissionId ?: qid
+                    )
                     emitStatus("MISSION OK")
                     announceStatus("success")
                 } else {
+                    recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false)
                     gateway.sendArcError(
                         qid,
                         "RESULT_POST_FAIL",
@@ -602,7 +700,7 @@ class ArcWorker(
             emitStatus("GEMINI_RETRY_$stealthRetryCount")
             val retryTask = lastAiTask?.copy(forceReload = true)
             if (retryTask != null) {
-                web.refreshProcess()
+                web.refreshKeepingSession()
                 workerScope.launch {
                     delay(1500)
                     if (!isAborted && currentQid != null) {
@@ -666,7 +764,16 @@ class ArcWorker(
                 startSelfHealing(html) 
             }
         } else {
-            prefs.addContext("Task: $qid", "ERROR: $type ${data ?: ""}", isSuccess = false)
+            val elapsedMs = (System.currentTimeMillis() - currentAttemptStartedAtMs).coerceAtLeast(0L)
+            val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
+            recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false)
+            prefs.addContext(
+                q = "Task: $qid",
+                a = "ERROR: $type ${data ?: ""}",
+                isSuccess = false,
+                target = target,
+                sessionId = currentMissionId ?: qid
+            )
             gateway.sendArcError(
                 qid,
                 type,
@@ -762,7 +869,7 @@ class ArcWorker(
                 }
             }
             "REFRESH" -> {
-                web.refreshProcess()
+                web.refreshKeepingSession()
                 workerScope.launch {
                     delay(2200)
                     if (!isAborted && currentQid != null) executeAiTask(task.copy(forceReload = false))
@@ -924,7 +1031,12 @@ class ArcWorker(
         if (looksLikeCodeTask(t.prompt)) {
             return "依頼: ${t.prompt}"
         }
-        val context = prefs.getFormattedContext().take(1200)
+        val context = prefs.getContextForPrompt(
+            prompt = t.prompt,
+            includeFailures = true,
+            maxItems = 7,
+            maxChars = 1400
+        ).take(1400)
         return "$context\n\n依頼: ${t.prompt}"
     }
 

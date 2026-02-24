@@ -135,45 +135,263 @@ class Prefs(context: Context) {
     var contextHistory: String by StringPref("context_history", "[]")
     var summarizedContext: String by StringPref("summarized_context", "")
 
-    fun addContext(q: String, a: String, isSuccess: Boolean = true) {
+    fun addContext(
+        q: String,
+        a: String,
+        isSuccess: Boolean = true,
+        target: String = "",
+        sessionId: String = ""
+    ) {
         try {
             val list = JSONArray(contextHistory)
+            val now = System.currentTimeMillis()
+            val qNorm = q.trim()
+            val aNorm = a.trim().take(10000)
+            if (qNorm.isBlank() && aNorm.isBlank()) return
+
+            // 連続同一の重複記録を抑止する
+            val recentWindowMs = 120_000L
+            val recentStart = (list.length() - 8).coerceAtLeast(0)
+            for (i in recentStart until list.length()) {
+                val it = list.optJSONObject(i) ?: continue
+                val ts = it.optLong("ts", 0L)
+                if (ts <= 0L || now - ts > recentWindowMs) continue
+                val qOld = it.optString("q", "").trim()
+                val aOld = it.optString("a", "").trim()
+                if (qOld == qNorm && aOld == aNorm) return
+            }
+
+            // 同一セッションで同種失敗が連発するケースは1件に圧縮し repeat_count を増やす
+            if (!isSuccess && sessionId.isNotBlank()) {
+                val signature = extractFailureSignature(aNorm)
+                if (signature.isNotBlank()) {
+                    val mergeWindowMs = 15 * 60_000L
+                    val scanStart = (list.length() - 20).coerceAtLeast(0)
+                    for (i in list.length() - 1 downTo scanStart) {
+                        val it = list.optJSONObject(i) ?: continue
+                        if (it.optString("type", "") != "FAILURE") continue
+                        if (it.optString("session_id", "") != sessionId) continue
+                        val ts = it.optLong("ts", 0L)
+                        if (ts <= 0L || now - ts > mergeWindowMs) continue
+                        val oldSig = extractFailureSignature(it.optString("a", ""))
+                        if (oldSig != signature) continue
+                        it.put("a", aNorm)
+                        it.put("ts", now)
+                        it.put("last_ts", now)
+                        val prevCount = it.optInt("repeat_count", 1).coerceAtLeast(1)
+                        it.put("repeat_count", prevCount + 1)
+                        contextHistory = list.toString()
+                        return
+                    }
+                }
+            }
+
             val item = JSONObject().apply {
-                put("q", q); put("a", a.take(10000)); put("ts", System.currentTimeMillis())
+                put("q", qNorm)
+                put("a", aNorm)
+                put("ts", now)
                 put("type", if (isSuccess) "SUCCESS" else "FAILURE")
+                put("repeat_count", 1)
+                put("first_ts", now)
+                put("last_ts", now)
+                if (target.isNotBlank()) put("target", target.lowercase())
+                if (sessionId.isNotBlank()) put("session_id", sessionId)
             }
             list.put(item)
-            val limit = 30
+            val limit = 80
             val start = if (list.length() > limit) list.length() - limit else 0
             val newList = JSONArray()
             for (i in start until list.length()) newList.put(list.get(i))
             contextHistory = newList.toString()
+            compactContextHistory(limit)
         } catch (_: Exception) { }
     }
 
     fun clearContext() { contextHistory = "[]"; summarizedContext = "" }
 
     fun getFormattedContext(includeFailures: Boolean = true, maxSuccess: Int = 5): String {
+        return getContextForPrompt(
+            prompt = "",
+            includeFailures = includeFailures,
+            maxItems = maxSuccess + if (includeFailures) 2 else 0,
+            maxChars = 1200
+        )
+    }
+
+    fun getContextForPrompt(
+        prompt: String,
+        includeFailures: Boolean = true,
+        maxItems: Int = 6,
+        maxChars: Int = 1400
+    ): String {
         if (summarizedContext.isNotEmpty()) return "\n【現場の記憶 (要約)】\n$summarizedContext\n"
         return try {
             val list = JSONArray(contextHistory)
             if (list.length() == 0) return ""
-            val sb = StringBuilder("\n【現場の短期記憶（直近の経緯）】\n")
-            val total = list.length()
-            var successCount = 0
-            for (i in 0 until total) {
-                val item = list.getJSONObject(i)
+            val now = System.currentTimeMillis()
+            val promptTokens = tokenize(prompt)
+
+            data class Ranked(
+                val score: Double,
+                val ts: Long,
+                val type: String,
+                val q: String,
+                val a: String,
+                val target: String,
+                val repeatCount: Int
+            )
+            val ranked = mutableListOf<Ranked>()
+
+            for (i in 0 until list.length()) {
+                val item = list.optJSONObject(i) ?: continue
                 val type = item.optString("type", "SUCCESS")
-                val q = item.getString("q"); val a = item.getString("a")
-                if (type == "FAILURE") {
-                    if (includeFailures) sb.append("⚠️ 失敗の記録: $q -> $a\n")
-                } else if (total - i <= maxSuccess && successCount < maxSuccess) {
-                    sb.append("Q: ${q.take(100)}\nA: ${a.take(300)}\n---\n")
-                    successCount++
+                if (!includeFailures && type == "FAILURE") continue
+                val q = item.optString("q", "")
+                val a = item.optString("a", "")
+                if (q.isBlank() && a.isBlank()) continue
+                val ts = item.optLong("ts", 0L)
+                val ageMs = if (ts > 0L) (now - ts).coerceAtLeast(0L) else Long.MAX_VALUE
+                val recency = when {
+                    ageMs <= 60_000L -> 4.0
+                    ageMs <= 5 * 60_000L -> 3.0
+                    ageMs <= 30 * 60_000L -> 2.0
+                    ageMs <= 6 * 60 * 60_000L -> 1.0
+                    else -> 0.3
                 }
+                val itemTokens = tokenize("$q $a")
+                val overlap = if (promptTokens.isEmpty() || itemTokens.isEmpty()) 0.0
+                else promptTokens.intersect(itemTokens).size.toDouble()
+                val typeBonus = if (type == "SUCCESS") 0.6 else -0.2
+                val score = overlap * 2.2 + recency + typeBonus
+                ranked.add(
+                    Ranked(
+                        score = score,
+                        ts = ts,
+                        type = type,
+                        q = q,
+                        a = a,
+                        target = item.optString("target", ""),
+                        repeatCount = item.optInt("repeat_count", 1).coerceAtLeast(1)
+                    )
+                )
+            }
+
+            val sorted = ranked
+                .sortedWith(compareByDescending<Ranked> { it.score }.thenByDescending { it.ts })
+                .take(maxItems.coerceAtLeast(1))
+
+            if (sorted.isEmpty()) return ""
+            val sb = StringBuilder("\n【現場の短期記憶（関連順）】\n")
+            var used = sb.length
+            for (r in sorted) {
+                val prefix = if (r.type == "FAILURE") "⚠️" else "•"
+                val targetPart = if (r.target.isNotBlank()) " [${r.target}]" else ""
+                val lineQ = "${prefix}${targetPart} Q: ${r.q.take(120)}\n"
+                val repeatPart = if (r.type == "FAILURE" && r.repeatCount > 1) " (x${r.repeatCount})" else ""
+                val lineA = "A: ${r.a.take(360)}$repeatPart\n"
+                val block = lineQ + lineA + "---\n"
+                if (used + block.length > maxChars.coerceAtLeast(400)) break
+                sb.append(block)
+                used += block.length
             }
             sb.toString()
         } catch (_: Exception) { "" }
+    }
+
+    private fun extractFailureSignature(text: String): String {
+        val m = Regex("""ERROR:\s*([A-Z0-9_:-]+)""").find(text)
+        return m?.groupValues?.getOrNull(1)?.trim()?.uppercase() ?: ""
+    }
+
+    fun compactContextHistory(maxItems: Int = 80) {
+        try {
+            val src = JSONArray(contextHistory)
+            if (src.length() <= 1) return
+
+            val merged = JSONArray()
+            val failureIndexByKey = mutableMapOf<String, Int>()
+            val mergeWindowMs = 15 * 60_000L
+
+            fun putNormalized(dst: JSONObject, q: String, a: String, ts: Long, type: String, target: String, sessionId: String, repeat: Int, firstTs: Long, lastTs: Long) {
+                dst.put("q", q)
+                dst.put("a", a)
+                dst.put("ts", ts)
+                dst.put("type", type)
+                dst.put("repeat_count", repeat.coerceAtLeast(1))
+                dst.put("first_ts", if (firstTs > 0L) firstTs else ts)
+                dst.put("last_ts", if (lastTs > 0L) lastTs else ts)
+                if (target.isNotBlank()) dst.put("target", target)
+                if (sessionId.isNotBlank()) dst.put("session_id", sessionId)
+            }
+
+            for (i in 0 until src.length()) {
+                val it = src.optJSONObject(i) ?: continue
+                val q = it.optString("q", "").trim()
+                val a = it.optString("a", "").trim().take(10000)
+                val ts = it.optLong("ts", 0L).takeIf { v -> v > 0L } ?: System.currentTimeMillis()
+                val type = it.optString("type", "SUCCESS").ifBlank { "SUCCESS" }
+                val target = it.optString("target", "").lowercase().trim()
+                val sessionId = it.optString("session_id", "").trim()
+                val repeat = it.optInt("repeat_count", 1).coerceAtLeast(1)
+                val firstTs = it.optLong("first_ts", ts)
+                val lastTs = it.optLong("last_ts", ts)
+                if (q.isBlank() && a.isBlank()) continue
+
+                if (type == "FAILURE" && sessionId.isNotBlank()) {
+                    val sig = extractFailureSignature(a)
+                    if (sig.isNotBlank()) {
+                        val key = "$sessionId|$sig"
+                        val oldIdx = failureIndexByKey[key]
+                        if (oldIdx != null && oldIdx >= 0 && oldIdx < merged.length()) {
+                            val prev = merged.optJSONObject(oldIdx)
+                            if (prev != null) {
+                                val prevLastTs = prev.optLong("last_ts", prev.optLong("ts", 0L))
+                                if (prevLastTs > 0L && (ts - prevLastTs) in 0..mergeWindowMs) {
+                                    val newRepeat = prev.optInt("repeat_count", 1).coerceAtLeast(1) + repeat
+                                    prev.put("a", a)
+                                    prev.put("ts", ts)
+                                    prev.put("last_ts", maxOf(prevLastTs, lastTs, ts))
+                                    prev.put("first_ts", minOf(prev.optLong("first_ts", ts), firstTs))
+                                    prev.put("repeat_count", newRepeat)
+                                    if (target.isNotBlank()) prev.put("target", target)
+                                    continue
+                                }
+                            }
+                        }
+                        val dst = JSONObject()
+                        putNormalized(dst, q, a, ts, type, target, sessionId, repeat, firstTs, lastTs)
+                        merged.put(dst)
+                        failureIndexByKey[key] = merged.length() - 1
+                        continue
+                    }
+                }
+
+                val dst = JSONObject()
+                putNormalized(dst, q, a, ts, type, target, sessionId, repeat, firstTs, lastTs)
+                merged.put(dst)
+            }
+
+            val keep = JSONArray()
+            val start = (merged.length() - maxItems.coerceAtLeast(20)).coerceAtLeast(0)
+            for (i in start until merged.length()) keep.put(merged.get(i))
+            contextHistory = keep.toString()
+        } catch (_: Exception) { }
+    }
+
+    private fun tokenize(text: String): Set<String> {
+        val normalized = text.lowercase()
+            .replace(Regex("https?://\\S+"), " ")
+            .replace(Regex("[^\\p{L}\\p{N}_]+"), " ")
+            .trim()
+        if (normalized.isBlank()) return emptySet()
+        val stop = setOf("the", "and", "for", "with", "that", "this", "from", "only", "into", "を", "に", "は", "が", "と", "で", "の")
+        return normalized
+            .split(Regex("\\s+"))
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.length >= 2 && it !in stop }
+            .take(64)
+            .toSet()
     }
 
     // --- プロフィール設定 ---

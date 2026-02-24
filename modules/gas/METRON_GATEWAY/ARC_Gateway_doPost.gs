@@ -83,6 +83,12 @@ function doPost(e) {
   const signatureWindowSec = Number.isFinite(signatureWindowSecRaw) && signatureWindowSecRaw >= 30 ? signatureWindowSecRaw : 180;
   const nonceTtlSecRaw = parseInt(norm(props.getProperty("ARC_NONCE_TTL_SEC")) || "300", 10);
   const nonceTtlSec = Number.isFinite(nonceTtlSecRaw) && nonceTtlSecRaw >= 60 ? nonceTtlSecRaw : 300;
+  const compactScanMaxRaw = parseInt(norm(props.getProperty("ARC_COMPACT_SCAN_MAX")) || "300", 10);
+  const compactScanMax = Number.isFinite(compactScanMaxRaw) && compactScanMaxRaw >= 50 ? Math.min(compactScanMaxRaw, 3000) : 300;
+  const auditCompactWindowSecRaw = parseInt(norm(props.getProperty("ARC_AUDIT_COMPACT_WINDOW_SEC")) || "90", 10);
+  const auditCompactWindowSec = Number.isFinite(auditCompactWindowSecRaw) && auditCompactWindowSecRaw >= 10 ? Math.min(auditCompactWindowSecRaw, 3600) : 90;
+  const errorCompactWindowSecRaw = parseInt(norm(props.getProperty("ARC_ERROR_COMPACT_WINDOW_SEC")) || "300", 10);
+  const errorCompactWindowSec = Number.isFinite(errorCompactWindowSecRaw) && errorCompactWindowSecRaw >= 30 ? Math.min(errorCompactWindowSecRaw, 7200) : 300;
 
   const parseKeyMap = (raw) => {
     const txt = norm(raw);
@@ -124,6 +130,9 @@ function doPost(e) {
       ARC_REQUIRE_SIGNATURE: "false",
       ARC_SIGNATURE_WINDOW_SEC: "180",
       ARC_NONCE_TTL_SEC: "300"
+      ,ARC_COMPACT_SCAN_MAX: "300"
+      ,ARC_AUDIT_COMPACT_WINDOW_SEC: "90"
+      ,ARC_ERROR_COMPACT_WINDOW_SEC: "300"
       ,ARC_LEASE_EXPIRE_MAX: "2"
     };
     Object.keys(defaults).forEach((k) => {
@@ -242,15 +251,45 @@ function doPost(e) {
 
   const addAudit = (traceId, event, jobId, worker, status, detail) => {
     try {
-      sheets.audit.appendRow([
-        new Date(),
-        norm(traceId),
-        norm(event),
-        norm(jobId),
-        norm(worker),
-        norm(status),
-        norm(detail)
-      ]);
+      const trace = norm(traceId);
+      const evt = norm(event);
+      const job = norm(jobId);
+      const workerNorm = norm(worker);
+      const statusNorm = norm(status);
+      const detailNorm = norm(detail);
+      const recent = readRecentRows(sheets.audit, 7, compactScanMax);
+      let found = -1;
+      const nowTs = Date.now();
+      const windowMs = auditCompactWindowSec * 1000;
+      for (let i = recent.rows.length - 1; i >= 0; i--) {
+        const row = recent.rows[i];
+        const rowTs = toMs(row[0]);
+        if (Number.isFinite(rowTs) && nowTs - rowTs > windowMs) break;
+        if (norm(row[1]) !== trace) continue;
+        if (norm(row[2]) !== evt) continue;
+        if (norm(row[3]) !== job) continue;
+        if (norm(row[4]) !== workerNorm) continue;
+        if (norm(row[5]) !== statusNorm) continue;
+        const rowDetailObj = parseCompactDetail(row[6], "message");
+        const rowDetailMsg = norm(rowDetailObj.message || row[6]);
+        if (rowDetailMsg !== detailNorm) continue;
+        found = recent.startRow + i;
+        break;
+      }
+      if (found > 0) {
+        const existing = sheets.audit.getRange(found, 1, 1, 7).getValues()[0];
+        const existingTs = toMs(existing[0]);
+        const mergedDetail = mergeCompactDetail(
+          existing[6],
+          "message",
+          detailNorm,
+          Number.isFinite(existingTs) ? new Date(existingTs).toISOString() : nowIso(),
+          nowIso()
+        );
+        sheets.audit.getRange(found, 1, 1, 7).setValues([[new Date(), trace, evt, job, workerNorm, statusNorm, mergedDetail]]);
+      } else {
+        sheets.audit.appendRow([new Date(), trace, evt, job, workerNorm, statusNorm, detailNorm]);
+      }
     } catch (_) {
       // keep main flow alive
     }
@@ -338,12 +377,65 @@ function doPost(e) {
   };
 
   const clamp = (n, minV, maxV) => Math.max(minV, Math.min(maxV, n));
+  const toMs = (v) => {
+    const n = new Date(v).getTime();
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const readRecentRows = (sheet, width, scanMax) => {
+    const last = sheet.getLastRow();
+    if (last <= 1) return { startRow: 2, rows: [] };
+    const start = Math.max(2, last - clamp(parseIntSafe(scanMax, compactScanMax), 50, 3000) + 1);
+    const rows = sheet.getRange(start, 1, last - start + 1, width).getValues();
+    return { startRow: start, rows: rows };
+  };
+  const parseCompactDetail = (raw, fallbackField) => {
+    const txt = norm(raw);
+    if (!txt) return {};
+    try {
+      const obj = JSON.parse(txt);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+    } catch (_) {}
+    const out = {};
+    out[fallbackField] = txt;
+    return out;
+  };
+  const mergeCompactDetail = (existingRaw, fallbackField, latestText, seedFirstTs, nowIsoRaw) => {
+    const nowIsoVal = norm(nowIsoRaw) || nowIso();
+    const base = parseCompactDetail(existingRaw, fallbackField);
+    const repeatRaw = parseInt(norm(base.repeat_count), 10);
+    const repeatCount = Number.isFinite(repeatRaw) && repeatRaw >= 1 ? repeatRaw + 1 : 2;
+    const firstTs = norm(base.first_ts) || norm(seedFirstTs) || nowIsoVal;
+    const merged = {};
+    Object.keys(base).forEach((k) => {
+      if (k === "repeat_count" || k === "last_ts") return;
+      merged[k] = base[k];
+    });
+    merged[fallbackField] = norm(latestText) || norm(merged[fallbackField]);
+    merged.repeat_count = repeatCount;
+    merged.first_ts = firstTs;
+    merged.last_ts = nowIsoVal;
+    return JSON.stringify(merged).slice(0, MAX_MEMORY_VALUE);
+  };
 
   const setGatewayLongMemory = (key, value, source, traceId, tags) => {
     const k = norm(key).slice(0, MAX_MEMORY_KEY);
     if (!k) return { ok: false, error: "key_required" };
     const val = norm(value).slice(0, MAX_MEMORY_VALUE);
-    sheets.gatewayMemory.appendRow([new Date(), k, val, norm(source), norm(traceId), norm(tags)]);
+    const sourceNorm = norm(source);
+    const trace = norm(traceId);
+    const tagsNorm = norm(tags);
+    const recent = readRecentRows(sheets.gatewayMemory, 6, compactScanMax);
+    let found = -1;
+    for (let i = recent.rows.length - 1; i >= 0; i--) {
+      const row = recent.rows[i];
+      if (norm(row[1]) !== k) continue;
+      if (sourceNorm && norm(row[3]) !== sourceNorm) continue;
+      found = recent.startRow + i;
+      break;
+    }
+    const nextRow = [new Date(), k, val, sourceNorm, trace, tagsNorm];
+    if (found > 0) sheets.gatewayMemory.getRange(found, 1, 1, nextRow.length).setValues([nextRow]);
+    else sheets.gatewayMemory.appendRow(nextRow);
     return { ok: true, key: k };
   };
 
@@ -394,16 +486,33 @@ function doPost(e) {
     if (!k) return { ok: false, error: "key_required" };
     const ttlSec = clamp(parseIntSafe(ttlSecRaw, 1800), 30, 86400);
     const expiresAt = new Date(Date.now() + ttlSec * 1000);
-    sheets.arcShortMemory.appendRow([
+    const valueNorm = norm(value).slice(0, MAX_MEMORY_VALUE);
+    const trace = norm(traceId);
+    const recent = readRecentRows(sheets.arcShortMemory, 8, compactScanMax);
+    let found = -1;
+    const nowMs = Date.now();
+    for (let i = recent.rows.length - 1; i >= 0; i--) {
+      const row = recent.rows[i];
+      const expiresAtMs = toMs(row[6]);
+      if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) continue;
+      if (norm(row[1]) !== worker) continue;
+      if (norm(row[2]) !== session) continue;
+      if (norm(row[3]) !== k) continue;
+      found = recent.startRow + i;
+      break;
+    }
+    const nextRow = [
       new Date(),
       worker,
       session,
       k,
-      norm(value).slice(0, MAX_MEMORY_VALUE),
+      valueNorm,
       ttlSec,
       expiresAt,
-      norm(traceId)
-    ]);
+      trace
+    ];
+    if (found > 0) sheets.arcShortMemory.getRange(found, 1, 1, nextRow.length).setValues([nextRow]);
+    else sheets.arcShortMemory.appendRow(nextRow);
     return { ok: true, worker_id: worker, key: k, ttl_sec: ttlSec, expires_at: expiresAt.toISOString() };
   };
 
@@ -1657,7 +1766,36 @@ function doPost(e) {
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     const workerId = norm(data.worker_id);
 
-    sheets.errors.appendRow([new Date(), missionId, err, errData]);
+    const recentErr = readRecentRows(sheets.errors, 4, compactScanMax);
+    let foundErr = -1;
+    const nowErrMs = Date.now();
+    const errWindowMs = errorCompactWindowSec * 1000;
+    for (let i = recentErr.rows.length - 1; i >= 0; i--) {
+      const row = recentErr.rows[i];
+      const rowTs = toMs(row[0]);
+      if (Number.isFinite(rowTs) && nowErrMs - rowTs > errWindowMs) break;
+      if (norm(row[1]) !== missionId) continue;
+      if (norm(row[2]) !== err) continue;
+      const rowObj = parseCompactDetail(row[3], "message");
+      const rowMsg = norm(rowObj.message || row[3]);
+      if (rowMsg !== errData) continue;
+      foundErr = recentErr.startRow + i;
+      break;
+    }
+    if (foundErr > 0) {
+      const existingErr = sheets.errors.getRange(foundErr, 1, 1, 4).getValues()[0];
+      const existingErrTs = toMs(existingErr[0]);
+      const mergedErrData = mergeCompactDetail(
+        existingErr[3],
+        "message",
+        errData,
+        Number.isFinite(existingErrTs) ? new Date(existingErrTs).toISOString() : nowIso(),
+        nowIso()
+      );
+      sheets.errors.getRange(foundErr, 1, 1, 4).setValues([[new Date(), missionId, err, mergedErrData]]);
+    } else {
+      sheets.errors.appendRow([new Date(), missionId, err, errData]);
+    }
     const linked = completeLinkedChat(missionId, "[" + err + "] " + errData, "error");
     if (!linked) appendOrphanChatResult(missionId, "[" + err + "] " + errData, "error", data.target || "");
 

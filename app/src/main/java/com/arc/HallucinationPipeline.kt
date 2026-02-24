@@ -109,7 +109,13 @@ class HallucinationPipeline(
         injectionJob?.cancel()
         
         if (finalText.length > 10 && !isCodeTask(originalPrompt)) {
-            prefs.addContext(originalPrompt, finalText)
+            prefs.addContext(
+                q = originalPrompt,
+                a = finalText,
+                isSuccess = true,
+                target = "hallucination",
+                sessionId = missionId
+            )
         }
 
         onDone?.invoke(finalText)

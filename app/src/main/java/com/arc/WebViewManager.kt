@@ -368,6 +368,70 @@ class WebViewManager(
         } ?: callback(false, "")
     }
 
+    fun detectProgressSignal(callback: (Boolean, Int, String) -> Unit) {
+        val js = """
+            (function() {
+              try {
+                const out = { generating: false, assistant_len: 0, marker: '' };
+                const generating = !!document.querySelector(
+                  '[aria-label*="停止"], [aria-label*="Stop"], .result-streaming, .generating'
+                );
+                out.generating = generating;
+
+                const sels = [
+                  '[data-message-author-role="assistant"]',
+                  '.model-response-text',
+                  '.markdown',
+                  'article'
+                ];
+                const nodes = [];
+                const seen = new Set();
+                sels.forEach((s) => {
+                  document.querySelectorAll(s).forEach((el) => {
+                    if (!el || seen.has(el)) return;
+                    seen.add(el);
+                    nodes.push(el);
+                  });
+                });
+                for (let i = nodes.length - 1; i >= 0; i--) {
+                  const node = nodes[i];
+                  const selfRole = (node.getAttribute && node.getAttribute('data-message-author-role')) || '';
+                  const parentRoleEl = node.closest && node.closest('[data-message-author-role]');
+                  const parentRole = parentRoleEl ? (parentRoleEl.getAttribute('data-message-author-role') || '') : '';
+                  const role = (selfRole || parentRole).toLowerCase();
+                  if (role === 'user') continue;
+                  const txt = ((node.innerText || node.textContent || '') + '').trim();
+                  if (txt.length > 5) {
+                    out.assistant_len = txt.length;
+                    break;
+                  }
+                }
+
+                try {
+                  const mark = window.arc && window.arc.__lastGeminiErrorMark
+                    ? String(window.arc.__lastGeminiErrorMark)
+                    : '';
+                  const at = window.arc && window.arc.__lastGeminiErrorAt
+                    ? Number(window.arc.__lastGeminiErrorAt)
+                    : 0;
+                  if (mark && at > 0 && Date.now() - at <= 45000) out.marker = mark;
+                } catch (_) {}
+
+                return JSON.stringify(out);
+              } catch (_) {
+                return JSON.stringify({ generating: false, assistant_len: 0, marker: '' });
+              }
+            })();
+        """.trimIndent()
+        webView?.evaluateJavascript(js) { raw ->
+            val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
+            val generating = parsed.contains("\"generating\":true")
+            val len = Regex("\"assistant_len\":(\\d+)").find(parsed)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+            val marker = Regex("\"marker\":\"([^\"]*)\"").find(parsed)?.groupValues?.getOrNull(1) ?: ""
+            callback(generating, len, marker)
+        } ?: callback(false, 0, "")
+    }
+
     /**
      * アクセシビリティ・ツリー抽出
      */
@@ -447,6 +511,15 @@ class WebViewManager(
                 wv.clearFormData()
                 wv.clearHistory()
                 CookieManager.getInstance().removeAllCookies(null)
+                wv.reload()
+            }
+        }
+    }
+
+    fun refreshKeepingSession() {
+        scope.launch {
+            webView?.let { wv ->
+                // 認証セッションを維持したまま再読み込みする
                 wv.reload()
             }
         }
