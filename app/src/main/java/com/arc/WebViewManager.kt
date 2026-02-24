@@ -98,6 +98,7 @@ class WebViewManager(
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView(wv: WebView) {
+        WebView.setWebContentsDebuggingEnabled(true)
         val cm = CookieManager.getInstance()
         cm.setAcceptCookie(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -202,6 +203,20 @@ class WebViewManager(
     private fun detectAccessInterstitial(view: WebView?, callback: (Boolean, String) -> Unit) {
         val js = """
             (function() {
+              try {
+                const cachedMark = window.__arcLastBotWallMark ? String(window.__arcLastBotWallMark) : '';
+                const cachedAt = window.__arcLastBotWallAt ? Number(window.__arcLastBotWallAt) : 0;
+                const ageMs = Date.now() - cachedAt;
+                if (cachedMark && cachedAt > 0 && ageMs >= 0 && ageMs <= 60000) {
+                  return JSON.stringify({ blocked: true, mark: cachedMark, source: 'cache' });
+                }
+              } catch (_) {}
+              const remember = (mark) => {
+                try {
+                  window.__arcLastBotWallMark = String(mark || 'unknown');
+                  window.__arcLastBotWallAt = Date.now();
+                } catch (_) {}
+              };
               const roots = [];
               const visitRoots = (root) => {
                 if (!root || !root.querySelectorAll) return;
@@ -228,6 +243,10 @@ class WebViewManager(
               const lower = mergedText.toLowerCase();
               const marks = [
                 'このページにアクセスしています',
+                '検証に失敗しました',
+                'トラブルシューティング',
+                '私はロボットではありません',
+                '私はロボットではありません。',
                 'checking your browser',
                 'just a moment',
                 'verify you are human',
@@ -246,15 +265,19 @@ class WebViewManager(
               ];
               for (let i = 0; i < marks.length; i++) {
                 if (lower.indexOf(marks[i].toLowerCase()) >= 0 || text.indexOf(marks[i]) >= 0) {
-                  return JSON.stringify({ blocked: true, mark: marks[i] });
+                  remember(marks[i]);
+                  return JSON.stringify({ blocked: true, mark: marks[i], source: 'scan' });
                 }
               }
               try {
                 for (const r of roots) {
                   const iframe = r.querySelector(
-                    'iframe[src*="challenge.cloudflare.com"],iframe[src*="recaptcha"],iframe[title*="captcha" i],iframe[title*="challenge" i]'
+                    'iframe[src*="challenge.cloudflare.com"],iframe[src*="challenges.cloudflare.com"],iframe[src*="recaptcha"],iframe[title*="captcha" i],iframe[title*="challenge" i],iframe[id*="cf-chl" i],iframe[name*="cf-chl" i]'
                   );
-                  if (iframe) return JSON.stringify({ blocked: true, mark: 'iframe_challenge' });
+                  if (iframe) {
+                    remember("iframe_challenge");
+                    return JSON.stringify({ blocked: true, mark: 'iframe_challenge', source: 'scan' });
+                  }
                 }
               } catch (_) {}
               try {
@@ -262,15 +285,21 @@ class WebViewManager(
                   const cbs = r.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
                   for (const cb of cbs) {
                     const host = cb.closest && cb.closest('label,div,section,form');
+                    const cbAria = ((cb.getAttribute && (cb.getAttribute('aria-label') || cb.getAttribute('title'))) || '').toLowerCase();
                     const near = ((host && (host.innerText || host.textContent)) ? (host.innerText || host.textContent) : '').toLowerCase();
                     if (
+                      cbAria.indexOf('robot') >= 0 ||
+                      cbAria.indexOf('captcha') >= 0 ||
+                      cbAria.indexOf('human') >= 0 ||
                       near.indexOf('ロボット') >= 0 ||
+                      near.indexOf('私はロボットではありません') >= 0 ||
                       near.indexOf('i am not a robot') >= 0 ||
                       near.indexOf('verify you are human') >= 0 ||
                       near.indexOf('security check') >= 0 ||
                       near.indexOf('captcha') >= 0
                     ) {
-                      return JSON.stringify({ blocked: true, mark: 'robot_checkbox' });
+                      remember("robot_checkbox");
+                      return JSON.stringify({ blocked: true, mark: 'robot_checkbox', source: 'scan' });
                     }
                   }
                 }
@@ -787,7 +816,9 @@ class WebViewManager(
     private fun startHeartbeatMonitor() {
         scope.launch {
             while(isMonitoringActive) {
-                delay(10000)
+                val u = (webView?.url ?: "").lowercase()
+                val tickMs = if (u.contains("copilot.microsoft.com") || u.contains("bing.com/chat")) 2_000L else 10_000L
+                delay(tickMs)
                 injectAutoDom()
                 detectAccessInterstitial(webView) { blocked, detail ->
                     if (blocked) {

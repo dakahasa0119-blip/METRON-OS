@@ -40,6 +40,10 @@ class ArcWorker(
     private var statusSeq: Long = 0L
     private var lastFastHeartbeatAtMs: Long = 0L
     private val fastHeartbeatMinIntervalMs: Long = 1200L
+    private var pendingFastHeartbeatJob: Job? = null
+    private var lastCopilotDiagAtMs: Long = 0L
+    private val copilotDiagCooldownMs: Long = 20_000L
+    private val webDiag by lazy { WebViewDiagnosticProbe(web, gateway, prefs, workerScope) }
     private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
     private val timingModels = mutableMapOf<String, TimingModel>()
 
@@ -256,10 +260,13 @@ class ArcWorker(
     }
 
     @Synchronized
-    private fun allowFastHeartbeat(nowMs: Long): Boolean {
-        if (nowMs - lastFastHeartbeatAtMs < fastHeartbeatMinIntervalMs) return false
-        lastFastHeartbeatAtMs = nowMs
-        return true
+    private fun reserveFastHeartbeatDelayMs(nowMs: Long): Long {
+        val delta = nowMs - lastFastHeartbeatAtMs
+        if (delta >= fastHeartbeatMinIntervalMs) {
+            lastFastHeartbeatAtMs = nowMs
+            return 0L
+        }
+        return (fastHeartbeatMinIntervalMs - delta).coerceAtLeast(0L)
     }
 
     private fun requestFastHeartbeat(status: String) {
@@ -267,13 +274,28 @@ class ArcWorker(
         // 実行中コンテキストのみで即時反映。待機中は定期heartbeatに任せる。
         if (currentQid == null && currentMissionId.isNullOrBlank()) return
         val nowMs = System.currentTimeMillis()
-        if (!allowFastHeartbeat(nowMs)) return
         val statusHint = when {
             status.startsWith("MISSION OK") || status.startsWith("PIPE_STEP_DONE") -> "success"
             status.startsWith("ERROR") || status.startsWith("COPILOT_BOT_BLOCKED") -> "error"
             else -> "running"
         }
-        announceStatus(statusHint)
+        val delayMs = reserveFastHeartbeatDelayMs(nowMs)
+        if (delayMs <= 0L) {
+            pendingFastHeartbeatJob?.cancel()
+            pendingFastHeartbeatJob = null
+            announceStatus(statusHint)
+            return
+        }
+        pendingFastHeartbeatJob?.cancel()
+        pendingFastHeartbeatJob = workerScope.launch {
+            delay(delayMs)
+            if (isAborted) return@launch
+            if (currentQid == null && currentMissionId.isNullOrBlank()) return@launch
+            synchronized(this@ArcWorker) {
+                lastFastHeartbeatAtMs = System.currentTimeMillis()
+            }
+            announceStatus(statusHint)
+        }
     }
 
     @Synchronized
@@ -302,6 +324,8 @@ class ArcWorker(
         timeoutJob = null
         taskHeartbeatJob?.cancel()
         taskHeartbeatJob = null
+        pendingFastHeartbeatJob?.cancel()
+        pendingFastHeartbeatJob = null
     }
 
     fun abortCurrent() { 
@@ -543,6 +567,14 @@ class ArcWorker(
                         handleDomError("COPILOT_BOT_BLOCKED", bot.second)
                         return@launch
                     }
+                    if (target == "copilot") {
+                        delay(450)
+                        val botRetry = detectBotWallQuick()
+                        if (botRetry.first) {
+                            handleDomError("COPILOT_BOT_BLOCKED", botRetry.second)
+                            return@launch
+                        }
+                    }
                     handleDomError("STALL_NO_PROGRESS", "no_status_change_ms=$noProgressMs")
                     return@launch
                 }
@@ -597,6 +629,7 @@ class ArcWorker(
         val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
         if (target == "copilot" && looksLikeCopilotBotWall(result)) {
             emitStatus("COPILOT_BOT_BLOCKED_RESULT")
+            triggerCopilotDiag("result_block")
             gateway.sendArcError(
                 qid,
                 "COPILOT_BOT_BLOCKED",
@@ -678,9 +711,7 @@ class ArcWorker(
                 u.contains("login.live.com") ||
                     u.contains("microsoftonline.com") ||
                     u.contains("/signin") ||
-                    u.contains("/login") ||
-                    u == "https://copilot.microsoft.com/" ||
-                    u == "https://copilot.microsoft.com"
+                    u.contains("/login")
             else -> false
         }
     }
@@ -712,6 +743,17 @@ class ArcWorker(
         onSystemErrorRequest?.invoke(type, data)
         val qid = currentQid ?: ""
         val isGeminiTransient = type == "GEMINI_FAIL_2" || type == "GEMINI_FAIL_13"
+        if (
+            type.contains("COPILOT_BOT_BLOCKED", ignoreCase = true) ||
+            type.contains("COPILOT_CLOUDFLARE_BYPASS", ignoreCase = true)
+        ) {
+            triggerCopilotDiag("dom_error:${type.take(48)}")
+        } else if (type.contains("STALL_NO_PROGRESS", ignoreCase = true)) {
+            val targetNow = inferTargetFromUrl(web.currentUrl()).ifBlank { lastTarget }
+            if (targetNow == "copilot") {
+                triggerCopilotDiag("copilot_stall_no_progress")
+            }
+        }
 
         if (
             isGeminiTransient &&
@@ -754,6 +796,26 @@ class ArcWorker(
         }
 
         handleDomErrorFallback(type, data)
+    }
+
+    @Synchronized
+    private fun shouldRunCopilotDiag(nowMs: Long): Boolean {
+        if (nowMs - lastCopilotDiagAtMs < copilotDiagCooldownMs) return false
+        lastCopilotDiagAtMs = nowMs
+        return true
+    }
+
+    private fun triggerCopilotDiag(reason: String) {
+        if (isAborted) return
+        val target = inferTargetFromUrl(web.currentUrl()).ifBlank { lastTarget }
+        if (target != "copilot") return
+        val nowMs = System.currentTimeMillis()
+        if (!shouldRunCopilotDiag(nowMs)) return
+        emitStatus("COPILOT_DIAG_CAPTURE")
+        webDiag.captureAndSend(reason = reason) { ok, key ->
+            val tag = if (ok) "COPILOT_DIAG_SENT" else "COPILOT_DIAG_FAIL"
+            emitStatus("$tag:$key")
+        }
     }
 
     private fun handleDomErrorFallback(type: String, data: String?) {

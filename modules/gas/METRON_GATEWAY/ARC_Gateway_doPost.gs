@@ -454,6 +454,10 @@ function doPost(e) {
     const n = parseInt(norm(obj.repeat_count), 10);
     return Number.isFinite(n) && n >= 1 ? n : 1;
   };
+  const parseHudSeq = (v) => {
+    const n = parseInt(norm(v), 10);
+    return Number.isFinite(n) && n >= 0 ? n : -1;
+  };
 
   const setGatewayLongMemory = (key, value, source, traceId, tags) => {
     const k = norm(key).slice(0, MAX_MEMORY_KEY);
@@ -2042,6 +2046,11 @@ function doPost(e) {
     const currentHost = norm(data.current_host).slice(0, 200);
     const currentUrl = norm(data.current_url).slice(0, 800);
     const currentTitle = norm(data.current_title).slice(0, 200);
+    const hudSeq = parseHudSeq(data.hud_seq);
+    const hbCache = CacheService.getScriptCache();
+    const hudSeqKey = workerId ? ("hud_seq:" + workerId) : "";
+    const prevHudSeq = hudSeqKey ? parseHudSeq(hbCache.get(hudSeqKey)) : -1;
+    const hudSeqProgress = hudSeq >= 0 && (prevHudSeq < 0 || hudSeq > prevHudSeq);
     const hudTail = (function(v) {
       try {
         if (Array.isArray(v)) return v.map((x) => norm(x)).join(" > ").slice(0, 1200);
@@ -2072,6 +2081,7 @@ function doPost(e) {
     ];
     if (foundRow > 0) sheets.nodes.getRange(foundRow, 1, 1, row.length).setValues([row]);
     else sheets.nodes.appendRow(row);
+    if (hudSeqKey && hudSeq >= 0) hbCache.put(hudSeqKey, String(hudSeq), 60 * 10);
 
     const workerStatus = lower(norm(data.status || ""));
     const prevUrl = prevNode ? norm(prevNode[9]) : "";
@@ -2081,6 +2091,7 @@ function doPost(e) {
     const hasMissionFieldHint =
       !!norm(data.mission_id) || !!norm(data.mission) || !!norm(data.qid) || !!norm(data.arc_qid);
     const progressSignal =
+      hudSeqProgress ||
       (hudTail && hudTail !== prevHud) ||
       (currentUrl && currentUrl !== prevUrl) ||
       (currentTitle && currentTitle !== prevTitle);
@@ -2091,7 +2102,9 @@ function doPost(e) {
         workerStatus === "working" ||
         workerStatus === "processing" ||
         workerStatus === "waiting" ||
-        workerStatus === "busy"
+        workerStatus === "busy" ||
+        workerStatus === "heartbeat" ||
+        hudSeqProgress
       ) &&
       (hasMissionFieldHint || hasHudMissionHint || progressSignal);
     if (shouldLeaseTouch) {

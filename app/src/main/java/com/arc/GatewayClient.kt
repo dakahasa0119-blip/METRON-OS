@@ -14,6 +14,11 @@ class GatewayClient(private val prefs: Prefs) {
     private val currentVersion = "13.6"
     private val maxInlineImageB64 = 180_000
     var telemetrySupplier: (() -> JSONObject)? = null
+    private val hbLock = Any()
+    @Volatile private var hbSending: Boolean = false
+    @Volatile private var hbPendingStatusJson: String? = null
+    @Volatile private var hbPendingPriority: Boolean = false
+    @Volatile private var hbPendingCallback: ((JSONObject) -> Unit)? = null
 
     /**
      * 🌐 [Settings用] 接続テスト (Handshake)
@@ -222,6 +227,25 @@ class GatewayClient(private val prefs: Prefs) {
         }
     }
 
+    fun sendGatewayMemory(
+        key: String,
+        value: String,
+        source: String = "arc",
+        tags: String = "",
+        callback: (Boolean) -> Unit = {}
+    ) {
+        clientScope.launch {
+            val ok = send(JSONObject().apply {
+                put("mode", "gateway_memory_put")
+                put("key", key.take(120))
+                put("value", value.take(3900))
+                put("source", source.take(120))
+                if (tags.isNotBlank()) put("tags", tags.take(300))
+            })
+            withContext(Dispatchers.Main) { callback(ok) }
+        }
+    }
+
     fun consultGateway(siteContext: String, problem: String, image: String? = null, callback: (String) -> Unit) {
         clientScope.launch {
             try {
@@ -240,33 +264,85 @@ class GatewayClient(private val prefs: Prefs) {
 
     fun sendHeartbeat(statusJson: String, onInstruction: (JSONObject) -> Unit = {}) {
         if (prefs.gasUrl.isBlank()) return
+        val nextPriority = isPriorityHeartbeat(statusJson)
+        if (nextPriority) {
+            clientScope.launch {
+                postHeartbeat(statusJson, onInstruction)
+            }
+            return
+        }
+        var shouldStartDrain = false
+        synchronized(hbLock) {
+            if (hbPendingStatusJson != null && hbPendingPriority && !nextPriority) {
+                // 終端系(success/error)を待っている間は通常heartbeatで上書きしない
+            } else {
+                hbPendingStatusJson = statusJson
+                hbPendingCallback = onInstruction
+                hbPendingPriority = nextPriority
+            }
+            if (!hbSending) {
+                hbSending = true
+                shouldStartDrain = true
+            }
+        }
+        if (!shouldStartDrain) return
         clientScope.launch {
-            try {
-                val base = try { JSONObject(statusJson) } catch (_: Exception) { JSONObject().put("mode", "arc_heartbeat").put("status", "unknown") }
-                try {
-                    val telemetry = telemetrySupplier?.invoke()
-                    if (telemetry != null) {
-                        val names = telemetry.keys()
-                        while (names.hasNext()) {
-                            val key = names.next()
-                            if (!base.has(key)) base.put(key, telemetry.opt(key))
-                        }
+            while (true) {
+                val nextPayload: String?
+                val nextCallback: ((JSONObject) -> Unit)?
+                synchronized(hbLock) {
+                    nextPayload = hbPendingStatusJson
+                    nextCallback = hbPendingCallback
+                    hbPendingStatusJson = null
+                    hbPendingCallback = null
+                    hbPendingPriority = false
+                }
+                if (nextPayload == null) {
+                    synchronized(hbLock) {
+                        hbSending = false
                     }
-                } catch (_: Exception) {}
-                base.put("auth_key", prefs.authToken)
-                val response = Http.post(prefs.gasUrl, base.toString())
-                Log.d("ARC_GW_HB", "response_head=${response.take(180)}")
-                if (response.startsWith("{")) {
-                    val parsed = JSONObject(response)
-                    withContext(Dispatchers.Main) {
-                        val instruction = parsed.optJSONObject("instruction")
-                        if (instruction != null) {
-                            Log.d("ARC_GW_HB", "instruction mode=${instruction.optString("mode")} job_id=${instruction.optString("job_id")}")
-                        }
-                        onInstruction(instruction ?: parsed)
+                    break
+                }
+                postHeartbeat(nextPayload, nextCallback ?: onInstruction)
+            }
+        }
+    }
+
+    private suspend fun postHeartbeat(statusJson: String, onInstruction: (JSONObject) -> Unit = {}) {
+        try {
+            val base = try { JSONObject(statusJson) } catch (_: Exception) { JSONObject().put("mode", "arc_heartbeat").put("status", "unknown") }
+            try {
+                val telemetry = telemetrySupplier?.invoke()
+                if (telemetry != null) {
+                    val names = telemetry.keys()
+                    while (names.hasNext()) {
+                        val key = names.next()
+                        if (!base.has(key)) base.put(key, telemetry.opt(key))
                     }
                 }
             } catch (_: Exception) {}
+            base.put("auth_key", prefs.authToken)
+            val response = Http.post(prefs.gasUrl, base.toString())
+            Log.d("ARC_GW_HB", "response_head=${response.take(180)}")
+            if (response.startsWith("{")) {
+                val parsed = JSONObject(response)
+                withContext(Dispatchers.Main) {
+                    val instruction = parsed.optJSONObject("instruction")
+                    if (instruction != null) {
+                        Log.d("ARC_GW_HB", "instruction mode=${instruction.optString("mode")} job_id=${instruction.optString("job_id")}")
+                    }
+                    onInstruction(instruction ?: parsed)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun isPriorityHeartbeat(statusJson: String): Boolean {
+        return try {
+            val s = JSONObject(statusJson).optString("status", "").lowercase()
+            s == "success" || s == "error"
+        } catch (_: Exception) {
+            false
         }
     }
 
