@@ -315,6 +315,7 @@ class ArcWorker(
         }
         
         val timeoutMs = perAttemptTimeoutMsFor(target)
+        val isCopilot = target == "copilot"
         timeoutJob = workerScope.launch {
             val startedAt = System.currentTimeMillis()
             var lastSeq = currentStatusSeq()
@@ -337,7 +338,13 @@ class ArcWorker(
                     return@launch
                 }
 
-                if (elapsed >= 12_000L) {
+                if (isCopilot && elapsed >= 6_000L) {
+                    val bot = detectBotWallQuick()
+                    if (bot.first) {
+                        handleDomError("COPILOT_BOT_BLOCKED", bot.second)
+                        return@launch
+                    }
+                } else if (elapsed >= 12_000L) {
                     val bot = detectBotWallQuick()
                     if (bot.first) {
                         handleDomError("COPILOT_BOT_BLOCKED", bot.second)

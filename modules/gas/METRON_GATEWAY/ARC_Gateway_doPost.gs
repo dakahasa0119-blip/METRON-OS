@@ -675,6 +675,19 @@ function doPost(e) {
 
     const row = found.row;
     const payload = found.payload;
+    const target = lower(payload.target || "");
+    const errType = upper(errorType || "");
+    const copilotNoRetry =
+      target === "copilot" &&
+      (
+        errType.indexOf("STALL_NO_PROGRESS") >= 0 ||
+        errType.indexOf("COPILOT_BOT_BLOCKED") >= 0 ||
+        errType.indexOf("TARGET_STALL") >= 0
+      );
+    if (copilotNoRetry) {
+      return { retried: false, reason: "copilot_block_or_stall_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
+    }
+
     const retryCountRaw = parseInt(norm(payload.retry_count) || "0", 10);
     const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
 
