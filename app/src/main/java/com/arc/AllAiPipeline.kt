@@ -21,6 +21,17 @@ class AllAiPipeline(
     private val consultGateway: (context: String, problem: String, image: String?, callback: (String) -> Unit) -> Unit,
     private val captureBitmap: (onReady: (Bitmap) -> Unit) -> Unit
 ) {
+    private data class EvalRubric(
+        val codeTask: Boolean,
+        val requiredTerms: List<String>,
+        val preferLanguage: String
+    )
+
+    private data class EvalResult(
+        val score: Int,
+        val text: String
+    )
+
 
     private val results = mutableListOf<String>()
     private var resultDeferred: CompletableDeferred<String>? = null
@@ -172,17 +183,24 @@ class AllAiPipeline(
     }
 
     private suspend fun finalizePipelineSuspending() {
+        val rubric = buildRubric(currentPrompt)
         val d = CompletableDeferred<String>()
         hallucinationPipeline.process(currentPrompt, results) { d.complete(it) }
         val final = withTimeoutOrNull(120000) { d.await() }
         val draft = normalizeFinalOutputForTask(final ?: "Failed to synthesize.")
-        val repaired = if (passesFinalQualityGate(draft)) draft else repairFinalOnce(draft)
-        var text = if (passesFinalQualityGate(repaired)) repaired else bestCandidateFallback(draft)
+        val repaired = if (evaluateCandidate(draft, rubric).score >= 60) draft else repairFinalOnce(draft)
+        var text = chooseBestCandidate(
+            listOf(
+                evaluateCandidate(draft, rubric),
+                evaluateCandidate(repaired, rubric)
+            ) + results.map { evaluateCandidate(normalizeFinalOutputForTask(it), rubric) }
+        ).text
         text = normalizeFinalOutputForTask(text)
+        val finalEval = evaluateCandidate(text, rubric)
         val ok = text.isNotBlank() &&
             !text.startsWith("Error:", ignoreCase = true) &&
             !text.contains("failed to synthesize", ignoreCase = true) &&
-            (passesFinalQualityGate(text) || hasCodeBlockOrCodeShape(text))
+            finalEval.score >= 55
         if (ok) Util.trace(missionId, Util.Level.SUMMARY, "COMPLETE", "Final synthesis success.")
         dispatchFinal(text, ok)
     }
@@ -207,13 +225,10 @@ class AllAiPipeline(
         return normalizeFinalOutputForTask(repaired ?: draft)
     }
 
-    private fun bestCandidateFallback(draft: String): String {
-        val candidates = results.asReversed().map { normalizeFinalOutputForTask(it) } + listOf(draft)
-        val good = candidates.firstOrNull { passesFinalQualityGate(it) }
-        if (!good.isNullOrBlank()) return good
-        val codeLike = candidates.firstOrNull { hasCodeBlockOrCodeShape(it) && !looksLikeContextLeak(it) }
-        if (!codeLike.isNullOrBlank()) return codeLike
-        return draft
+    private fun chooseBestCandidate(candidates: List<EvalResult>): EvalResult {
+        return candidates.maxWithOrNull(
+            compareBy<EvalResult> { it.score }.thenBy { it.text.length }
+        ) ?: EvalResult(0, "")
     }
 
     private fun normalizeFinalOutputForTask(raw: String): String {
@@ -241,11 +256,35 @@ class AllAiPipeline(
         return out.trim()
     }
 
-    private fun passesFinalQualityGate(text: String): Boolean {
-        if (text.isBlank()) return false
-        if (looksLikeContextLeak(text)) return false
-        if (!isCodeTask(currentPrompt)) return true
-        return hasCodeBlockOrCodeShape(text) && meetsCodeTaskRequirements(currentPrompt, text)
+    private fun evaluateCandidate(rawText: String, rubric: EvalRubric): EvalResult {
+        val text = normalizeFinalOutputForTask(rawText)
+        if (text.isBlank()) return EvalResult(0, text)
+        var score = 0
+
+        if (!looksLikeContextLeak(text)) score += 20 else score -= 60
+
+        if (rubric.codeTask) {
+            if (hasCodeBlockOrCodeShape(text)) score += 25 else score -= 35
+            if (looksLikeProsePrefix(text)) score -= 20
+            if (text.length >= 120) score += 10 else score -= 10
+            if (hasBalancedBrackets(text)) score += 10
+        } else {
+            score += 10
+        }
+
+        if (rubric.preferLanguage.isNotBlank() && text.lowercase().contains(rubric.preferLanguage)) {
+            score += 5
+        }
+
+        if (rubric.requiredTerms.isNotEmpty()) {
+            val lower = text.lowercase()
+            val hit = rubric.requiredTerms.count { lower.contains(it.lowercase()) }
+            score += (40.0 * (hit.toDouble() / rubric.requiredTerms.size.toDouble())).toInt()
+        } else {
+            score += 10
+        }
+
+        return EvalResult(score.coerceIn(0, 100), text)
     }
 
     private fun looksLikeContextLeak(text: String): Boolean {
@@ -273,15 +312,70 @@ class AllAiPipeline(
         return signals.any { t.contains(it) }
     }
 
-    private fun meetsCodeTaskRequirements(prompt: String, text: String): Boolean {
+    private fun looksLikeProsePrefix(text: String): Boolean {
+        val first = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: return false
+        val codeHead = listOf("class ", "data class", "fun ", "import ", "object ", "interface ", "//", "/*")
+        if (codeHead.any { first.startsWith(it, ignoreCase = true) }) return false
+        return first.contains("。") || first.contains("です") || first.contains("ます")
+    }
+
+    private fun hasBalancedBrackets(text: String): Boolean {
+        fun balanceOf(open: Char, close: Char): Int {
+            var n = 0
+            for (c in text) {
+                if (c == open) n++
+                if (c == close) n--
+            }
+            return n
+        }
+        return balanceOf('{', '}') == 0 && balanceOf('(', ')') == 0
+    }
+
+    private fun buildRubric(prompt: String): EvalRubric {
         val p = prompt.lowercase()
-        val t = text.lowercase()
-        if (!p.contains("bst") && !p.contains("二分探索木")) return true
-        val needed = listOf("data class", "insert", "search", "delete", "inorder")
-        val hit = needed.count { t.contains(it) }
-        val requiresMain = p.contains("main")
-        val hasMain = t.contains("fun main") || t.contains("main(")
-        return hit >= max(4, needed.size - 1) && (!requiresMain || hasMain)
+        val codeTask = isCodeTask(prompt)
+        val preferLanguage = when {
+            p.contains("kotlin") -> "kotlin"
+            p.contains("python") -> "python"
+            p.contains("typescript") -> "typescript"
+            p.contains("javascript") -> "javascript"
+            p.contains("java") -> "java"
+            else -> ""
+        }
+
+        val baseReq = mutableListOf<String>()
+        val reqSeed = when {
+            prompt.contains("要件:") -> prompt.substringAfter("要件:")
+            prompt.contains("要件") -> prompt.substringAfter("要件")
+            else -> prompt
+        }
+        reqSeed
+            .replace("。", ",")
+            .replace("、", ",")
+            .replace("・", ",")
+            .replace("\n", ",")
+            .split(",")
+            .map { it.trim() }
+            .filter { it.length in 2..40 }
+            .forEach { raw ->
+                when {
+                    raw.contains("data class", ignoreCase = true) -> baseReq.add("data class")
+                    raw.contains("insert", ignoreCase = true) -> baseReq.add("insert")
+                    raw.contains("search", ignoreCase = true) -> baseReq.add("search")
+                    raw.contains("delete", ignoreCase = true) -> baseReq.add("delete")
+                    raw.contains("inorder", ignoreCase = true) -> baseReq.add("inorder")
+                    raw.contains("main", ignoreCase = true) -> {
+                        baseReq.add("fun main")
+                        baseReq.add("main(")
+                    }
+                }
+            }
+        val requiredTerms = baseReq.distinct().take(max(4, baseReq.size))
+        return EvalRubric(
+            codeTask = codeTask,
+            requiredTerms = requiredTerms,
+            preferLanguage = preferLanguage
+        )
     }
 
     private fun dispatchFinal(text: String, success: Boolean) {
