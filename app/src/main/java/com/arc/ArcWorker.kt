@@ -780,7 +780,21 @@ class ArcWorker(
     private fun buildFinalPrompt(t: ArcTask.AI): String {
         // ARC UI からの手動送信は、入力した文面をそのまま送る
         if (t.qid == "manual") return t.prompt
-        return "${prefs.getFormattedContext()}\n\n依頼: ${t.prompt}"
+        // コード生成タスクでは過去ログ混入を避ける
+        if (looksLikeCodeTask(t.prompt)) {
+            return "依頼: ${t.prompt}"
+        }
+        val context = prefs.getFormattedContext().take(1200)
+        return "$context\n\n依頼: ${t.prompt}"
+    }
+
+    private fun looksLikeCodeTask(prompt: String): Boolean {
+        val p = prompt.lowercase()
+        val marks = listOf(
+            "kotlin", "python", "javascript", "typescript", "java", "go", "rust", "c++", "c#", "swift",
+            "コード", "実装", "関数", "class", "method", "algorithm", "api", "sql", "テスト", "unit test"
+        )
+        return marks.any { p.contains(it) }
     }
     private fun bitmapToBase64(b: Bitmap) = ByteArrayOutputStream().let { o -> b.compress(Bitmap.CompressFormat.JPEG, 70, o); Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP) }
 }

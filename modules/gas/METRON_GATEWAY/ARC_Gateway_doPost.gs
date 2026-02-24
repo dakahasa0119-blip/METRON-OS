@@ -1021,6 +1021,7 @@ function doPost(e) {
     if (lower(payload.pin_target) === "true") return { switched: false, reason: "target_pinned" };
     const from = lower(payload.target || "");
     if (!from || from === "all") return { switched: false, reason: "invalid_target" };
+    if (from === "copilot") return { switched: false, reason: "copilot_no_failover" };
     const to = nextFailoverTarget(from);
     if (from === to) return { switched: false, reason: "same_target" };
     payload.target = to;

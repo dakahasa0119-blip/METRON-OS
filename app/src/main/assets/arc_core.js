@@ -1,5 +1,5 @@
 // ===============================
-// Arc AutoDom v10.1 (Field Mastery & Semantic Recon - Typo Fixed)
+// Arc AutoDom v10.4 (Assistant-Only Extraction Guard)
 // ===============================
 
 if (!window.arc || typeof window.arc.performFill !== 'function') {
@@ -87,6 +87,22 @@ window.arc = (() => {
   return {
     __lastPostedResult: "",
     __resultBaseline: "",
+    isLikelyUserNode: (node) => {
+        if (!node) return false;
+        const selfRole = (node.getAttribute && node.getAttribute('data-message-author-role')) || "";
+        const parentRoleEl = node.closest && node.closest('[data-message-author-role]');
+        const parentRole = parentRoleEl ? (parentRoleEl.getAttribute('data-message-author-role') || "") : "";
+        const role = (selfRole || parentRole).toLowerCase();
+        if (role === "user") return true;
+        const cls = (String(node.className || "") + " " + String((node.closest && node.closest('[class]') && node.closest('[class]').className) || "")).toLowerCase();
+        if (cls.includes("user-message") || cls.includes("from-user")) return true;
+        return false;
+    },
+    isPromptEcho: (txt) => {
+        const t = (txt || "").trim();
+        if (!t) return false;
+        return t.startsWith("依頼:") || t.startsWith("@arc ");
+    },
     deepQuerySelector,
     performFill: (sel, txt) => {
         let el = deepQuerySelector(document, sel);
@@ -151,10 +167,11 @@ window.arc = (() => {
         };
         const nodes = collectCandidates();
         for (let i = nodes.length - 1; i >= 0; i--) {
+          if (window.arc.isLikelyUserNode(nodes[i])) continue;
           const clone = nodes[i].cloneNode(true);
           clone.querySelectorAll('button, style, script, .sr-only').forEach(el => el.remove());
           const txt = (clone.innerText || clone.textContent || "").trim();
-          if (txt.length > 5) {
+          if (txt.length > 5 && !window.arc.isPromptEcho(txt)) {
             window.arc.__resultBaseline = txt;
             window.arc.__lastPostedResult = txt;
             return txt;
@@ -183,10 +200,11 @@ window.arc = (() => {
         let txt = "";
         for (let i = nodes.length - 1; i >= 0; i--) {
           const node = nodes[i];
+          if (window.arc.isLikelyUserNode(node)) continue;
           const clone = node.cloneNode(true);
           clone.querySelectorAll('button, style, script, .sr-only').forEach(el => el.remove());
           const candidate = (clone.innerText || clone.textContent || "").trim();
-          if (candidate.length > 5) {
+          if (candidate.length > 5 && !window.arc.isPromptEcho(candidate)) {
             txt = candidate;
             break;
           }
@@ -206,7 +224,7 @@ window.arc = (() => {
     getElementContext
   };
 })();
-console.log("Arc Core v10.3 Ready.");
+console.log("Arc Core v10.4 Ready.");
 } else {
 console.log("Arc Core already loaded.");
 }
