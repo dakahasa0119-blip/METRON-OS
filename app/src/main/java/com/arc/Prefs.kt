@@ -83,9 +83,19 @@ class Prefs(context: Context) {
     fun getUrlFor(target: String): String = when (target.lowercase()) {
         "gemini" -> geminiUrl
         "chatgpt" -> chatGptUrl
-        "copilot" -> copilotUrl
+        "copilot" -> normalizeCopilotUrl(copilotUrl)
         "full_browser", "mobile_browser" -> "https://bot.sannysoft.com/"
         else -> geminiUrl
+    }
+
+    private fun normalizeCopilotUrl(raw: String): String {
+        val u = raw.trim()
+        if (u.isBlank()) return "https://copilot.microsoft.com/"
+        val lower = u.lowercase()
+        if (lower.contains("copilot.microsoft.com")) return "https://copilot.microsoft.com/"
+        if (lower.contains("bing.com/chat")) return "https://copilot.microsoft.com/"
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) return "https://copilot.microsoft.com/"
+        return u
     }
 
     fun getSelectorsFor(target: String): Pair<String, String> = when (target.lowercase()) {

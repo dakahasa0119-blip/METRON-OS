@@ -89,6 +89,13 @@ function doPost(e) {
   const auditCompactWindowSec = Number.isFinite(auditCompactWindowSecRaw) && auditCompactWindowSecRaw >= 10 ? Math.min(auditCompactWindowSecRaw, 3600) : 90;
   const errorCompactWindowSecRaw = parseInt(norm(props.getProperty("ARC_ERROR_COMPACT_WINDOW_SEC")) || "300", 10);
   const errorCompactWindowSec = Number.isFinite(errorCompactWindowSecRaw) && errorCompactWindowSecRaw >= 30 ? Math.min(errorCompactWindowSecRaw, 7200) : 300;
+  const routeRecentWindowSecRaw = parseInt(norm(props.getProperty("ARC_ROUTE_RECENT_WINDOW_SEC")) || "45", 10);
+  const routeRecentWindowSec = Number.isFinite(routeRecentWindowSecRaw) && routeRecentWindowSecRaw >= 10 ? Math.min(routeRecentWindowSecRaw, 600) : 45;
+  const routeCursorLookbackRowsRaw = parseInt(norm(props.getProperty("ARC_ROUTE_CURSOR_LOOKBACK_ROWS")) || "40", 10);
+  const routeCursorLookbackRows = Number.isFinite(routeCursorLookbackRowsRaw) && routeCursorLookbackRowsRaw >= 5 ? Math.min(routeCursorLookbackRowsRaw, 500) : 40;
+  const routeBackfillSecRaw = parseInt(norm(props.getProperty("ARC_ROUTE_BACKFILL_SEC")) || "60", 10);
+  const routeBackfillSec = Number.isFinite(routeBackfillSecRaw) && routeBackfillSecRaw >= 10 ? Math.min(routeBackfillSecRaw, 900) : 60;
+  const leaseProgressTouchEnabled = lower(norm(props.getProperty("ARC_LEASE_PROGRESS_TOUCH_ENABLED") || "true")) === "true";
 
   const parseKeyMap = (raw) => {
     const txt = norm(raw);
@@ -133,6 +140,10 @@ function doPost(e) {
       ,ARC_COMPACT_SCAN_MAX: "300"
       ,ARC_AUDIT_COMPACT_WINDOW_SEC: "90"
       ,ARC_ERROR_COMPACT_WINDOW_SEC: "300"
+      ,ARC_ROUTE_RECENT_WINDOW_SEC: "45"
+      ,ARC_ROUTE_CURSOR_LOOKBACK_ROWS: "40"
+      ,ARC_ROUTE_BACKFILL_SEC: "60"
+      ,ARC_LEASE_PROGRESS_TOUCH_ENABLED: "true"
       ,ARC_LEASE_EXPIRE_MAX: "2"
     };
     Object.keys(defaults).forEach((k) => {
@@ -416,6 +427,37 @@ function doPost(e) {
     merged.last_ts = nowIsoVal;
     return JSON.stringify(merged).slice(0, MAX_MEMORY_VALUE);
   };
+  const parseMissionIdsFromText = (raw) => {
+    const txt = norm(raw);
+    if (!txt) return [];
+    const out = [];
+    const seen = {};
+    const rxJob = /CHAT_[0-9]+_[0-9]+/g;
+    const rxQid = /\b(?:qid|job_id|mission_id)\s*[:=]\s*([A-Za-z0-9_.:-]{6,120})/ig;
+    let m;
+    while ((m = rxJob.exec(txt)) !== null) {
+      const id = norm(m[0]);
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    while ((m = rxQid.exec(txt)) !== null) {
+      const id = norm(m[1]);
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    return out;
+  };
+  const parseRepeatCount = (raw) => {
+    const obj = parseCompactDetail(raw, "message");
+    const n = parseInt(norm(obj.repeat_count), 10);
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  };
+  const parseHudSeq = (v) => {
+    const n = parseInt(norm(v), 10);
+    return Number.isFinite(n) && n >= 0 ? n : -1;
+  };
 
   const setGatewayLongMemory = (key, value, source, traceId, tags) => {
     const k = norm(key).slice(0, MAX_MEMORY_KEY);
@@ -688,7 +730,7 @@ function doPost(e) {
     if (!targetQid) return "";
     const rows = sheets.jobs.getDataRange().getValues();
     // 新しい行を優先して逆順検索
-    for (let i = rows.length - 1; i >= 1; i--) {
+    for (let i = rows.length - 1; i >= 0; i--) {
       const row = rows[i];
       const payload = parseJsonSafe(norm(row[4]));
       if (norm(payload.qid) === targetQid) return norm(row[1]);
@@ -885,15 +927,79 @@ function doPost(e) {
     return { routed: "MOTHERSHIP", jobId: msgId, mode: "mothership_queue", traceId: traceId };
   };
 
-  const routePendingChatCommands = () => {
-    const rows = sheets.main.getDataRange().getValues();
+  const routePendingChatCommands = (enableBackfillRaw) => {
+    const enableBackfill = enableBackfillRaw === true || enableBackfillRaw === "true";
+    const lastRow = sheets.main.getLastRow();
+    if (lastRow <= 1) return [];
+    const cursorRaw = parseInt(norm(props.getProperty("ARC_MAIN_ROUTE_CURSOR") || "1"), 10);
+    const cursor = Number.isFinite(cursorRaw) && cursorRaw >= 1 ? cursorRaw : 1;
+    const startPrimary = Math.max(2, Math.min(lastRow, cursor + 1));
+    const primaryRows = startPrimary <= lastRow
+      ? sheets.main.getRange(startPrimary, 1, lastRow - startPrimary + 1, 6).getValues()
+      : [];
     const routed = [];
-    for (let i = 1; i < rows.length; i++) {
-      const rowIndex = i + 1;
-      const res = routeOneChatRow(rowIndex, rows[i]);
+    for (let i = 0; i < primaryRows.length; i++) {
+      const rowIndex = startPrimary + i;
+      const res = routeOneChatRow(rowIndex, primaryRows[i]);
       if (res) routed.push(res);
     }
+    props.setProperty("ARC_MAIN_ROUTE_CURSOR", String(lastRow));
+
+    if (!enableBackfill) return routed;
+    const nowMs = Date.now();
+    const lastBackfillRaw = parseInt(norm(props.getProperty("ARC_ROUTE_LAST_BACKFILL_TS") || "0"), 10);
+    const lastBackfillMs = Number.isFinite(lastBackfillRaw) && lastBackfillRaw >= 0 ? lastBackfillRaw : 0;
+    if (nowMs - lastBackfillMs < routeBackfillSec * 1000) return routed;
+
+    const startTail = Math.max(2, lastRow - routeCursorLookbackRows + 1);
+    const tailRows = sheets.main.getRange(startTail, 1, lastRow - startTail + 1, 6).getValues();
+    for (let i = 0; i < tailRows.length; i++) {
+      const row = tailRows[i];
+      const st = lower(row[3]);
+      if (st && st !== "new" && st !== "pending") continue;
+      const rowIndex = startTail + i;
+      const res = routeOneChatRow(rowIndex, row);
+      if (res) routed.push(res);
+    }
+    props.setProperty("ARC_ROUTE_LAST_BACKFILL_TS", String(nowMs));
     return routed;
+  };
+  const collectRecentRoutedDetails = (windowSecRaw, limitRaw) => {
+    const windowSec = clamp(parseIntSafe(windowSecRaw, routeRecentWindowSec), 10, 600);
+    const limit = clamp(parseIntSafe(limitRaw, 3), 1, 10);
+    const lastRow = sheets.main.getLastRow();
+    if (lastRow <= 1) return [];
+    const scanRows = clamp(routeCursorLookbackRows * 2, 20, 1200);
+    const startRow = Math.max(2, lastRow - scanRows + 1);
+    const rows = sheets.main.getRange(startRow, 1, lastRow - startRow + 1, 6).getValues();
+    const nowMs = Date.now();
+    const out = [];
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      const ts = toMs(row[0]);
+      if (Number.isFinite(ts) && nowMs - ts > windowSec * 1000) break;
+      const st = lower(row[3]);
+      if (st !== "queued_arc" && st !== "routed_mothership") continue;
+      const missionId = norm(row[5]);
+      if (!missionId) continue;
+      const response = norm(row[4]);
+      const routed = st === "queued_arc" ? "ARC" : "MOTHERSHIP";
+      let modeName = st === "queued_arc" ? "request_arc" : "mothership_queue";
+      if (st === "queued_arc" && response.indexOf("ARC queued:") === 0) {
+        const parts = response.split(" / ");
+        if (parts.length >= 2) modeName = norm(parts[1]) || modeName;
+      }
+      out.push({
+        routed: routed,
+        jobId: missionId,
+        mode: modeName,
+        traceId: st === "queued_arc" && response.lastIndexOf(" / ") > 0
+          ? norm(response.substring(response.lastIndexOf(" / ") + 3))
+          : ""
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
   };
 
   const requeueExpiredLeases = (leaseThresholdMsOverride) => {
@@ -954,28 +1060,40 @@ function doPost(e) {
       norm(hb.qid),
       norm(hb.arc_qid)
     ].filter((v, idx, arr) => v && arr.indexOf(v) === idx);
-    if (candidates.length === 0) return { touched: false, reason: "no_mission" };
-
+    const hudCandidates = parseMissionIdsFromText(hb.hud_tail);
+    hudCandidates.forEach((id) => {
+      if (candidates.indexOf(id) < 0) candidates.push(id);
+    });
     const rows = sheets.jobs.getDataRange().getValues();
-    for (let i = rows.length - 1; i >= 1; i--) {
-      const row = rows[i];
-      if (lower(row[5]) !== "leased") continue;
-      const rowWorker = norm(row[2]);
-      if (rowWorker && workerId && rowWorker !== workerId) continue;
+    if (candidates.length > 0) {
+      for (let i = rows.length - 1; i >= 1; i--) {
+        const row = rows[i];
+        if (lower(row[5]) !== "leased") continue;
+        const rowWorker = norm(row[2]);
+        if (rowWorker && workerId && rowWorker !== workerId) continue;
 
-      const payload = parseJsonSafe(norm(row[4]));
-      const jobId = norm(row[1]);
-      const payloadQid = norm(payload.qid);
-      const matched = candidates.some((id) => id === jobId || id === payloadQid);
-      if (!matched) continue;
+        const payload = parseJsonSafe(norm(row[4]));
+        const jobId = norm(row[1]);
+        const payloadQid = norm(payload.qid);
+        const matched = candidates.some((id) => id === jobId || id === payloadQid);
+        if (!matched) continue;
 
-      if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
-      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
-      return { touched: true, job_id: jobId };
+        if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
+        sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+        return { touched: true, job_id: jobId };
+      }
     }
-    // フォールバック: running heartbeat なら同一workerの最新 leased を延命
+    // フォールバック: 実行中シグナルがある heartbeat は同一workerの最新 leased を延命
     const hbStatus = lower(norm(hb.status || ""));
-    if (hbStatus === "running" && workerId) {
+    const progressSignal = hb.progress_signal === true || hb.progress_signal === "true";
+    const canFallbackTouch =
+      hbStatus === "running" ||
+      hbStatus === "working" ||
+      hbStatus === "processing" ||
+      hbStatus === "waiting" ||
+      hbStatus === "busy" ||
+      progressSignal;
+    if (canFallbackTouch && workerId) {
       let latest = null;
       for (let i = rows.length - 1; i >= 1; i--) {
         const row = rows[i];
@@ -1046,7 +1164,7 @@ function doPost(e) {
     try {
       recoverStalePendingJobs();
       requeueExpiredLeases();
-      routePendingChatCommands();
+      routePendingChatCommands(false);
 
       const rows = sheets.jobs.getDataRange().getValues();
       // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
@@ -1222,6 +1340,73 @@ function doPost(e) {
     addAudit(enq.traceId, "BAKU_FOLLOWUP_ENQUEUED", enq.jobId, "", "pending", executor + " / " + target);
     return enq;
   };
+  const buildGatewayOpsMetrics = () => {
+    const recentJobs = readRecentRows(sheets.jobs, 7, 400).rows;
+    const recentMain = readRecentRows(sheets.main, 6, 300).rows;
+    const recentErrors = readRecentRows(sheets.errors, 4, 200).rows;
+    const recentAudit = readRecentRows(sheets.audit, 7, 300).rows;
+
+    const doneOrErrRows = recentMain.filter((r) => {
+      const st = lower(r[3]);
+      return st === "arc_done" || st === "arc_error";
+    });
+    let doneCount = 0;
+    let errorCount = 0;
+    for (let i = 0; i < doneOrErrRows.length; i++) {
+      const st = lower(doneOrErrRows[i][3]);
+      if (st === "arc_done") doneCount++;
+      else if (st === "arc_error") errorCount++;
+    }
+    const totalTerminated = doneCount + errorCount;
+    const doneRate = totalTerminated > 0 ? Number((doneCount / totalTerminated).toFixed(3)) : null;
+
+    let timeoutErr = 0;
+    for (let i = 0; i < recentErrors.length; i++) {
+      const typeTxt = upper(recentErrors[i][2]);
+      const dataTxt = upper(recentErrors[i][3]);
+      if (
+        typeTxt.indexOf("LEASE_EXPIRE_MAX") >= 0 ||
+        typeTxt.indexOf("PENDING_TIMEOUT") >= 0 ||
+        dataTxt.indexOf("LEASE_EXPIRE_MAX") >= 0 ||
+        dataTxt.indexOf("PENDING_TIMEOUT") >= 0
+      ) {
+        timeoutErr++;
+      }
+    }
+    const timeoutRate = totalTerminated > 0 ? Number((timeoutErr / totalTerminated).toFixed(3)) : null;
+
+    let compactAuditExtra = 0;
+    let compactErrorExtra = 0;
+    for (let i = 0; i < recentAudit.length; i++) {
+      const rep = parseRepeatCount(recentAudit[i][6]);
+      if (rep > 1) compactAuditExtra += (rep - 1);
+    }
+    for (let i = 0; i < recentErrors.length; i++) {
+      const rep = parseRepeatCount(recentErrors[i][3]);
+      if (rep > 1) compactErrorExtra += (rep - 1);
+    }
+
+    let staleLeasedCount = 0;
+    const nowMs = Date.now();
+    for (let i = 0; i < recentJobs.length; i++) {
+      const row = recentJobs[i];
+      if (lower(row[5]) !== "leased") continue;
+      const leaseTs = toMs(row[6] || row[0]);
+      if (!Number.isFinite(leaseTs)) continue;
+      if (nowMs - leaseTs >= leaseTimeoutMs) staleLeasedCount++;
+    }
+
+    return {
+      sample_main_terminal: totalTerminated,
+      done_rate_recent: doneRate,
+      timeout_error_count_recent: timeoutErr,
+      timeout_rate_recent: timeoutRate,
+      compact_saved_rows_recent: compactAuditExtra + compactErrorExtra,
+      compact_saved_audit_recent: compactAuditExtra,
+      compact_saved_error_recent: compactErrorExtra,
+      stale_leased_recent: staleLeasedCount
+    };
+  };
 
   ensureRecommendedDefaults();
   maybeRunDailyCleanup();
@@ -1248,7 +1433,7 @@ function doPost(e) {
     return jsonOut({
       status: "ok",
       role: "gateway",
-      version: "arc-gateway-20.0",
+      version: "arc-gateway-20.1",
       control: "gateway_primary",
       lease_timeout_sec: leaseTimeoutSec,
       pending_timeout_sec: pendingTimeoutSec,
@@ -1278,8 +1463,17 @@ function doPost(e) {
     const locked = lock.tryLock(5000);
     if (!locked) return jsonOut({ status: "busy", routed: 0, error: "route_lock_timeout" });
     try {
-      const routed = routePendingChatCommands();
-      return jsonOut({ status: "ok", routed: routed.length, details: routed });
+      const routed = routePendingChatCommands(true);
+      if (routed.length > 0) {
+        return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
+      }
+      const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
+      if (recent.length > 0) {
+        addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
+        return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
+      }
+      addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
+      return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
     } finally {
       lock.releaseLock();
     }
@@ -1336,7 +1530,7 @@ function doPost(e) {
     }
     return jsonOut({
       status: "ok",
-      gateway_version: "arc-gateway-20.0",
+      gateway_version: "arc-gateway-20.1",
       lease_timeout_sec: leaseTimeoutSec,
       pending_timeout_sec: pendingTimeoutSec,
       max_retry: maxRetry,
@@ -1352,7 +1546,8 @@ function doPost(e) {
       nodes: Math.max(0, sheets.nodes.getLastRow() - 1),
       dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
       audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
-      mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1)
+      mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1),
+      metrics: buildGatewayOpsMetrics()
     });
   }
 
@@ -1683,7 +1878,7 @@ function doPost(e) {
       if (scope === "pending" || scope === "both") {
         pendingRecovered = recoverStalePendingJobs(pendingMinSec * 1000);
       }
-      const routed = routePendingChatCommands();
+      const routed = routePendingChatCommands(false);
       return jsonOut({
         status: "ok",
         scope: scope,
@@ -1833,14 +2028,17 @@ function doPost(e) {
     const consumer = upper(data.executor || "ARC");
     const all = sheets.nodes.getDataRange().getValues();
     let foundRow = -1;
+    let prevNode = null;
     for (let i = 1; i < all.length; i++) {
       const rowWorker = norm(all[i][6]);
       if (workerId && rowWorker && rowWorker === workerId) {
         foundRow = i + 1;
+        prevNode = all[i];
         break;
       }
       if (norm(all[i][1]) === ip && norm(all[i][2]) === port) {
         foundRow = i + 1;
+        prevNode = all[i];
         break;
       }
     }
@@ -1848,6 +2046,11 @@ function doPost(e) {
     const currentHost = norm(data.current_host).slice(0, 200);
     const currentUrl = norm(data.current_url).slice(0, 800);
     const currentTitle = norm(data.current_title).slice(0, 200);
+    const hudSeq = parseHudSeq(data.hud_seq);
+    const hbCache = CacheService.getScriptCache();
+    const hudSeqKey = workerId ? ("hud_seq:" + workerId) : "";
+    const prevHudSeq = hudSeqKey ? parseHudSeq(hbCache.get(hudSeqKey)) : -1;
+    const hudSeqProgress = hudSeq >= 0 && (prevHudSeq < 0 || hudSeq > prevHudSeq);
     const hudTail = (function(v) {
       try {
         if (Array.isArray(v)) return v.map((x) => norm(x)).join(" > ").slice(0, 1200);
@@ -1878,9 +2081,35 @@ function doPost(e) {
     ];
     if (foundRow > 0) sheets.nodes.getRange(foundRow, 1, 1, row.length).setValues([row]);
     else sheets.nodes.appendRow(row);
+    if (hudSeqKey && hudSeq >= 0) hbCache.put(hudSeqKey, String(hudSeq), 60 * 10);
 
     const workerStatus = lower(norm(data.status || ""));
-    if (workerStatus === "running") touchLeaseFromHeartbeat(workerId, data);
+    const prevUrl = prevNode ? norm(prevNode[9]) : "";
+    const prevTitle = prevNode ? norm(prevNode[10]) : "";
+    const prevHud = prevNode ? norm(prevNode[11]) : "";
+    const hasHudMissionHint = parseMissionIdsFromText(hudTail).length > 0;
+    const hasMissionFieldHint =
+      !!norm(data.mission_id) || !!norm(data.mission) || !!norm(data.qid) || !!norm(data.arc_qid);
+    const progressSignal =
+      hudSeqProgress ||
+      (hudTail && hudTail !== prevHud) ||
+      (currentUrl && currentUrl !== prevUrl) ||
+      (currentTitle && currentTitle !== prevTitle);
+    const shouldLeaseTouch =
+      leaseProgressTouchEnabled &&
+      (
+        workerStatus === "running" ||
+        workerStatus === "working" ||
+        workerStatus === "processing" ||
+        workerStatus === "waiting" ||
+        workerStatus === "busy" ||
+        workerStatus === "heartbeat" ||
+        hudSeqProgress
+      ) &&
+      (hasMissionFieldHint || hasHudMissionHint || progressSignal);
+    if (shouldLeaseTouch) {
+      touchLeaseFromHeartbeat(workerId, Object.assign({}, data, { progress_signal: progressSignal ? "true" : "false" }));
+    }
     const canLease =
       workerStatus === "" ||
       workerStatus === "online" ||
