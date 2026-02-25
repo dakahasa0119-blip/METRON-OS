@@ -48,7 +48,7 @@ object AutoDom {
         return when {
             engine.contains("gemini") || url.contains("gemini.google") -> AiTarget.GEMINI
             engine.contains("chatgpt") || url.contains("chatgpt.com") -> AiTarget.CHATGPT
-            engine.contains("copilot") || url.contains("copilot") || url.contains("bing.com/chat") -> AiTarget.COPILOT
+            engine.contains("copilot") || engine.contains("claude") || url.contains("copilot") || url.contains("bing.com/chat") || url.contains("claude.ai") -> AiTarget.COPILOT
             else -> fallback
         }
     }

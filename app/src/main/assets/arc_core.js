@@ -84,11 +84,36 @@ window.arc = (() => {
     };
   }
 
+  function buildResultSelectors(sel) {
+    const sels = [];
+    if (sel && sel !== "null") sels.push(sel);
+    sels.push(
+      '[data-message-author-role="assistant"]',
+      'div[data-testid*="assistant"]',
+      'div[data-testid*="message"]',
+      '.model-response-text',
+      '.markdown',
+      '.prose',
+      '[class*="assistant"]',
+      '[class*="claude"]',
+      'article'
+    );
+    return sels;
+  }
+
+  function logTrace(event, detail) {
+    try {
+      const msg = detail ? String(detail) : "";
+      console.log("[ARC_RESULT_TRACE] " + event + (msg ? " / " + msg : ""));
+    } catch (_) {}
+  }
+
   return {
     __lastPostedResult: "",
     __resultBaseline: "",
     __pendingResult: "",
     __pendingCount: 0,
+    __lastExtractSignature: "",
     __lastGeminiErrorMark: "",
     __lastGeminiErrorAt: 0,
     __geminiErrorObserverArmed: false,
@@ -136,9 +161,12 @@ window.arc = (() => {
         }
         if (!el) {
             if (window.AndroidBridge) AndroidBridge.domError("FILL_FAIL_REPORT:" + sel, JSON.stringify(getElementContext(sel)));
+            logTrace("fill_fail", sel);
             return false;
         }
         el.focus(); forceValueSync(el, txt);
+        const preview = String(txt || "").slice(0, 20).replace(/\s+/g, " ");
+        logTrace("fill_ok", "sel=" + buildStableSelector(el) + ",len=" + String((txt || "").length) + ",preview=" + preview);
         return true;
     },
     performSend: (sel) => {
@@ -148,17 +176,20 @@ window.arc = (() => {
                     const label = (e.innerText || e.getAttribute('aria-label') || "").toLowerCase();
                     return (label.includes("送") || label.includes("send") || label.includes("enter")) && isOperable(e);
                   });
-        if (btn && !btn.disabled) { btn.click(); return true; }
+        if (btn && !btn.disabled) {
+          btn.click();
+          logTrace("send_ok", "sel=" + buildStableSelector(btn));
+          return true;
+        }
         if (window.AndroidBridge) {
           AndroidBridge.domError("SEND_FAIL_REPORT:" + sel, JSON.stringify(getElementContext(sel)));
         }
+        logTrace("send_fail", sel);
         return false;
     },
     armResultBaseline: (sel) => {
         const collectCandidates = () => {
-          const sels = [];
-          if (sel && sel !== "null") sels.push(sel);
-          sels.push('[data-message-author-role="assistant"]', '.model-response-text', '.markdown', 'article');
+          const sels = buildResultSelectors(sel);
           const out = [];
           const seen = new Set();
           sels.forEach((s) => {
@@ -181,6 +212,7 @@ window.arc = (() => {
             window.arc.__lastPostedResult = txt;
             window.arc.__pendingResult = "";
             window.arc.__pendingCount = 0;
+            logTrace("baseline_set", "len=" + String(txt.length));
             return txt;
           }
         }
@@ -188,12 +220,11 @@ window.arc = (() => {
         window.arc.__lastPostedResult = "";
         window.arc.__pendingResult = "";
         window.arc.__pendingCount = 0;
+        logTrace("baseline_clear", "");
         return "";
     },
     extractCleanResult: (sel) => {
-        const sels = [];
-        if (sel && sel !== "null") sels.push(sel);
-        sels.push('[data-message-author-role="assistant"]', '.model-response-text', '.markdown', 'article');
+        const sels = buildResultSelectors(sel);
 
         const nodes = [];
         const seen = new Set();
@@ -204,7 +235,10 @@ window.arc = (() => {
             nodes.push(el);
           });
         });
-        if (!nodes.length) return "";
+        if (!nodes.length) {
+          logTrace("extract_nodes_empty", sels.join(","));
+          return "";
+        }
 
         let txt = "";
         for (let i = nodes.length - 1; i >= 0; i--) {
@@ -218,19 +252,39 @@ window.arc = (() => {
             break;
           }
         }
-        if (!txt) return "";
+        if (!txt) {
+          logTrace("extract_text_empty", "nodes=" + String(nodes.length));
+          return "";
+        }
 
         const baseline = window.arc.__resultBaseline || "";
         const lastPosted = window.arc.__lastPostedResult || "";
-        if (txt === baseline || txt === lastPosted) return txt;
+        if (txt === baseline || txt === lastPosted) {
+          const sig = "same:" + String(txt.length);
+          if (window.arc.__lastExtractSignature !== sig) {
+            window.arc.__lastExtractSignature = sig;
+            logTrace("extract_same_as_history", sig);
+          }
+          return txt;
+        }
 
-        const generating = !!document.querySelector('[aria-label*="停止"], [aria-label*="Stop"], .result-streaming, .generating');
+        const generating = !!document.querySelector('[aria-label*="停止" i], [aria-label*="Stop" i], button[data-testid*="stop" i], [data-is-streaming="true"], .result-streaming, .generating, [class*="stream" i], [class*="typing" i]');
         if (txt !== window.arc.__pendingResult) {
           window.arc.__pendingResult = txt;
           window.arc.__pendingCount = 1;
+          const sig = "pending_new:" + String(txt.length);
+          if (window.arc.__lastExtractSignature !== sig) {
+            window.arc.__lastExtractSignature = sig;
+            logTrace("extract_pending_new", sig);
+          }
           return txt;
         } else {
           window.arc.__pendingCount = (window.arc.__pendingCount || 0) + 1;
+          const sig = "pending_same:" + String(window.arc.__pendingCount) + ":" + String(txt.length);
+          if (window.arc.__lastExtractSignature !== sig) {
+            window.arc.__lastExtractSignature = sig;
+            logTrace("extract_pending_same", sig);
+          }
         }
         // 生成中は送信しない。停止後に同一テキストを2回連続確認してから確定送信。
         if (generating || window.arc.__pendingCount < 2) return txt;
@@ -238,7 +292,10 @@ window.arc = (() => {
         window.arc.__lastPostedResult = txt;
         window.arc.__pendingResult = "";
         window.arc.__pendingCount = 0;
-        if (window.AndroidBridge) AndroidBridge.postMessage(txt);
+        if (window.AndroidBridge) {
+          logTrace("post_message", "len=" + String(txt.length));
+          AndroidBridge.postMessage(txt);
+        }
         return txt;
     },
     getAutoDomData: () => ({ meta: getMetaInfo(), uiMap: Array.from(document.querySelectorAll('button, input, textarea')).map(e => ({ tag: e.tagName, text: (e.innerText || e.placeholder || "").substring(0,20), selector: buildStableSelector(e) })).filter(i => i.selector !== "") }),

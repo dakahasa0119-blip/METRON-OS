@@ -15,6 +15,7 @@ class AllAiPipeline(
     private val prefs: Prefs,
     // 司令部への実行依頼 (missionId を伝搬させる)
     private val requestExecution: (target: AiTarget, prompt: String, missionId: String) -> Unit,
+    private val resolveExecutionOrder: (callback: (List<AiTarget>) -> Unit) -> Unit,
     private val onFinalResult: (String, String, Boolean) -> Unit,
     private val hallucinationPipeline: HallucinationPipeline,
     private val requestVisionSolve: (action: String, onSolved: (Int, Int) -> Unit) -> Unit,
@@ -65,8 +66,13 @@ class AllAiPipeline(
                 fetchVisualGatewayAdvice()
 
                 // 2. 🚀 [統合リレー] 司令部を介した実行連鎖
-                // Copilot は bot/challenge で停止しやすいため、ALL は安定2系統で完走させる。
-                val targets = listOf(AiTarget.GEMINI, AiTarget.CHATGPT)
+                val targets = fetchAdaptiveExecutionOrder()
+                Util.trace(
+                    missionId,
+                    Util.Level.SUMMARY,
+                    "ALL_ORDER",
+                    "Execution order: ${targets.joinToString(",") { it.name }}"
+                )
                 for (target in targets) {
                     if (!pipelineActive) break
                     
@@ -89,6 +95,13 @@ class AllAiPipeline(
 
                 // 3. [最終統合]
                 if (pipelineActive) {
+                    if (results.isEmpty()) {
+                        val rescue = trySingleBestRescue(targets)
+                        if (rescue.isNotBlank()) {
+                            results.add(sanitizeOutput(rescue))
+                            Util.trace(missionId, Util.Level.SUMMARY, "ALL_RESCUE_OK", "Rescued by ${targets.firstOrNull()?.name ?: "CHATGPT"}")
+                        }
+                    }
                     if (results.isNotEmpty()) {
                         Util.expect(missionId, "SYNTHESIS_COMPLETE", 150000)
                         finalizePipelineSuspending()
@@ -110,6 +123,35 @@ class AllAiPipeline(
                 Util.trace(missionId, Util.Level.SUMMARY, "MISSION_END", "Mission sequence finished.")
             }
         }
+    }
+
+    private suspend fun fetchAdaptiveExecutionOrder(): List<AiTarget> {
+        val fallback = listOf(AiTarget.CHATGPT, AiTarget.GEMINI, AiTarget.COPILOT)
+        val d = CompletableDeferred<List<AiTarget>>()
+        try {
+            resolveExecutionOrder { order ->
+                if (!d.isCompleted) d.complete(order)
+            }
+        } catch (_: Exception) {
+            return fallback
+        }
+        val got = withTimeoutOrNull(3500L) { d.await() } ?: return fallback
+        val normalized = got
+            .filter { it == AiTarget.CHATGPT || it == AiTarget.GEMINI || it == AiTarget.COPILOT }
+            .distinct()
+            .toMutableList()
+        fallback.forEach {
+            if (!normalized.contains(it)) normalized.add(it)
+        }
+        return normalized
+    }
+
+    private suspend fun trySingleBestRescue(order: List<AiTarget>): String {
+        if (!pipelineActive) return ""
+        val primary = order.firstOrNull() ?: AiTarget.CHATGPT
+        val rescuePrompt = buildAdaptivePrompt(0, emptyList(), primary.name)
+        val result = executeViaCommandCenter(primary, rescuePrompt) ?: return ""
+        return if (isResponseQualityGood(result)) result else ""
     }
 
     /**
@@ -190,6 +232,24 @@ class AllAiPipeline(
     }
 
     private suspend fun finalizePipelineSuspending() {
+        if (isAckStylePrompt(currentPrompt)) {
+            val candidates = results
+                .map { normalizeFinalOutputForTask(it) }
+                .filter { it.isNotBlank() }
+            val expected = extractAckToken(currentPrompt)
+            val picked = candidates.firstOrNull { c ->
+                if (expected.isNotBlank()) {
+                    c.contains(expected, ignoreCase = true) && c.contains("ok", ignoreCase = true)
+                } else {
+                    c.contains("ok", ignoreCase = true)
+                }
+            } ?: candidates.firstOrNull().orEmpty()
+            val ok = picked.isNotBlank() && !picked.startsWith("Error:", ignoreCase = true)
+            lastEvalSummaryText = "ack_mode=true;count=${candidates.size};expected=${expected.take(64)}"
+            dispatchFinal(picked, ok)
+            return
+        }
+
         val rubric = buildRubric(currentPrompt)
         val d = CompletableDeferred<String>()
         hallucinationPipeline.process(currentPrompt, gatewayMissionId, results) { d.complete(it) }
@@ -211,6 +271,20 @@ class AllAiPipeline(
             finalEval.score >= 55
         if (ok) Util.trace(missionId, Util.Level.SUMMARY, "COMPLETE", "Final synthesis success.")
         dispatchFinal(text, ok)
+    }
+
+    private fun isAckStylePrompt(prompt: String): Boolean {
+        val p = prompt.lowercase()
+        return p.contains("のみ返答") ||
+            p.contains("だけ返答") ||
+            p.contains("only reply") ||
+            p.contains("okのみ") ||
+            p.contains("ok だけ")
+    }
+
+    private fun extractAckToken(prompt: String): String {
+        val r = Regex("""([A-Z]{2,}(?:_[A-Z0-9]+){1,6}_[0-9]{2,})""")
+        return r.find(prompt)?.groupValues?.getOrNull(1).orEmpty()
     }
 
     private suspend fun repairFinalOnce(draft: String): String {

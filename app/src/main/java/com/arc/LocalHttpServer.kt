@@ -72,6 +72,48 @@ class LocalHttpServer(
                 log("API Called: $mode")
 
                 return when (mode) {
+                    "arc_runtime_status" -> {
+                        val body = JSONObject().apply {
+                            put("status", "ok")
+                            put("runtime_mode", prefs.normalizedRuntimeMode())
+                            put("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
+                            put("keep_screen_awake", prefs.keepScreenAwake)
+                            put("effective_keep_screen_awake", prefs.shouldKeepScreenAwakeNow())
+                            put("compact_corner_mode", prefs.compactCornerMode)
+                            put("minimize_guard_enabled", prefs.minimizeGuardEnabled)
+                        }
+                        newFixedLengthResponse(Response.Status.OK, "application/json", body.toString())
+                    }
+                    "arc_runtime_set" -> {
+                        val incomingMode = obj.optString("runtime_mode", prefs.normalizedRuntimeMode())
+                            .trim()
+                            .lowercase()
+                        prefs.runtimeMode = if (incomingMode == Prefs.RUNTIME_MODE_AUTONOMOUS) {
+                            Prefs.RUNTIME_MODE_AUTONOMOUS
+                        } else {
+                            Prefs.RUNTIME_MODE_INTERACTIVE
+                        }
+                        if (obj.has("bring_to_front_on_execution")) {
+                            prefs.bringToFrontOnExecution = obj.optBoolean("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
+                        }
+                        if (obj.has("keep_screen_awake")) {
+                            prefs.keepScreenAwake = obj.optBoolean("keep_screen_awake", prefs.keepScreenAwake)
+                        }
+                        if (obj.has("compact_corner_mode")) {
+                            prefs.compactCornerMode = obj.optBoolean("compact_corner_mode", prefs.compactCornerMode)
+                        }
+                        if (obj.has("minimize_guard_enabled")) {
+                            prefs.minimizeGuardEnabled = obj.optBoolean("minimize_guard_enabled", prefs.minimizeGuardEnabled)
+                        }
+                        val body = JSONObject().apply {
+                            put("status", "ok")
+                            put("runtime_mode", prefs.normalizedRuntimeMode())
+                            put("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
+                            put("keep_screen_awake", prefs.keepScreenAwake)
+                            put("effective_keep_screen_awake", prefs.shouldKeepScreenAwakeNow())
+                        }
+                        newFixedLengthResponse(Response.Status.OK, "application/json", body.toString())
+                    }
                     "arc_info" -> {
                         val info = JSONObject().apply {
                             put("version", "14.0-hardened")
@@ -122,8 +164,8 @@ class LocalHttpServer(
                     }
                     "arc_refresh" -> {
                         onExecutionRequested()
-                        // 🛡️ プロセスのリフレッシュ命令
-                        web.refreshProcess()
+                        // セッション維持リロード（ログアウト回避）
+                        web.refreshKeepingSession()
                         successResponse("refreshing")
                     }
                     "arc_screenshot" -> {

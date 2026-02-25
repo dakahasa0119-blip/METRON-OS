@@ -10,6 +10,7 @@ import org.json.JSONObject
  */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("arc_settings", Context.MODE_PRIVATE)
+    private val copilotMigrationDoneKey = "copilot_slot_claude_migrated_v1"
 
     private fun edit(action: SharedPreferences.Editor.() -> Unit) {
         sp.edit().apply { action(); apply() }
@@ -18,7 +19,12 @@ class Prefs(context: Context) {
     var gasUrl: String by StringPref("gas_url", "")
     var sheetId: String by StringPref("sheet_id", "")
     var keepScreenAwake: Boolean by BoolPref("keep_screen_awake", false)
+    var runtimeMode: String by StringPref("runtime_mode", RUNTIME_MODE_INTERACTIVE)
+    var bringToFrontOnExecution: Boolean by BoolPref("bring_to_front_on_execution", false)
+    var compactCornerMode: Boolean by BoolPref("compact_corner_mode", true)
+    var minimizeGuardEnabled: Boolean by BoolPref("minimize_guard_enabled", true)
     var headlessMode: Boolean by BoolPref("headless_mode", true)
+    var consultGatewayEnabled: Boolean by BoolPref("consult_gateway_enabled", false)
     var heartbeatIntervalMs: Long
         get() = sp.getLong("heartbeat_interval_ms", 15000L)
         set(v) { edit { putLong("heartbeat_interval_ms", v.coerceIn(5000L, 120000L)) } }
@@ -75,10 +81,34 @@ class Prefs(context: Context) {
     var chatGptResponseSelector: String by StringPref("chatgpt_resp", "div[data-message-author-role='assistant']")
     var chatGptUrl: String by StringPref("chatgpt_url", "https://chatgpt.com/")
 
-    var copilotInputSelector: String by StringPref("copilot_input", "cib-text-input > #searchbox")
-    var copilotSendSelector: String by StringPref("copilot_send", "#send-button")
-    var copilotResponseSelector: String by StringPref("copilot_resp", "cib-message-group.response-message-group")
-    var copilotUrl: String by StringPref("copilot_url", "https://copilot.microsoft.com/")
+    var copilotInputSelector: String by StringPref("copilot_input", "div[contenteditable='true'][role='textbox'], div[contenteditable='true']")
+    var copilotSendSelector: String by StringPref("copilot_send", "button[aria-label*='Send' i], button[data-testid*='send' i], button[type='submit']")
+    var copilotResponseSelector: String by StringPref("copilot_resp", "div[data-testid*='assistant'], article, .prose")
+    var copilotUrl: String by StringPref("copilot_url", "https://claude.ai/")
+
+    fun normalizedRuntimeMode(): String {
+        val m = runtimeMode.trim().lowercase()
+        return when (m) {
+            RUNTIME_MODE_AUTONOMOUS -> RUNTIME_MODE_AUTONOMOUS
+            else -> RUNTIME_MODE_INTERACTIVE
+        }
+    }
+
+    fun shouldForceForegroundForGatewayTask(): Boolean {
+        return normalizedRuntimeMode() == RUNTIME_MODE_AUTONOMOUS || bringToFrontOnExecution
+    }
+
+    fun shouldKeepScreenAwakeNow(): Boolean {
+        return keepScreenAwake || normalizedRuntimeMode() == RUNTIME_MODE_AUTONOMOUS
+    }
+
+    fun runStartupMigrations(): List<String> {
+        val notes = mutableListOf<String>()
+        if (migrateCopilotSlotToClaudeIfNeeded()) {
+            notes += "copilot_slot_to_claude"
+        }
+        return notes
+    }
 
     fun getUrlFor(target: String): String = when (target.lowercase()) {
         "gemini" -> geminiUrl
@@ -90,12 +120,50 @@ class Prefs(context: Context) {
 
     private fun normalizeCopilotUrl(raw: String): String {
         val u = raw.trim()
-        if (u.isBlank()) return "https://copilot.microsoft.com/"
+        if (u.isBlank()) return "https://claude.ai/"
         val lower = u.lowercase()
-        if (lower.contains("copilot.microsoft.com")) return "https://copilot.microsoft.com/"
-        if (lower.contains("bing.com/chat")) return "https://copilot.microsoft.com/"
-        if (!lower.startsWith("http://") && !lower.startsWith("https://")) return "https://copilot.microsoft.com/"
+        if (lower.contains("claude.ai")) return "https://claude.ai/"
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) return "https://claude.ai/"
         return u
+    }
+
+    private fun migrateCopilotSlotToClaudeIfNeeded(): Boolean {
+        val alreadyDone = sp.getBoolean(copilotMigrationDoneKey, false)
+        val url = (sp.getString("copilot_url", "") ?: "").trim()
+        val input = (sp.getString("copilot_input", "") ?: "").trim()
+        val send = (sp.getString("copilot_send", "") ?: "").trim()
+        val resp = (sp.getString("copilot_resp", "") ?: "").trim()
+
+        if (alreadyDone) return false
+
+        val urlLower = url.lowercase()
+        val legacyUrl = urlLower.contains("bing.com/chat") ||
+            urlLower.contains("copilot.microsoft.com") ||
+            urlLower.contains("microsoft+copilot")
+        val legacyInput = input.equals("#userInput", ignoreCase = true) ||
+            input.equals("cib-text-input > #searchbox", ignoreCase = true)
+        val legacySend = send.equals("button[name=\"intent\"]", ignoreCase = true) ||
+            send.equals("#send-button", ignoreCase = true)
+        val legacyResp = resp.equals("article.article.page.no-article-survey", ignoreCase = true) ||
+            resp.equals("cib-message-group.response-message-group", ignoreCase = true)
+        val shouldMigrate = url.isBlank() || legacyUrl || legacyInput || legacySend || legacyResp
+
+        if (!shouldMigrate) {
+            // 既に手動で新しい値に更新済みなら、以後の自動上書きを避ける。
+            if (urlLower.contains("claude.ai")) {
+                edit { putBoolean(copilotMigrationDoneKey, true) }
+            }
+            return false
+        }
+
+        edit {
+            putString("copilot_url", "https://claude.ai/")
+            putString("copilot_input", "div[contenteditable='true'][role='textbox'], div[contenteditable='true']")
+            putString("copilot_send", "button[aria-label*='Send' i], button[data-testid*='send' i], button[type='submit']")
+            putString("copilot_resp", "div[data-testid*='assistant'], article, .prose")
+            putBoolean(copilotMigrationDoneKey, true)
+        }
+        return true
     }
 
     fun getSelectorsFor(target: String): Pair<String, String> = when (target.lowercase()) {
@@ -118,7 +186,7 @@ class Prefs(context: Context) {
         return when {
             currentUrl.contains("gemini") -> sanitizeResponseSelector("gemini", geminiResponseSelector)
             currentUrl.contains("chatgpt") -> sanitizeResponseSelector("chatgpt", chatGptResponseSelector)
-            currentUrl.contains("bing") || currentUrl.contains("copilot") -> sanitizeResponseSelector("copilot", copilotResponseSelector)
+            currentUrl.contains("bing") || currentUrl.contains("copilot") || currentUrl.contains("claude.ai") -> sanitizeResponseSelector("copilot", copilotResponseSelector)
             else -> "article, [data-message-author-role='assistant'], .markdown, .model-response-text"
         }
     }
@@ -128,7 +196,7 @@ class Prefs(context: Context) {
         val fallback = when (target) {
             "chatgpt" -> "[data-message-author-role='assistant'], article, .markdown"
             "gemini" -> "article, .markdown, [data-message-author-role='assistant']"
-            "copilot" -> "cib-message-group.response-message-group, .model-response-text, article"
+            "copilot" -> "div[data-testid*='assistant'], article, .prose"
             else -> "article, [data-message-author-role='assistant'], .markdown, .model-response-text"
         }
         if (sel.isBlank()) return fallback
@@ -438,6 +506,8 @@ class Prefs(context: Context) {
         operator fun setValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>, value: Boolean) { edit { putBoolean(key, value) } }
     }
     companion object {
+        const val RUNTIME_MODE_INTERACTIVE = "interactive"
+        const val RUNTIME_MODE_AUTONOMOUS = "autonomous"
         const val DEFAULT_JSON = """{"all_ai_mode":"summary","summary_prompt":"統合して：\n\n{CONTENT}","hallucination_tolerance":"normal","all_ai_delay_ms":1500}"""
     }
 }

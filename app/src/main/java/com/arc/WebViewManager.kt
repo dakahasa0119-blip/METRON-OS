@@ -138,12 +138,12 @@ class WebViewManager(
                     val now = System.currentTimeMillis()
                     copilotChallengeCount += 1
                     if (copilotChallengeCount >= 2) {
-                        onDomErrorCallback("COPILOT_BOT_BLOCKED", "cloudflare_challenge_persistent")
+                        onDomErrorCallback("BOT_BLOCKED", "cloudflare_challenge_persistent")
                         return
                     }
                     if (now - lastCopilotBypassMs > 8_000L) {
                         lastCopilotBypassMs = now
-                        onDomErrorCallback("COPILOT_CLOUDFLARE_BYPASS", "challenge_url_detected")
+                        onDomErrorCallback("BOT_BLOCKED", "challenge_url_detected")
                         val next = if (prefs.copilotUrl.contains("copilot.microsoft.com", ignoreCase = true)) {
                             prefs.copilotUrl
                         } else {
@@ -403,14 +403,19 @@ class WebViewManager(
               try {
                 const out = { generating: false, assistant_len: 0, marker: '' };
                 const generating = !!document.querySelector(
-                  '[aria-label*="停止"], [aria-label*="Stop"], .result-streaming, .generating'
+                  '[aria-label*="停止" i], [aria-label*="Stop" i], button[data-testid*="stop" i], [data-is-streaming="true"], .result-streaming, .generating, [class*="stream" i], [class*="typing" i]'
                 );
                 out.generating = generating;
 
                 const sels = [
                   '[data-message-author-role="assistant"]',
+                  '[data-testid*="assistant" i]',
+                  '[data-testid*="message" i]',
                   '.model-response-text',
                   '.markdown',
+                  '.prose',
+                  '[class*="claude" i]',
+                  '[class*="assistant" i]',
                   'article'
                 ];
                 const nodes = [];
@@ -536,10 +541,8 @@ class WebViewManager(
     fun refreshProcess() {
         scope.launch {
             webView?.let { wv ->
-                wv.clearCache(true)
-                wv.clearFormData()
-                wv.clearHistory()
-                CookieManager.getInstance().removeAllCookies(null)
+                // 旧実装はCookie全削除で全AIログアウトを誘発していたため停止
+                // 必要最小限の再読み込みのみ行う
                 wv.reload()
             }
         }
@@ -690,7 +693,7 @@ class WebViewManager(
                 val v = (raw ?: "").trim().trim('"').lowercase()
                 if (v == "blocked") {
                     attemptUiUnblock()
-                    onDomErrorCallback("COPILOT_BOT_BLOCKED", "robot_checkbox_visible")
+                    onDomErrorCallback("BOT_BLOCKED", "robot_checkbox_visible")
                     return@evaluateJavascript
                 }
                 continueInjection()
@@ -793,9 +796,42 @@ class WebViewManager(
                 val selector = prefs.getResponseSelectorFor(wv.url ?: "")
                 val escaped = selector.replace("\\", "\\\\").replace("'", "\\'")
                 wv.evaluateJavascript(
-                    "(function(){ try { if (window.arc && arc.extractCleanResult) { arc.extractCleanResult('$escaped'); } } catch(e){} })();",
-                    null
-                )
+                    """
+                    (function(){
+                      try {
+                        if (!(window.arc && arc.extractCleanResult)) {
+                          return JSON.stringify({ ok:false, reason:'arc_missing' });
+                        }
+                        const txt = arc.extractCleanResult('$escaped') || '';
+                        const pending = Number(arc.__pendingCount || 0);
+                        const baselineLen = String(arc.__resultBaseline || '').length;
+                        const lastLen = String(arc.__lastPostedResult || '').length;
+                        return JSON.stringify({
+                          ok:true,
+                          len: txt.length,
+                          pending: pending,
+                          baseline_len: baselineLen,
+                          last_len: lastLen
+                        });
+                      } catch(e) {
+                        return JSON.stringify({ ok:false, reason:String((e && e.message) || e) });
+                      }
+                    })();
+                    """.trimIndent()
+                ) { raw ->
+                    val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
+                    val ok = parsed.contains("\"ok\":true")
+                    val len = Regex("\"len\":(\\d+)").find(parsed)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                    val pending = Regex("\"pending\":(\\d+)").find(parsed)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                    val baselineLen = Regex("\"baseline_len\":(\\d+)").find(parsed)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                    val lastLen = Regex("\"last_len\":(\\d+)").find(parsed)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                    if (!ok || len > 0 || pending > 0) {
+                        Log.d(
+                            "ARC_RESULT_POLL",
+                            "ok=$ok len=$len pending=$pending baseline=$baselineLen last=$lastLen raw=${parsed.take(180)}"
+                        )
+                    }
+                }
             }
         }
     }
@@ -827,7 +863,7 @@ class WebViewManager(
                             detail.contains("cloudflare", ignoreCase = true) ||
                             detail.contains("ロボット")
                         ) {
-                            onDomErrorCallback("COPILOT_BOT_BLOCKED", detail)
+                            onDomErrorCallback("BOT_BLOCKED", detail)
                         } else {
                             onDomErrorCallback("PAGE_INTERSTITIAL_BLOCK", detail)
                         }

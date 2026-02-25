@@ -4,6 +4,7 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.*
+import java.util.UUID
 
 /**
  * 外部(GAS/Gateway)との通信を統率し、フルログ整理と自動セットアップを司る (v13.5 - Zero-Touch Polished)
@@ -68,7 +69,20 @@ class GatewayClient(private val prefs: Prefs) {
                 put("ip", Util.getLocalIpAddress())
                 put("port", port)
                 put("auth_key", prefs.authToken)
-                put("api_modes", JSONArray(listOf("arc_info", "request_arc", "arc_execute_js", "arc_refresh", "arc_screenshot")))
+                put(
+                    "api_modes",
+                    JSONArray(
+                        listOf(
+                            "arc_info",
+                            "request_arc",
+                            "arc_execute_js",
+                            "arc_refresh",
+                            "arc_screenshot",
+                            "arc_runtime_status",
+                            "arc_runtime_set"
+                        )
+                    )
+                )
                 put("sheets", JSONObject().apply {
                     put("MAIN_CHAT", JSONArray(listOf("Timestamp", "User", "Content", "Status", "Response", "MissionID")))
                     put("ARC_NODES", JSONArray(listOf("LastSeen", "IP", "Port", "Status", "Capabilities", "Version", "WorkerID", "Executor", "CurrentHost", "CurrentUrl", "CurrentTitle", "HudTail")))
@@ -79,6 +93,7 @@ class GatewayClient(private val prefs: Prefs) {
                     put("ARC_AUDIT", JSONArray(listOf("Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail")))
                     put("ARC_DEAD_JOBS", JSONArray(listOf("Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload")))
                     put("ARC_ALERTS", JSONArray(listOf("Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID")))
+                    put("ARC_COPILOT_DIAG", JSONArray(listOf("Timestamp", "WorkerID", "Target", "PageUrl", "PageTitle", "Webdriver", "UserAgent", "Platform", "Languages", "HardwareConcurrency", "WebglVendor", "WebglRenderer", "CanvasHash", "StorageFlags", "Headers", "ChallengeDetected", "ChallengeText", "Note", "TraceID")))
                     put("GATEWAY_LONG_MEMORY", JSONArray(listOf("Timestamp", "Key", "Value", "Source", "TraceID", "Tags")))
                     put("ARC_SHORT_MEMORY", JSONArray(listOf("Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID")))
                 })
@@ -246,7 +261,28 @@ class GatewayClient(private val prefs: Prefs) {
         }
     }
 
+    fun sendCopilotDiagnosticSnapshot(
+        snapshot: JSONObject,
+        callback: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        clientScope.launch {
+            val traceId = snapshot.optString("trace_id").ifBlank {
+                "TRC_DIAG_" + UUID.randomUUID().toString().replace("-", "").take(12)
+            }
+            val ok = send(JSONObject(snapshot.toString()).apply {
+                put("mode", "arc_diag_snapshot")
+                put("trace_id", traceId)
+                if (!has("target")) put("target", "copilot")
+            })
+            withContext(Dispatchers.Main) { callback(ok, traceId) }
+        }
+    }
+
     fun consultGateway(siteContext: String, problem: String, image: String? = null, callback: (String) -> Unit) {
+        if (!prefs.consultGatewayEnabled) {
+            callback("")
+            return
+        }
         clientScope.launch {
             try {
                 val json = JSONObject().apply {
@@ -256,9 +292,72 @@ class GatewayClient(private val prefs: Prefs) {
                     if (image != null) put("image", image)
                     put("auth_key", prefs.authToken)
                 }
+                val response = withTimeoutOrNull(8000L) { Http.post(prefs.gasUrl, json.toString()) }
+                if (response.isNullOrBlank()) {
+                    withContext(Dispatchers.Main) { callback("") }
+                    return@launch
+                }
+                val advice = try {
+                    JSONObject(response).optString("advice", "")
+                } catch (_: Exception) {
+                    ""
+                }
+                withContext(Dispatchers.Main) { callback(advice) }
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) { callback("") }
+            }
+        }
+    }
+
+    fun fetchAdaptiveAllOrder(callback: (List<AiTarget>) -> Unit) {
+        val fallback = listOf(AiTarget.CHATGPT, AiTarget.GEMINI, AiTarget.COPILOT)
+        if (prefs.gasUrl.isBlank()) {
+            callback(fallback)
+            return
+        }
+        clientScope.launch {
+            val order = try {
+                val json = JSONObject().apply {
+                    put("mode", "admin_target_scores")
+                    put("auth_key", prefs.authToken)
+                }
                 val response = Http.post(prefs.gasUrl, json.toString())
-                withContext(Dispatchers.Main) { callback(JSONObject(response).optString("advice", "")) }
-            } catch (_: Exception) { withContext(Dispatchers.Main) { callback("") } }
+                val parsed = JSONObject(response)
+                val scores = parsed.optJSONObject("scores")
+                if (scores == null) {
+                    fallback
+                } else {
+                    val names = listOf("chatgpt", "gemini", "copilot")
+                    val ranked = names.sortedWith(compareByDescending<String> { name ->
+                        val o = scores.optJSONObject(name)
+                        val sr = if (o != null && !o.isNull("success_rate")) o.optDouble("success_rate", -1.0) else -1.0
+                        sr
+                    }.thenBy { name ->
+                        val o = scores.optJSONObject(name)
+                        val active = o?.optBoolean("cooldown_active", false) ?: false
+                        if (active) 1 else 0
+                    }.thenBy { name ->
+                        val o = scores.optJSONObject(name)
+                        if (o != null && !o.isNull("avg_latency_sec")) o.optDouble("avg_latency_sec", 999999.0) else 999999.0
+                    }.thenByDescending { name ->
+                        val o = scores.optJSONObject(name)
+                        o?.optInt("success", 0) ?: 0
+                    })
+                    val mapped = ranked.mapNotNull {
+                        when (it) {
+                            "chatgpt" -> AiTarget.CHATGPT
+                            "gemini" -> AiTarget.GEMINI
+                            "copilot" -> AiTarget.COPILOT
+                            else -> null
+                        }
+                    }.toMutableList()
+                    fallback.forEach { if (!mapped.contains(it)) mapped.add(it) }
+                    mapped
+                }
+            } catch (_: Exception) {
+                fallback
+            }
+            withContext(Dispatchers.Main) { callback(order) }
         }
     }
 
@@ -322,17 +421,39 @@ class GatewayClient(private val prefs: Prefs) {
                 }
             } catch (_: Exception) {}
             base.put("auth_key", prefs.authToken)
-            val response = Http.post(prefs.gasUrl, base.toString())
-            Log.d("ARC_GW_HB", "response_head=${response.take(180)}")
-            if (response.startsWith("{")) {
-                val parsed = JSONObject(response)
-                withContext(Dispatchers.Main) {
-                    val instruction = parsed.optJSONObject("instruction")
-                    if (instruction != null) {
-                        Log.d("ARC_GW_HB", "instruction mode=${instruction.optString("mode")} job_id=${instruction.optString("job_id")}")
+            if (!base.has("worker_id")) base.put("worker_id", prefs.workerId)
+            var response = Http.post(prefs.gasUrl, base.toString())
+            var retriedMinimal = false
+            if (!response.startsWith("{")) {
+                val lower = response.lowercase()
+                val isHtmlError =
+                    lower.contains("<!doctype html") ||
+                        lower.contains("<html") ||
+                        lower.contains("<title>エラー") ||
+                        lower.contains("<title>error")
+                if (isHtmlError) {
+                    retriedMinimal = true
+                    val minimal = JSONObject().apply {
+                        put("mode", "arc_heartbeat")
+                        put("status", base.optString("status", "heartbeat"))
+                        put("auth_key", prefs.authToken)
+                        put("worker_id", prefs.workerId)
+                        put("executor", base.optString("executor", "ARC"))
                     }
-                    onInstruction(instruction ?: parsed)
+                    response = Http.post(prefs.gasUrl, minimal.toString())
                 }
+            }
+            val head = response.take(180)
+            if (retriedMinimal) Log.d("ARC_GW_HB", "response_head(minimal_retry)=$head")
+            else Log.d("ARC_GW_HB", "response_head=$head")
+            if (!response.startsWith("{")) return
+            val parsed = JSONObject(response)
+            withContext(Dispatchers.Main) {
+                val instruction = parsed.optJSONObject("instruction")
+                if (instruction != null) {
+                    Log.d("ARC_GW_HB", "instruction mode=${instruction.optString("mode")} job_id=${instruction.optString("job_id")}")
+                }
+                onInstruction(instruction ?: parsed)
             }
         } catch (_: Exception) {}
     }

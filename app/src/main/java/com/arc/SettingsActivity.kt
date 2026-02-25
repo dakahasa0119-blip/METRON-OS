@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.arc.databinding.ActivitySettingsBinding
 import org.json.JSONObject
@@ -24,6 +25,7 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         prefs = Prefs(this)
+        prefs.runStartupMigrations()
 
         setupSlotSpinner()
         setupButtons()
@@ -105,6 +107,23 @@ class SettingsActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+
+        binding.btnLoginGuide.setOnClickListener {
+            saveCommonPrefs()
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.title_login_guide))
+                .setMessage("動的セットアップを開始します。\n各AIでログイン/認証状態を判定し、短文送信テストに通過したら次へ進みます。")
+                .setNegativeButton(getString(R.string.btn_guide_close), null)
+                .setPositiveButton(getString(R.string.btn_guide_start)) { _, _ ->
+                    val intent = Intent(this, MainActivity::class.java).apply {
+                        putExtra("ARC_DYNAMIC_SETUP", true)
+                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    }
+                    startActivity(intent)
+                    finish()
+                }
+                .show()
         }
     }
 

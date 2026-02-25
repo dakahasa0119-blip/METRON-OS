@@ -27,6 +27,16 @@ function doPost(e) {
   const norm = (v) => String(v || "").trim();
   const lower = (v) => norm(v).toLowerCase();
   const upper = (v) => norm(v).toUpperCase();
+  const canonicalTarget = (v) => {
+    const t = lower(v);
+    if (t === "claude") return "copilot";
+    if (t === "chatgpt" || t === "gemini" || t === "copilot" || t === "all") return t;
+    return "";
+  };
+  const normalizeRuntimeMode = (v) => {
+    const m = lower(v);
+    return m === "autonomous" ? "autonomous" : "interactive";
+  };
   const mode = norm(data.mode);
 
   const parseJsonSafe = (raw) => {
@@ -70,8 +80,8 @@ function doPost(e) {
     return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "AUTO";
   })();
   const defaultTarget = (() => {
-    const v = lower(norm(props.getProperty("ARC_DEFAULT_TARGET") || "gemini"));
-    return v === "chatgpt" || v === "copilot" || v === "all" || v === "gemini" ? v : "gemini";
+    const v = canonicalTarget(norm(props.getProperty("ARC_DEFAULT_TARGET") || "gemini"));
+    return v || "gemini";
   })();
   const requireSignature = lower(norm(props.getProperty("ARC_REQUIRE_SIGNATURE") || "false")) === "true";
   const autonomyPaused = lower(norm(props.getProperty("ARC_AUTONOMY_PAUSED") || "false")) === "true";
@@ -96,6 +106,24 @@ function doPost(e) {
   const routeBackfillSecRaw = parseInt(norm(props.getProperty("ARC_ROUTE_BACKFILL_SEC")) || "60", 10);
   const routeBackfillSec = Number.isFinite(routeBackfillSecRaw) && routeBackfillSecRaw >= 10 ? Math.min(routeBackfillSecRaw, 900) : 60;
   const leaseProgressTouchEnabled = lower(norm(props.getProperty("ARC_LEASE_PROGRESS_TOUCH_ENABLED") || "true")) === "true";
+  const adaptiveTargetEnabled = lower(norm(props.getProperty("ARC_ADAPTIVE_TARGET_ENABLED") || "true")) === "true";
+  const adaptiveWindowSecRaw = parseInt(norm(props.getProperty("ARC_ADAPTIVE_TARGET_WINDOW_SEC")) || "1800", 10);
+  const adaptiveWindowSec = Number.isFinite(adaptiveWindowSecRaw) && adaptiveWindowSecRaw >= 120
+    ? Math.min(adaptiveWindowSecRaw, 86400)
+    : 1800;
+  const adaptiveScanMaxRaw = parseInt(norm(props.getProperty("ARC_ADAPTIVE_TARGET_SCAN_MAX")) || "400", 10);
+  const adaptiveScanMax = Number.isFinite(adaptiveScanMaxRaw) && adaptiveScanMaxRaw >= 100
+    ? Math.min(adaptiveScanMaxRaw, 2000)
+    : 400;
+  const consultEnabled = lower(norm(props.getProperty("ARC_CONSULT_ENABLED") || "false")) === "true";
+  const targetCooldownSecRaw = parseInt(norm(props.getProperty("ARC_TARGET_COOLDOWN_SEC")) || "180", 10);
+  const targetCooldownSec = Number.isFinite(targetCooldownSecRaw) && targetCooldownSecRaw >= 30
+    ? Math.min(targetCooldownSecRaw, 3600)
+    : 180;
+  const targetFailStreakThresholdRaw = parseInt(norm(props.getProperty("ARC_TARGET_FAIL_STREAK_THRESHOLD")) || "2", 10);
+  const targetFailStreakThreshold = Number.isFinite(targetFailStreakThresholdRaw) && targetFailStreakThresholdRaw >= 1
+    ? Math.min(targetFailStreakThresholdRaw, 10)
+    : 2;
 
   const parseKeyMap = (raw) => {
     const txt = norm(raw);
@@ -159,9 +187,12 @@ function doPost(e) {
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
     "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
-    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts",
+    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts", "admin_target_scores",
+    "admin_diag_latest",
     "gateway_memory_put", "gateway_memory_get", "memory_put", "memory_get",
-    "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get"
+    "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get",
+    "arc_diag_snapshot",
+    "arc_runtime_status", "arc_runtime_set", "arc_set_runtime_mode"
   ];
 
   const getRequestTsMs = (v) => {
@@ -257,7 +288,13 @@ function doPost(e) {
     auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     alerts: ensureSheet("ARC_ALERTS", ["Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID"]),
     gatewayMemory: ensureSheet("GATEWAY_LONG_MEMORY", ["Timestamp", "Key", "Value", "Source", "TraceID", "Tags"]),
-    arcShortMemory: ensureSheet("ARC_SHORT_MEMORY", ["Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID"])
+    arcShortMemory: ensureSheet("ARC_SHORT_MEMORY", ["Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID"]),
+    diag: ensureSheet("ARC_COPILOT_DIAG", [
+      "Timestamp", "WorkerID", "Target", "PageUrl", "PageTitle",
+      "Webdriver", "UserAgent", "Platform", "Languages", "HardwareConcurrency",
+      "WebglVendor", "WebglRenderer", "CanvasHash", "StorageFlags",
+      "Headers", "ChallengeDetected", "ChallengeText", "Note", "TraceID"
+    ])
   };
 
   const addAudit = (traceId, event, jobId, worker, status, detail) => {
@@ -588,6 +625,209 @@ function doPost(e) {
     return out;
   };
 
+  const getTargetFailStreak = (target) => {
+    const t = canonicalTarget(target);
+    if (!t) return 0;
+    const cache = CacheService.getScriptCache();
+    const n = parseInt(norm(cache.get("target_fail_streak:" + t)), 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  };
+
+  const getTargetCooldownState = (target) => {
+    const t = canonicalTarget(target);
+    if (!t) return { active: false, remaining_sec: 0, streak: 0, until_ms: 0 };
+    const cache = CacheService.getScriptCache();
+    const untilMsRaw = parseInt(norm(cache.get("target_cooldown_until:" + t)), 10);
+    const untilMs = Number.isFinite(untilMsRaw) && untilMsRaw > 0 ? untilMsRaw : 0;
+    const remainingSec = untilMs > 0 ? Math.max(0, Math.ceil((untilMs - Date.now()) / 1000)) : 0;
+    return {
+      active: remainingSec > 0,
+      remaining_sec: remainingSec,
+      streak: getTargetFailStreak(t),
+      until_ms: untilMs
+    };
+  };
+
+  const clearTargetDegradeState = (target) => {
+    const t = canonicalTarget(target);
+    if (!t) return;
+    const cache = CacheService.getScriptCache();
+    cache.remove("target_fail_streak:" + t);
+    cache.remove("target_cooldown_until:" + t);
+  };
+
+  const shouldCooldownForError = (errType, errData) => {
+    const u = upper(errType + " " + errData);
+    return (
+      u.indexOf("STALL") >= 0 ||
+      u.indexOf("TIMEOUT") >= 0 ||
+      u.indexOf("LOGIN_REQUIRED") >= 0 ||
+      u.indexOf("BOT_BLOCKED") >= 0 ||
+      u.indexOf("TARGET_STALL") >= 0 ||
+      u.indexOf("SCREEN_BLOCKED") >= 0 ||
+      u.indexOf("NO_PROGRESS") >= 0 ||
+      u.indexOf("NETWORK") >= 0 ||
+      u.indexOf("RATE_LIMIT") >= 0
+    );
+  };
+
+  const markTargetFailure = (target, errType, errData, traceId) => {
+    const t = canonicalTarget(target);
+    if (!t) return { cooled: false, streak: 0, reason: "invalid_target" };
+    if (!shouldCooldownForError(errType, errData)) return { cooled: false, streak: getTargetFailStreak(t), reason: "non_cooldown_error" };
+    const cache = CacheService.getScriptCache();
+    const prev = getTargetFailStreak(t);
+    const streak = prev + 1;
+    cache.put("target_fail_streak:" + t, String(streak), Math.max(targetCooldownSec * 3, 300));
+    if (streak < targetFailStreakThreshold) return { cooled: false, streak: streak, reason: "threshold_not_reached" };
+    const untilMs = Date.now() + targetCooldownSec * 1000;
+    cache.put("target_cooldown_until:" + t, String(untilMs), targetCooldownSec);
+    addAudit(norm(traceId), "TARGET_COOLDOWN_ON", "", "", "warn", t + " / streak=" + streak + " / sec=" + targetCooldownSec);
+    return { cooled: true, streak: streak, cooldown_sec: targetCooldownSec, until_ms: untilMs };
+  };
+
+  const markTargetSuccess = (target, traceId) => {
+    const t = canonicalTarget(target);
+    if (!t) return;
+    const state = getTargetCooldownState(t);
+    if (state.streak <= 0 && !state.active) return;
+    clearTargetDegradeState(t);
+    addAudit(norm(traceId), "TARGET_COOLDOWN_OFF", "", "", "ok", t + " / recovered");
+  };
+
+  const buildAdaptiveTargetScores = (windowSecRaw) => {
+    const windowSec = clamp(parseIntSafe(windowSecRaw, adaptiveWindowSec), 120, 86400);
+    const nowMs = Date.now();
+    const fromMs = nowMs - windowSec * 1000;
+    const targets = ["chatgpt", "gemini", "copilot"];
+    const stats = {};
+    targets.forEach((t) => {
+      stats[t] = {
+        target: t,
+        success: 0,
+        error: 0,
+        latency_sum_sec: 0,
+        latency_count: 0,
+        avg_latency_sec: null,
+        terminated: 0,
+        success_rate: null,
+        cooldown_active: false,
+        cooldown_remaining_sec: 0,
+        fail_streak: 0
+      };
+    });
+
+    const jobMap = {};
+    const jobs = readRecentRows(sheets.jobs, 7, adaptiveScanMax).rows;
+    for (let i = jobs.length - 1; i >= 0; i--) {
+      const row = jobs[i];
+      const jobId = norm(row[1]);
+      if (!jobId || jobMap[jobId]) continue;
+      const createdMs = toMs(row[0]);
+      if (!Number.isFinite(createdMs) || createdMs < fromMs) continue;
+      const payload = parseJsonSafe(norm(row[4]));
+      const target = canonicalTarget(payload.target || "");
+      if (!target || !stats[target]) continue;
+      jobMap[jobId] = { target: target, createdMs: createdMs };
+    }
+
+    const results = readRecentRows(sheets.results, 6, adaptiveScanMax).rows;
+    for (let i = results.length - 1; i >= 0; i--) {
+      const row = results[i];
+      const tsMs = toMs(row[0]);
+      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
+      const missionId = norm(row[1]);
+      const job = jobMap[missionId];
+      const target = job ? job.target : canonicalTarget(row[2]);
+      if (!target || !stats[target]) continue;
+      const st = stats[target];
+      st.success++;
+      if (job && Number.isFinite(job.createdMs)) {
+        const latencySec = Math.max(0, Math.floor((tsMs - job.createdMs) / 1000));
+        st.latency_sum_sec += latencySec;
+        st.latency_count++;
+      }
+    }
+
+    const errors = readRecentRows(sheets.errors, 4, adaptiveScanMax).rows;
+    for (let i = errors.length - 1; i >= 0; i--) {
+      const row = errors[i];
+      const tsMs = toMs(row[0]);
+      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
+      const missionId = norm(row[1]);
+      const job = jobMap[missionId];
+      if (!job || !stats[job.target]) continue;
+      stats[job.target].error++;
+    }
+
+    targets.forEach((t) => {
+      const st = stats[t];
+      st.terminated = st.success + st.error;
+      st.success_rate = st.terminated > 0 ? Number((st.success / st.terminated).toFixed(3)) : null;
+      st.avg_latency_sec = st.latency_count > 0 ? Number((st.latency_sum_sec / st.latency_count).toFixed(2)) : null;
+      const cool = getTargetCooldownState(t);
+      st.cooldown_active = cool.active;
+      st.cooldown_remaining_sec = cool.remaining_sec;
+      st.fail_streak = cool.streak;
+    });
+
+    return stats;
+  };
+
+  const pickAdaptiveTarget = (opts) => {
+    const options = opts && typeof opts === "object" ? opts : {};
+    const preferred = canonicalTarget(options.preferred || "") || defaultTarget;
+    const exclude = canonicalTarget(options.exclude || "");
+    const forceAdaptive = options.forceAdaptive === true;
+    const scores = buildAdaptiveTargetScores(options.windowSec);
+    const baseCandidates = Object.keys(scores).filter((t) => t !== exclude);
+    if (baseCandidates.length === 0) {
+      return { target: preferred, reason: "no_candidate", scores: scores };
+    }
+    const readyCandidates = baseCandidates.filter((t) => !(scores[t] && scores[t].cooldown_active));
+    const candidates = readyCandidates.length > 0 ? readyCandidates : baseCandidates;
+
+    let best = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const t = candidates[i];
+      const st = scores[t];
+      if (!st) continue;
+      if (!best) {
+        best = { target: t, st: st };
+        continue;
+      }
+      const b = best.st;
+      const sr = st.success_rate === null ? -1 : st.success_rate;
+      const bSr = b.success_rate === null ? -1 : b.success_rate;
+      if (sr > bSr) {
+        best = { target: t, st: st };
+        continue;
+      }
+      if (sr < bSr) continue;
+      const lat = st.avg_latency_sec === null ? 999999 : st.avg_latency_sec;
+      const bLat = b.avg_latency_sec === null ? 999999 : b.avg_latency_sec;
+      if (lat < bLat) {
+        best = { target: t, st: st };
+        continue;
+      }
+      if (lat > bLat) continue;
+      if (st.success > b.success) best = { target: t, st: st };
+    }
+
+    if (!best) return { target: preferred, reason: "no_stats", scores: scores };
+    const hasTerminated = best.st.terminated > 0;
+    if (!hasTerminated && !forceAdaptive) {
+      return { target: preferred, reason: "insufficient_stats", scores: scores };
+    }
+    return {
+      target: best.target,
+      reason: "adaptive_best",
+      scores: scores,
+      success_rate: best.st.success_rate,
+      avg_latency_sec: best.st.avg_latency_sec
+    };
+  };
+
   const parseCommandTags = (text) => {
     const raw = norm(text);
     const l = raw.toLowerCase();
@@ -602,22 +842,35 @@ function doPost(e) {
     else if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy")) executor = "ARC";
 
     let target = defaultTarget;
+    let requestedTarget = defaultTarget;
+    let adaptiveDecision = null;
     let targetPinned = false;
     if (has("#chatgpt") || has("@chatgpt") || has("[chatgpt]")) target = "chatgpt";
     else if (has("#copilot") || has("@copilot") || has("[copilot]")) target = "copilot";
+    else if (has("#claude") || has("@claude") || has("[claude]")) target = "copilot";
     else if (has("#all") || has("@all")) target = "ALL";
     else if (has("#gemini") || has("@gemini") || has("[gemini]")) target = "gemini";
     if (
       has("#chatgpt") || has("@chatgpt") || has("[chatgpt]") ||
       has("#gemini") || has("@gemini") || has("[gemini]") ||
-      has("#copilot") || has("@copilot") || has("[copilot]")
+      has("#copilot") || has("@copilot") || has("[copilot]") ||
+      has("#claude") || has("@claude") || has("[claude]")
     ) targetPinned = true;
     if (has("#pin_target") || has("@pin_target") || has("#locktarget") || has("#target_fixed")) targetPinned = true;
     if (has("#allow_failover") || has("@allow_failover")) targetPinned = false;
+    requestedTarget = target;
 
     let opMode = "request_arc";
     if (has("#refresh")) opMode = "arc_refresh";
     else if (has("#screenshot") || has("#shot")) opMode = "arc_screenshot";
+    let runtimeMode = "";
+    if (has("#runtime_auto") || has("#autonomous") || has("#mode_auto")) {
+      opMode = "arc_set_runtime_mode";
+      runtimeMode = "autonomous";
+    } else if (has("#runtime_interactive") || has("#mode_interactive")) {
+      opMode = "arc_set_runtime_mode";
+      runtimeMode = "interactive";
+    }
 
     let script = "";
     const jsStart = raw.indexOf("```js");
@@ -633,12 +886,30 @@ function doPost(e) {
       .replace(/#[a-zA-Z0-9_:-]+/g, " ")
       .replace(/@[a-zA-Z0-9_:-]+/g, " ")
       .replace(/\[arc\]/gi, " ")
+      .replace(/\[(chatgpt|gemini|copilot|claude)\]/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
     if (!cleanPrompt) cleanPrompt = raw;
     if (cleanPrompt.length > MAX_PROMPT) cleanPrompt = cleanPrompt.slice(0, MAX_PROMPT);
 
-    return { route: route, target: target, opMode: opMode, script: script, prompt: cleanPrompt, executor: executor, pinTarget: targetPinned };
+    if (adaptiveTargetEnabled && !targetPinned && route === "ARC" && opMode === "request_arc" && lower(target) !== "all") {
+      const picked = pickAdaptiveTarget({ preferred: target });
+      adaptiveDecision = picked;
+      target = picked.target || target;
+    }
+
+    return {
+      route: route,
+      target: target,
+      opMode: opMode,
+      script: script,
+      prompt: cleanPrompt,
+      executor: executor,
+      pinTarget: targetPinned,
+      runtimeMode: runtimeMode,
+      requestedTarget: requestedTarget,
+      adaptiveDecision: adaptiveDecision
+    };
   };
 
   const upsertMothershipNode = (workerId, status, version) => {
@@ -699,7 +970,7 @@ function doPost(e) {
     const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
     const payload = {
       qid: norm(job.qid) || jobId,
-      target: norm(job.target) || "gemini",
+      target: canonicalTarget(job.target) || "gemini",
       pin_target: lower(norm(job.pinTarget || "false")) === "true" ? "true" : "false",
       prompt: norm(job.prompt).slice(0, MAX_PROMPT),
       script: norm(job.script),
@@ -710,6 +981,17 @@ function doPost(e) {
       max_retry: maxRetry,
       ts: nowIso()
     };
+    if (payload.target === "all") {
+      payload.lease_timeout_sec = Math.max(leaseTimeoutSec, 420);
+      payload.pending_timeout_sec = Math.max(pendingTimeoutSec, 900);
+    }
+    if (norm(job.targetStrategy)) payload.target_strategy = norm(job.targetStrategy).slice(0, 64);
+    if (norm(job.targetReason)) payload.target_reason = norm(job.targetReason).slice(0, 180);
+    if (job.targetSuccessRate !== null && job.targetSuccessRate !== undefined) payload.target_success_rate = job.targetSuccessRate;
+    if (job.targetAvgLatencySec !== null && job.targetAvgLatencySec !== undefined) payload.target_avg_latency_sec = job.targetAvgLatencySec;
+    if (norm(job.mode) === "arc_set_runtime_mode") {
+      payload.runtime_mode = normalizeRuntimeMode(job.runtimeMode || job.runtime_mode);
+    }
     sheets.jobs.appendRow([new Date(), jobId, norm(job.workerId), norm(job.mode) || "request_arc", JSON.stringify(payload), "pending", ""]);
     addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / retry=" + retryCount);
     return { jobId: jobId, traceId: traceId, payload: payload };
@@ -838,17 +1120,6 @@ function doPost(e) {
     if (allPipelineNoRetry) {
       return { retried: false, reason: "all_pipeline_failed_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
     }
-    const copilotNoRetry =
-      target === "copilot" &&
-      (
-        errType.indexOf("STALL_NO_PROGRESS") >= 0 ||
-        errType.indexOf("COPILOT_BOT_BLOCKED") >= 0 ||
-        errType.indexOf("TARGET_STALL") >= 0
-      );
-    if (copilotNoRetry) {
-      return { retried: false, reason: "copilot_block_or_stall_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
-    }
-
     const retryCountRaw = parseInt(norm(payload.retry_count) || "0", 10);
     const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
 
@@ -902,8 +1173,13 @@ function doPost(e) {
         jobId: resolvedId,
         qid: resolvedId,
         target: cmd.target,
+        targetStrategy: cmd.adaptiveDecision ? "adaptive" : "requested",
+        targetReason: cmd.adaptiveDecision ? norm(cmd.adaptiveDecision.reason) : "requested",
+        targetSuccessRate: cmd.adaptiveDecision ? cmd.adaptiveDecision.success_rate : null,
+        targetAvgLatencySec: cmd.adaptiveDecision ? cmd.adaptiveDecision.avg_latency_sec : null,
         prompt: cmd.prompt,
         script: cmd.script,
+        runtimeMode: cmd.runtimeMode,
         mode: effectiveMode,
         executor: cmd.executor,
         pinTarget: cmd.pinTarget ? "true" : "false",
@@ -912,6 +1188,23 @@ function doPost(e) {
         traceId: traceId,
         retryCount: 0
       });
+      if (
+        cmd.adaptiveDecision &&
+        canonicalTarget(cmd.requestedTarget) &&
+        canonicalTarget(cmd.requestedTarget) !== canonicalTarget(cmd.target)
+      ) {
+        addAudit(
+          jobRes.traceId,
+          "TARGET_ADAPTIVE_SELECTED",
+          jobRes.jobId,
+          "",
+          "pending",
+          canonicalTarget(cmd.requestedTarget) + "->" + canonicalTarget(cmd.target) +
+            " / reason=" + norm(cmd.adaptiveDecision.reason) +
+            " / sr=" + norm(cmd.adaptiveDecision.success_rate) +
+            " / lat=" + norm(cmd.adaptiveDecision.avg_latency_sec)
+        );
+      }
       sheets.main.getRange(rowIndex, 4).setValue("QUEUED_ARC");
       sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + " / " + cmd.executor + " / " + jobRes.traceId);
       sheets.main.getRange(rowIndex, 6).setValue(jobRes.jobId);
@@ -1015,9 +1308,13 @@ function doPost(e) {
       const status = lower(row[5]);
       if (status !== "leased") continue;
       const leasedAt = new Date(row[6]).getTime();
-      if (!Number.isFinite(leasedAt) || now - leasedAt < thresholdMs) continue;
+      if (!Number.isFinite(leasedAt) || now - leasedAt < rowLeaseMs) continue;
 
       const payload = parseJsonSafe(norm(row[4]));
+      const rowLeaseSecRaw = parseInt(norm(payload.lease_timeout_sec || ""), 10);
+      const rowLeaseMs = Number.isFinite(rowLeaseSecRaw) && rowLeaseSecRaw >= 30
+        ? rowLeaseSecRaw * 1000
+        : thresholdMs;
       const leaseExpiredCountRaw = parseInt(norm(payload.lease_expire_count) || "0", 10);
       const leaseExpiredCount = (Number.isFinite(leaseExpiredCountRaw) ? leaseExpiredCountRaw : 0) + 1;
       payload.lease_expire_count = leaseExpiredCount;
@@ -1123,9 +1420,12 @@ function doPost(e) {
       const row = rows[i];
       if (lower(row[5]) !== "pending") continue;
       const createdAtMs = new Date(row[0]).getTime();
-      if (!Number.isFinite(createdAtMs) || now - createdAtMs < thresholdMs) continue;
-
       const payload = parseJsonSafe(norm(row[4]));
+      const rowPendingSecRaw = parseInt(norm(payload.pending_timeout_sec || ""), 10);
+      const rowPendingMs = Number.isFinite(rowPendingSecRaw) && rowPendingSecRaw >= 60
+        ? rowPendingSecRaw * 1000
+        : thresholdMs;
+      if (!Number.isFinite(createdAtMs) || now - createdAtMs < rowPendingMs) continue;
       const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
       if (Number.isFinite(nextRetryAtMs) && now < nextRetryAtMs) continue;
 
@@ -1214,6 +1514,36 @@ function doPost(e) {
     }
   };
 
+  const safeClaimNextInstruction = (workerId, consumer, traceId) => {
+    try {
+      return claimNextInstruction(workerId, consumer);
+    } catch (err) {
+      const detail = (() => {
+        try {
+          if (err && err.stack) return String(err.stack).slice(0, 1200);
+          return String(err || "claim_exception").slice(0, 1200);
+        } catch (_) {
+          return "claim_exception";
+        }
+      })();
+      addAudit(norm(traceId), "JOB_LEASE_EXCEPTION", "", norm(workerId), "error", detail);
+      return null;
+    }
+  };
+
+  const hasLeasedJobForWorker = (workerId) => {
+    const wid = norm(workerId);
+    if (!wid) return false;
+    const rows = sheets.jobs.getDataRange().getValues();
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      if (lower(row[5]) !== "leased") continue;
+      if (norm(row[2]) !== wid) continue;
+      return true;
+    }
+    return false;
+  };
+
   const findTraceByMissionId = (missionId) => {
     const found = findJobRowById(resolveMissionJobId(missionId));
     if (!found) return "";
@@ -1261,7 +1591,12 @@ function doPost(e) {
   };
 
   const nextFailoverTarget = (currentTarget) => {
-    const t = lower(currentTarget);
+    const t = canonicalTarget(currentTarget);
+    if (adaptiveTargetEnabled) {
+      const picked = pickAdaptiveTarget({ preferred: defaultTarget, exclude: t, forceAdaptive: true });
+      const target = canonicalTarget(picked.target || "");
+      if (target && target !== t) return target;
+    }
     if (t === "chatgpt") return "gemini";
     if (t === "gemini") return "chatgpt";
     if (t === "copilot") return "chatgpt";
@@ -1273,9 +1608,8 @@ function doPost(e) {
     const modeName = lower(row[3]);
     if (modeName !== "request_arc") return { switched: false, reason: "mode_not_supported" };
     if (lower(payload.pin_target) === "true") return { switched: false, reason: "target_pinned" };
-    const from = lower(payload.target || "");
+    const from = canonicalTarget(payload.target || "");
     if (!from || from === "all") return { switched: false, reason: "invalid_target" };
-    if (from === "copilot") return { switched: false, reason: "copilot_no_failover" };
     const to = nextFailoverTarget(from);
     if (from === to) return { switched: false, reason: "same_target" };
     payload.target = to;
@@ -1317,7 +1651,7 @@ function doPost(e) {
     const follow = bakuReport.followup;
     if (follow.auto_enqueue !== true) return null;
     const modeName = norm(follow.mode) || "request_arc";
-    const target = lower(norm(follow.target) || "chatgpt");
+    const target = canonicalTarget(norm(follow.target) || "chatgpt") || "chatgpt";
     const executor = upper(norm(follow.executor) || "ARC");
     const prompt = norm(follow.prompt || "");
     if (!prompt) return null;
@@ -1433,7 +1767,7 @@ function doPost(e) {
     return jsonOut({
       status: "ok",
       role: "gateway",
-      version: "arc-gateway-20.1",
+      version: "arc-gateway-20.4",
       control: "gateway_primary",
       lease_timeout_sec: leaseTimeoutSec,
       pending_timeout_sec: pendingTimeoutSec,
@@ -1463,9 +1797,14 @@ function doPost(e) {
     const locked = lock.tryLock(5000);
     if (!locked) return jsonOut({ status: "busy", routed: 0, error: "route_lock_timeout" });
     try {
+      const strictFresh = lower(norm(data.strict_fresh || "false")) === "true";
       const routed = routePendingChatCommands(true);
       if (routed.length > 0) {
         return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
+      }
+      if (strictFresh) {
+        addAudit(norm(data.trace_id), "ROUTE_CHAT_STRICT_EMPTY", "", "", "ok", "strict_fresh_no_new");
+        return jsonOut({ status: "ok", routed: 0, details: [], source: "empty_strict" });
       }
       const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
       if (recent.length > 0) {
@@ -1521,6 +1860,10 @@ function doPost(e) {
   }
 
   if (mode === "admin_status") {
+    const adaptivePick = pickAdaptiveTarget({ preferred: defaultTarget, forceAdaptive: true });
+    const coolChatgpt = getTargetCooldownState("chatgpt");
+    const coolGemini = getTargetCooldownState("gemini");
+    const coolCopilot = getTargetCooldownState("copilot");
     const rows = sheets.jobs.getDataRange().getValues();
     const counts = { pending: 0, leased: 0, done: 0, error: 0, dead: 0, other: 0 };
     for (let i = 1; i < rows.length; i++) {
@@ -1530,7 +1873,7 @@ function doPost(e) {
     }
     return jsonOut({
       status: "ok",
-      gateway_version: "arc-gateway-20.1",
+      gateway_version: "arc-gateway-20.4",
       lease_timeout_sec: leaseTimeoutSec,
       pending_timeout_sec: pendingTimeoutSec,
       max_retry: maxRetry,
@@ -1539,6 +1882,16 @@ function doPost(e) {
       default_route: defaultRoute,
       default_executor: defaultExecutor,
       default_target: defaultTarget,
+      adaptive_target_enabled: adaptiveTargetEnabled,
+      adaptive_target_window_sec: adaptiveWindowSec,
+      adaptive_target_recommended: adaptivePick.target || defaultTarget,
+      target_cooldown_sec: targetCooldownSec,
+      target_fail_streak_threshold: targetFailStreakThreshold,
+      target_cooldowns: {
+        chatgpt: coolChatgpt,
+        gemini: coolGemini,
+        copilot: coolCopilot
+      },
       target_failover_enabled: targetFailoverEnabled,
       require_signature: requireSignature,
       autonomy_paused: autonomyPaused,
@@ -1548,6 +1901,34 @@ function doPost(e) {
       audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
       mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1),
       metrics: buildGatewayOpsMetrics()
+    });
+  }
+
+  if (mode === "admin_target_scores") {
+    const preferred = canonicalTarget(data.preferred || "") || defaultTarget;
+    const exclude = canonicalTarget(data.exclude || "");
+    const forceAdaptive = lower(norm(data.force_adaptive || "false")) === "true";
+    const windowSec = parseIntSafe(data.window_sec, adaptiveWindowSec);
+    const scores = buildAdaptiveTargetScores(windowSec);
+    const picked = pickAdaptiveTarget({
+      preferred: preferred,
+      exclude: exclude,
+      forceAdaptive: forceAdaptive,
+      windowSec: windowSec
+    });
+    return jsonOut({
+      status: "ok",
+      preferred: preferred,
+      exclude: exclude,
+      adaptive_target_enabled: adaptiveTargetEnabled,
+      target_cooldown_sec: targetCooldownSec,
+      target_fail_streak_threshold: targetFailStreakThreshold,
+      window_sec: clamp(parseIntSafe(windowSec, adaptiveWindowSec), 120, 86400),
+      picked: picked.target || preferred,
+      reason: norm(picked.reason),
+      success_rate: picked.success_rate,
+      avg_latency_sec: picked.avg_latency_sec,
+      scores: scores
     });
   }
 
@@ -1629,6 +2010,42 @@ function doPost(e) {
       results_recent: compactRows(snapshot.results && snapshot.results.recent, 8, 320),
       main_chat_recent: compactRows(snapshot.main_chat && snapshot.main_chat.recent, 8, 320)
     });
+  }
+
+  if (mode === "admin_diag_latest") {
+    const limitRaw = parseInt(norm(data.limit || "20"), 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? Math.min(limitRaw, 100) : 20;
+    const workerFilter = norm(data.worker_id);
+    const targetFilter = lower(data.target);
+    const rows = sheets.diag.getDataRange().getValues();
+    const out = [];
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const r = rows[i];
+      const workerId = norm(r[1]);
+      const target = lower(r[2]);
+      if (workerFilter && workerFilter !== workerId) continue;
+      if (targetFilter && targetFilter !== target) continue;
+      out.push({
+        ts: norm(r[0]),
+        worker_id: workerId,
+        target: norm(r[2]),
+        page_url: norm(r[3]),
+        page_title: norm(r[4]),
+        webdriver: norm(r[5]),
+        user_agent: norm(r[6]),
+        webgl_vendor: norm(r[10]),
+        webgl_renderer: norm(r[11]),
+        canvas_hash: norm(r[12]),
+        storage_flags: norm(r[13]),
+        headers: norm(r[14]),
+        challenge_detected: norm(r[15]),
+        challenge_text: norm(r[16]),
+        note: norm(r[17]),
+        trace_id: norm(r[18])
+      });
+      if (out.length >= limit) break;
+    }
+    return jsonOut({ status: "ok", rows: out, count: out.length });
   }
 
   if (mode === "admin_job_probe") {
@@ -1917,6 +2334,86 @@ function doPost(e) {
     return jsonOut({ status: "ok", rows: rows, count: rows.length });
   }
 
+  if (mode === "arc_runtime_status") {
+    const runtimeMode = normalizeRuntimeMode(props.getProperty("ARC_RUNTIME_MODE") || "interactive");
+    const updatedAt = norm(props.getProperty("ARC_RUNTIME_MODE_UPDATED_AT") || "");
+    return jsonOut({ status: "ok", runtime_mode: runtimeMode, updated_at: updatedAt });
+  }
+
+  if (mode === "arc_runtime_set" || mode === "arc_set_runtime_mode") {
+    const requested = normalizeRuntimeMode(data.runtime_mode);
+    const traceId = toTraceId(data.trace_id);
+    const requestWorkerId = norm(data.worker_id);
+    const jobId = norm(data.job_id) || ("RUNTIME_" + Utilities.getUuid().slice(0, 8));
+    const enq = enqueueArcJob({
+      jobId: jobId,
+      qid: jobId,
+      target: "gemini",
+      prompt: "runtime_mode_set",
+      script: "",
+      runtimeMode: requested,
+      mode: "arc_set_runtime_mode",
+      executor: "ARC",
+      user: norm(data.user) || "gateway_runtime",
+      workerId: "",
+      traceId: traceId,
+      retryCount: 0
+    });
+    props.setProperty("ARC_RUNTIME_MODE", requested);
+    props.setProperty("ARC_RUNTIME_MODE_UPDATED_AT", nowIso());
+    addAudit(traceId, "ARC_RUNTIME_SET_QUEUED", enq.jobId, requestWorkerId, "pending", requested);
+    return jsonOut({
+      status: "ok",
+      runtime_mode: requested,
+      job_id: enq.jobId,
+      trace_id: enq.traceId
+    });
+  }
+
+  if (mode === "arc_diag_snapshot") {
+    const workerId = norm(data.worker_id);
+    const target = canonicalTarget(data.target || "copilot") || "copilot";
+    const nav = data.navigator && typeof data.navigator === "object" ? data.navigator : {};
+    const webgl = data.webgl && typeof data.webgl === "object" ? data.webgl : {};
+    const headers = data.headers && typeof data.headers === "object" ? data.headers : {};
+    const challenge = data.challenge && typeof data.challenge === "object" ? data.challenge : {};
+    const traceId = toTraceId(data.trace_id);
+
+    const langs = Array.isArray(nav.languages) ? nav.languages.join(",") : norm(nav.languages);
+    const storageFlags = JSON.stringify({
+      local_storage: !!data.local_storage,
+      session_storage: !!data.session_storage,
+      indexed_db: !!data.indexed_db,
+      service_worker: !!data.service_worker,
+      cookie_enabled: !!data.cookie_enabled
+    });
+
+    sheets.diag.appendRow([
+      new Date(),
+      workerId,
+      target,
+      norm(data.page_url),
+      norm(data.page_title),
+      String(nav.webdriver),
+      norm(nav.userAgent),
+      norm(nav.platform),
+      langs,
+      norm(nav.hardwareConcurrency),
+      norm(webgl.vendor),
+      norm(webgl.renderer),
+      norm(data.canvas_hash),
+      storageFlags,
+      JSON.stringify(headers),
+      String(!!challenge.detected),
+      norm(challenge.text).slice(0, 500),
+      norm(data.note).slice(0, 1000),
+      traceId
+    ]);
+
+    addAudit(traceId, "ARC_DIAG_SNAPSHOT", "", workerId, "ok", target + " / challenge=" + String(!!challenge.detected));
+    return jsonOut({ status: "ok", trace_id: traceId });
+  }
+
   if (mode === "arc_result" || mode === "report_result") {
     const missionIdRaw = norm(data.qid || data.mission_id);
     const missionId = resolveMissionJobId(missionIdRaw);
@@ -1925,6 +2422,7 @@ function doPost(e) {
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
     const found = findJobRowById(missionId);
+    const resultTarget = canonicalTarget(data.target || (found && found.payload ? found.payload.target : "")) || "";
     if (found && evalSummary) {
       const payload = found.payload || {};
       payload.last_eval_summary = evalSummary.slice(0, 1200);
@@ -1949,6 +2447,9 @@ function doPost(e) {
         traceId
       );
     }
+    if (resultTarget) {
+      markTargetSuccess(resultTarget, traceId);
+    }
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
     return jsonOut({ status: "ok", trace_id: traceId });
   }
@@ -1960,6 +2461,8 @@ function doPost(e) {
     const errData = norm(data.data);
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     const workerId = norm(data.worker_id);
+    const foundJobForTarget = findJobRowById(missionId);
+    const errorTarget = canonicalTarget(data.target || (foundJobForTarget && foundJobForTarget.payload ? foundJobForTarget.payload.target : "")) || "";
 
     const recentErr = readRecentRows(sheets.errors, 4, compactScanMax);
     let foundErr = -1;
@@ -2006,11 +2509,13 @@ function doPost(e) {
       );
     }
     if (retry.retried) {
+      if (errorTarget) markTargetFailure(errorTarget, err, errData, traceId);
       addAudit(traceId, "ARC_ERROR_RETRY", missionId, workerId, "pending", "retry=" + retry.retry_count + ",executor=" + retry.executor);
       return jsonOut({ status: "retry_scheduled", trace_id: traceId, retry: retry });
     }
 
     completeArcJob(missionId, "error");
+    if (errorTarget) markTargetFailure(errorTarget, err, errData, traceId);
     addAudit(traceId, "ARC_ERROR", missionId, workerId, "error", err + " / " + retry.reason);
     return jsonOut({ status: "ok", trace_id: traceId, retry: retry });
   }
@@ -2110,14 +2615,22 @@ function doPost(e) {
     if (shouldLeaseTouch) {
       touchLeaseFromHeartbeat(workerId, Object.assign({}, data, { progress_signal: progressSignal ? "true" : "false" }));
     }
+    const runningLike =
+      workerStatus === "running" ||
+      workerStatus === "working" ||
+      workerStatus === "processing" ||
+      workerStatus === "waiting" ||
+      workerStatus === "busy";
+    const activeLeaseForWorker = runningLike ? hasLeasedJobForWorker(workerId) : false;
     const canLease =
       workerStatus === "" ||
       workerStatus === "online" ||
       workerStatus === "idle" ||
       workerStatus === "heartbeat" ||
       workerStatus === "success" ||
-      workerStatus === "error";
-    const instruction = canLease ? claimNextInstruction(workerId, consumer) : null;
+      workerStatus === "error" ||
+      (runningLike && !activeLeaseForWorker);
+    const instruction = canLease ? safeClaimNextInstruction(workerId, consumer, norm(data.trace_id)) : null;
     addAudit(norm(data.trace_id), "ARC_HEARTBEAT", "", workerId, "ok", consumer);
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
   }
@@ -2125,12 +2638,15 @@ function doPost(e) {
   if (mode === "lease_job") {
     const workerId = norm(data.worker_id);
     const consumer = upper(data.executor || "ARC");
-    const instruction = claimNextInstruction(workerId, consumer);
+    const instruction = safeClaimNextInstruction(workerId, consumer, norm(data.trace_id));
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "empty" });
   }
 
   if (mode === "arc_consult") {
-    return jsonOut({ advice: "" });
+    if (!consultEnabled) {
+      return jsonOut({ advice: "", skipped: "disabled" });
+    }
+    return jsonOut({ advice: "", skipped: "empty_policy" });
   }
 
   return jsonOut({ status: "ok" });

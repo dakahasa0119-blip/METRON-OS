@@ -160,8 +160,10 @@ function doPost(e) {
     "arc_consult", "route_chat",
     "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
     "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts",
+    "admin_diag_latest",
     "gateway_memory_put", "gateway_memory_get", "memory_put", "memory_get",
-    "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get"
+    "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get",
+    "arc_diag_snapshot"
   ];
 
   const getRequestTsMs = (v) => {
@@ -257,7 +259,13 @@ function doPost(e) {
     auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     alerts: ensureSheet("ARC_ALERTS", ["Timestamp", "Level", "Type", "Message", "Value", "Threshold", "TraceID"]),
     gatewayMemory: ensureSheet("GATEWAY_LONG_MEMORY", ["Timestamp", "Key", "Value", "Source", "TraceID", "Tags"]),
-    arcShortMemory: ensureSheet("ARC_SHORT_MEMORY", ["Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID"])
+    arcShortMemory: ensureSheet("ARC_SHORT_MEMORY", ["Timestamp", "WorkerID", "SessionID", "Key", "Value", "TTL_SEC", "ExpiresAt", "TraceID"]),
+    diag: ensureSheet("ARC_COPILOT_DIAG", [
+      "Timestamp", "WorkerID", "Target", "PageUrl", "PageTitle",
+      "Webdriver", "UserAgent", "Platform", "Languages", "HardwareConcurrency",
+      "WebglVendor", "WebglRenderer", "CanvasHash", "StorageFlags",
+      "Headers", "ChallengeDetected", "ChallengeText", "Note", "TraceID"
+    ])
   };
 
   const addAudit = (traceId, event, jobId, worker, status, detail) => {
@@ -1631,6 +1639,42 @@ function doPost(e) {
     });
   }
 
+  if (mode === "admin_diag_latest") {
+    const limitRaw = parseInt(norm(data.limit || "20"), 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? Math.min(limitRaw, 100) : 20;
+    const workerFilter = norm(data.worker_id);
+    const targetFilter = lower(data.target);
+    const rows = sheets.diag.getDataRange().getValues();
+    const out = [];
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const r = rows[i];
+      const workerId = norm(r[1]);
+      const target = lower(r[2]);
+      if (workerFilter && workerFilter !== workerId) continue;
+      if (targetFilter && targetFilter !== target) continue;
+      out.push({
+        ts: norm(r[0]),
+        worker_id: workerId,
+        target: norm(r[2]),
+        page_url: norm(r[3]),
+        page_title: norm(r[4]),
+        webdriver: norm(r[5]),
+        user_agent: norm(r[6]),
+        webgl_vendor: norm(r[10]),
+        webgl_renderer: norm(r[11]),
+        canvas_hash: norm(r[12]),
+        storage_flags: norm(r[13]),
+        headers: norm(r[14]),
+        challenge_detected: norm(r[15]),
+        challenge_text: norm(r[16]),
+        note: norm(r[17]),
+        trace_id: norm(r[18])
+      });
+      if (out.length >= limit) break;
+    }
+    return jsonOut({ status: "ok", rows: out, count: out.length });
+  }
+
   if (mode === "admin_job_probe") {
     const jobId = norm(data.job_id || data.mission_id || data.qid);
     if (!jobId) return jsonOut({ status: "error", error: "job_id_required" });
@@ -1915,6 +1959,50 @@ function doPost(e) {
     cleanupArcShortMemory(500);
     const rows = getArcShortMemory(data.worker_id, data.session_id, data.key, data.limit);
     return jsonOut({ status: "ok", rows: rows, count: rows.length });
+  }
+
+  if (mode === "arc_diag_snapshot") {
+    const workerId = norm(data.worker_id);
+    const target = lower(data.target || "copilot");
+    const nav = data.navigator && typeof data.navigator === "object" ? data.navigator : {};
+    const webgl = data.webgl && typeof data.webgl === "object" ? data.webgl : {};
+    const headers = data.headers && typeof data.headers === "object" ? data.headers : {};
+    const challenge = data.challenge && typeof data.challenge === "object" ? data.challenge : {};
+    const traceId = toTraceId(data.trace_id);
+
+    const langs = Array.isArray(nav.languages) ? nav.languages.join(",") : norm(nav.languages);
+    const storageFlags = JSON.stringify({
+      local_storage: !!data.local_storage,
+      session_storage: !!data.session_storage,
+      indexed_db: !!data.indexed_db,
+      service_worker: !!data.service_worker,
+      cookie_enabled: !!data.cookie_enabled
+    });
+
+    sheets.diag.appendRow([
+      new Date(),
+      workerId,
+      target,
+      norm(data.page_url),
+      norm(data.page_title),
+      String(nav.webdriver),
+      norm(nav.userAgent),
+      norm(nav.platform),
+      langs,
+      norm(nav.hardwareConcurrency),
+      norm(webgl.vendor),
+      norm(webgl.renderer),
+      norm(data.canvas_hash),
+      storageFlags,
+      JSON.stringify(headers),
+      String(!!challenge.detected),
+      norm(challenge.text).slice(0, 500),
+      norm(data.note).slice(0, 1000),
+      traceId
+    ]);
+
+    addAudit(traceId, "ARC_DIAG_SNAPSHOT", "", workerId, "ok", target + " / challenge=" + String(!!challenge.detected));
+    return jsonOut({ status: "ok", trace_id: traceId });
   }
 
   if (mode === "arc_result" || mode === "report_result") {

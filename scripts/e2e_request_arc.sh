@@ -29,14 +29,26 @@ route_res=""
 job_id=""
 for r in $(seq 1 "$ROUTE_MAX_ATTEMPTS"); do
   route_res="$(curl -sS -L -m 20 -H "Content-Type: application/json" \
-    -d "{\"mode\":\"route_chat\",\"auth_key\":\"${AUTH}\"}" \
+    -d "{\"mode\":\"route_chat\",\"auth_key\":\"${AUTH}\",\"strict_fresh\":\"true\"}" \
     "$BASE_URL" || true)"
   if [ -z "${route_res:-}" ]; then
     echo "[route $r] timeout_or_empty"
     sleep "$ROUTE_RETRY_SEC"
     continue
   fi
+  if printf '%s' "$route_res" | grep -qi "<!DOCTYPE html>"; then
+    echo "[route $r] gateway_html_error"
+    exit 2
+  fi
   echo "[route $r] $route_res"
+  route_source="$(printf '%s' "$route_res" | python3 -c '
+import json,sys
+try:
+    j=json.load(sys.stdin)
+    print(str(j.get("source","")).strip())
+except Exception:
+    pass
+')"
   job_id="$(printf '%s' "$route_res" | python3 -c '
 import json,sys
 try:
@@ -47,11 +59,10 @@ try:
 except Exception:
     pass
 ')"
-  if [ -z "${job_id:-}" ]; then
-    probe_res="$(curl -sS -L -m 20 -H "Content-Type: application/json" \
-      -d "{\"mode\":\"admin_chat_probe\",\"query\":\"${TAG}\",\"auth_key\":\"${AUTH}\"}" \
-      "$BASE_URL" || true)"
-    job_id="$(printf '%s' "$probe_res" | python3 -c '
+  probe_res="$(curl -sS -L -m 20 -H "Content-Type: application/json" \
+    -d "{\"mode\":\"admin_chat_probe\",\"query\":\"${TAG}\",\"auth_key\":\"${AUTH}\"}" \
+    "$BASE_URL" || true)"
+  probe_job_id="$(printf '%s' "$probe_res" | python3 -c '
 import json,sys
 try:
     j=json.load(sys.stdin)
@@ -60,11 +71,14 @@ try:
 except Exception:
     pass
 ')"
-    if [ -n "${job_id:-}" ]; then
-      echo "[route $r] chat_probe_hit mission_id=$job_id"
-    fi
+  if [ -n "${probe_job_id:-}" ]; then
+    job_id="$probe_job_id"
+    echo "[route $r] chat_probe_hit mission_id=$job_id"
   fi
-  if [ -n "${job_id:-}" ]; then
+  if [ -n "${job_id:-}" ] && [ "${route_source:-}" = "fresh" ]; then
+    break
+  fi
+  if [ -n "${job_id:-}" ] && [ "$r" -ge 2 ]; then
     break
   fi
   sleep "$ROUTE_RETRY_SEC"
@@ -94,7 +108,16 @@ while [ "$elapsed_sec" -le "$E2E_MAX_WAIT_SEC" ]; do
   elapsed_sec=$((elapsed_sec + sleep_sec))
   probe="$(curl -sS -L -m 20 -H "Content-Type: application/json" \
     -d "{\"mode\":\"admin_job_probe\",\"job_id\":\"${job_id}\",\"auth_key\":\"${AUTH}\"}" \
-    "$BASE_URL")"
+    "$BASE_URL" || true)"
+  if [ -z "${probe:-}" ]; then
+    echo "[poll $poll_idx] probe=empty"
+    continue
+  fi
+  if printf '%s' "$probe" | grep -qi "<!DOCTYPE html>"; then
+    echo "[poll $poll_idx] gateway_html_error"
+    final_status="GATEWAY_HTML_ERROR"
+    break
+  fi
 
   parsed="$(printf '%s' "$probe" | python3 -c '
 import json, sys
@@ -146,9 +169,9 @@ print(f"ok\t{job_status}\t{main_status}\t{mission}\t{response}")
     terminal_seen=0
   fi
 
-  if [ "$RECOVER_MODE" = "on" ]; then
+  if [ "$RECOVER_MODE" = "on" ] && [ "$elapsed_sec" -ge 90 ] && { [ "${job_status:-}" = "leased" ] || [ "${main_status:-}" = "QUEUED_ARC" ]; }; then
     curl -sS -L -m 20 -H "Content-Type: application/json" \
-      -d "{\"mode\":\"admin_recover_queues\",\"scope\":\"both\",\"leased_min_sec\":30,\"pending_min_sec\":60,\"auth_key\":\"${AUTH}\"}" \
+      -d "{\"mode\":\"admin_recover_queues\",\"scope\":\"both\",\"leased_min_sec\":45,\"pending_min_sec\":180,\"auth_key\":\"${AUTH}\"}" \
       "$BASE_URL" >/dev/null || true
   fi
 done

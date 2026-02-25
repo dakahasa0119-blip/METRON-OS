@@ -13,10 +13,12 @@ import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.arc.databinding.ActivityMainBinding
 import org.json.JSONObject
 import kotlinx.coroutines.*
+import kotlin.coroutines.resume
 
 /**
  * ARC 統合指令ハブ (v25.1 - Neural Connected)
@@ -25,6 +27,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         var serverPort: Int = 8765 
+        private val GUIDE_TARGET_ORDER = listOf("gemini", "chatgpt", "copilot")
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -36,6 +39,10 @@ class MainActivity : AppCompatActivity() {
     private var currentTarget: AiTarget = AiTarget.GEMINI
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var heartbeatJob: Job? = null
+    private var verificationDialog: AlertDialog? = null
+    private var lastVerificationPromptAtMs: Long = 0L
+    private var dynamicSetupJob: Job? = null
+    private var smokeWaiter: CompletableDeferred<String?>? = null
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val screenTimeoutHandler = Handler(Looper.getMainLooper())
@@ -53,8 +60,10 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             pokeScreen()
             webViewManager.resumeRuntime()
-            debugHud.update("GW: EXEC")
-            Log.d("ARC_UI", "Foreground ensure requested: $reason")
+            val bringToFront = shouldBringToFrontFor(reason)
+            debugHud.update(if (bringToFront) "GW: EXEC" else "GW: BG_EXEC")
+            Log.d("ARC_UI", "Foreground ensure requested: $reason / bring=$bringToFront")
+            if (!bringToFront) return@runOnUiThread
             try {
                 val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
                 am.appTasks.firstOrNull()?.moveToFront()
@@ -73,6 +82,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun shouldBringToFrontFor(reason: String): Boolean {
+        if (reason.startsWith("dynamic_setup")) return true
+        if (reason.startsWith("gateway_instruction") || reason == "remote_job") {
+            return prefs.shouldForceForegroundForGatewayTask()
+        }
+        return true
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,24 +97,31 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         prefs = Prefs(this)
-        if (prefs.keepScreenAwake) {
+        val migrationNotes = prefs.runStartupMigrations()
+        if (prefs.shouldKeepScreenAwakeNow()) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         debugHud = DebugHud(binding.debugHudLayout, prefs)
+        if (migrationNotes.isNotEmpty()) {
+            Log.i("ARC_MIGRATION", "Startup migrations applied: ${migrationNotes.joinToString(",")}")
+            debugHud.update("MIGRATION: Copilot slot -> Claude")
+        }
 
         setupWebView()
         setupPipelines()
         startArcCore()
         setupUi()
+        handleGuideIntent(intent)
+        handleDynamicSetupIntent(intent)
         
         pokeScreen()
         startHeartbeatLoop()
     }
 
     fun pokeScreen() {
-        if (!prefs.keepScreenAwake) return
+        if (!prefs.shouldKeepScreenAwakeNow()) return
         runOnUiThread {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             debugHud.update("SCREEN: ACTIVE")
@@ -174,11 +198,8 @@ class MainActivity : AppCompatActivity() {
                     arcWorker.announceStatus("heartbeat") { instruction ->
                         handleGatewayInstruction(instruction)
                     }
-                } else {
-                    // 実行中も生存信号は出す（命令受信はしない）
-                    arcWorker.announceStatus("running")
                 }
-                val nextDelay = if (busy) minOf(intervalMs, 3000L) else intervalMs
+                val nextDelay = if (busy) minOf(intervalMs, 10_000L) else intervalMs
                 delay(nextDelay)
             }
         }
@@ -190,6 +211,37 @@ class MainActivity : AppCompatActivity() {
         val jobId = instruction.optString("job_id", "")
         Log.d("ARC_GW_INSTR", "mode=$mode job_id=$jobId")
         when (mode) {
+            "arc_set_runtime_mode" -> {
+                val requested = instruction.optString("runtime_mode", Prefs.RUNTIME_MODE_INTERACTIVE)
+                    .trim()
+                    .lowercase()
+                val normalized = if (requested == Prefs.RUNTIME_MODE_AUTONOMOUS) {
+                    Prefs.RUNTIME_MODE_AUTONOMOUS
+                } else {
+                    Prefs.RUNTIME_MODE_INTERACTIVE
+                }
+                prefs.runtimeMode = normalized
+                if (instruction.has("bring_to_front_on_execution")) {
+                    prefs.bringToFrontOnExecution = instruction.optBoolean("bring_to_front_on_execution", false)
+                }
+                if (instruction.has("keep_screen_awake")) {
+                    prefs.keepScreenAwake = instruction.optBoolean("keep_screen_awake", prefs.keepScreenAwake)
+                }
+                if (prefs.shouldKeepScreenAwakeNow()) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                if (jobId.isNotBlank()) {
+                    arcGateway.sendArcResult(
+                        qid = jobId,
+                        result = "runtime_mode_set:$normalized",
+                        missionId = jobId,
+                        target = instruction.optString("target", currentTarget.name)
+                    )
+                }
+                debugHud.update("GW: RUNTIME=$normalized")
+            }
             "request_arc" -> {
                 val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
                 val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
@@ -214,7 +266,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "arc_refresh" -> {
-                webViewManager.refreshProcess()
+                webViewManager.refreshKeepingSession()
                 if (jobId.isNotBlank()) {
                     arcGateway.sendArcResult(
                         qid = jobId,
@@ -314,6 +366,9 @@ class MainActivity : AppCompatActivity() {
                     )
                 ) { }
             },
+            resolveExecutionOrder = { callback ->
+                arcGateway.fetchAdaptiveAllOrder(callback)
+            },
             onFinalResult = { missionId, final, success ->
                 val mid = if (missionId.isBlank()) "ALL_FINAL" else missionId
                 val evalSummary = allAiPipeline.lastEvalSummary()
@@ -364,11 +419,20 @@ class MainActivity : AppCompatActivity() {
         arcGateway.sendSetupRequest(serverPort) { _, _ -> }
         
         arcWorker = ArcWorker(webViewManager, arcGateway, prefs) { allAiPipeline }
-        arcWorker.onGlobalAiResult = { _ ->
+        arcWorker.onGlobalAiResult = { text ->
+            val waiter = smokeWaiter
+            if (waiter != null && !waiter.isCompleted) {
+                waiter.complete(text)
+            }
             runOnUiThread { debugHud.update("GEN_DONE"); pokeScreen() }
         }
         arcWorker.onSystemStatusUpdate = { status -> runOnUiThread { debugHud.update(status) } }
-        arcWorker.onSystemErrorRequest = { type, _ -> runOnUiThread { debugHud.update("ERR: $type") } }
+        arcWorker.onSystemErrorRequest = { type, data ->
+            runOnUiThread {
+                debugHud.update("ERR: $type")
+                maybeShowVerificationDialog(type, data)
+            }
+        }
         arcWorker.onGatewayInstruction = { instruction -> handleGatewayInstruction(instruction) }
         
         arcQueue = ArcTaskQueue(arcWorker)
@@ -427,6 +491,353 @@ class MainActivity : AppCompatActivity() {
         switchAiTarget(currentTarget)
     }
 
+    private fun handleGuideIntent(intent: Intent?) {
+        val targetRaw = intent?.getStringExtra("ARC_GUIDE_TARGET") ?: return
+        val target = normalizeGuideTarget(targetRaw) ?: return
+        val sequence = intent.getBooleanExtra("ARC_GUIDE_SEQUENCE", false)
+        val stepIndex = intent.getIntExtra("ARC_GUIDE_STEP_INDEX", GUIDE_TARGET_ORDER.indexOf(target).coerceAtLeast(0))
+        showGuideStep(target, sequence, stepIndex)
+    }
+
+    private fun handleDynamicSetupIntent(intent: Intent?) {
+        val start = intent?.getBooleanExtra("ARC_DYNAMIC_SETUP", false) ?: false
+        if (!start) return
+        if (dynamicSetupJob?.isActive == true) return
+        dynamicSetupJob = mainScope.launch {
+            runDynamicLoginSetup()
+        }
+    }
+
+    private fun normalizeGuideTarget(raw: String): String? {
+        return when (raw.lowercase().trim()) {
+            "gemini" -> "gemini"
+            "chatgpt", "gpt" -> "chatgpt"
+            "copilot", "claude" -> "copilot"
+            else -> null
+        }
+    }
+
+    private fun targetLabel(target: String): String {
+        return when (target) {
+            "gemini" -> "Gemini"
+            "chatgpt" -> "ChatGPT"
+            "copilot" -> "Claude"
+            else -> target
+        }
+    }
+
+    private fun showGuideStep(target: String, sequence: Boolean, stepIndex: Int) {
+        val ai = when (target) {
+            "gemini" -> AiTarget.GEMINI
+            "chatgpt" -> AiTarget.CHATGPT
+            "copilot" -> AiTarget.COPILOT
+            else -> return
+        }
+        switchAiTarget(ai)
+        val message = getString(R.string.msg_login_guide_step, targetLabel(target))
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.title_login_guide))
+            .setMessage(message)
+            .setCancelable(false)
+            .setNegativeButton(getString(R.string.btn_guide_close), null)
+            .setPositiveButton(getString(R.string.btn_guide_next)) { _, _ ->
+                if (sequence) {
+                    val nextIndex = stepIndex + 1
+                    if (nextIndex in GUIDE_TARGET_ORDER.indices) {
+                        showGuideStep(GUIDE_TARGET_ORDER[nextIndex], true, nextIndex)
+                        return@setPositiveButton
+                    }
+                }
+                Toast.makeText(this, getString(R.string.toast_login_guide_done), Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private suspend fun runDynamicLoginSetup() {
+        val steps = listOf(
+            AiTarget.GEMINI to "Gemini",
+            AiTarget.CHATGPT to "ChatGPT",
+            AiTarget.COPILOT to "Claude"
+        )
+        val skippedOrFailed = mutableListOf<String>()
+        setupLoop@ for ((target, label) in steps) {
+            ensureOperationalForeground("dynamic_setup_$label")
+            switchAiTarget(target)
+            delay(2200)
+
+            var ready = false
+            var skipCurrent = false
+            for (attempt in 0 until 12) {
+                val p = probeCurrentPage()
+                val loginReady = isSignedInForSetup(target, p)
+                if (p.challenge || !p.inputReady || !loginReady) {
+                    val reason = when {
+                        p.challenge -> "認証/ボット検知画面"
+                        !p.inputReady -> "入力欄未検出"
+                        else -> "ログイン未完了"
+                    }
+                    val action = awaitManualStep(
+                        title = "$label: 手動確認",
+                        message = "状態: $reason\nARC内のこの画面でログイン/認証を完了してから「再チェック」を押してください。\n必要なら外部ブラウザも開けます。\nURL: ${prefs.getUrlFor(target.name)}",
+                        url = prefs.getUrlFor(target.name)
+                    )
+                    when (action) {
+                        ManualStepAction.RECHECK -> delay(1000)
+                        ManualStepAction.SKIP_CURRENT -> {
+                            skipCurrent = true
+                            break
+                        }
+                        ManualStepAction.ABORT_ALL -> return
+                    }
+                } else {
+                    ready = true
+                    break
+                }
+            }
+            if (skipCurrent) continue@setupLoop
+            if (!ready) {
+                skippedOrFailed += "$label(準備確認)"
+                continue@setupLoop
+            }
+
+            val smokeOk = runSmokeTest(target)
+            if (!smokeOk) {
+                val action = awaitManualStep(
+                    title = "$label: 送受信確認失敗",
+                    message = "短文送信の確認に失敗しました。ARC内の画面を確認して「再チェック」を押してください。",
+                    url = prefs.getUrlFor(target.name)
+                )
+                when (action) {
+                    ManualStepAction.RECHECK -> {
+                        if (!runSmokeTest(target)) {
+                            skippedOrFailed += "$label(送受信確認)"
+                            continue@setupLoop
+                        }
+                    }
+                    ManualStepAction.SKIP_CURRENT -> continue@setupLoop
+                    ManualStepAction.ABORT_ALL -> return
+                }
+            }
+        }
+        val msg = if (skippedOrFailed.isEmpty()) {
+            "動的ログイン検証を完了しました"
+        } else {
+            "動的ログイン検証完了（一部未完了: ${skippedOrFailed.joinToString(" / ")}）"
+        }
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    }
+
+    private data class PageProbe(
+        val inputReady: Boolean,
+        val sendReady: Boolean,
+        val challenge: Boolean,
+        val loginPrompt: Boolean,
+        val accountMenu: Boolean,
+        val title: String
+    )
+
+    private enum class ManualStepAction {
+        RECHECK,
+        SKIP_CURRENT,
+        ABORT_ALL
+    }
+
+    private suspend fun probeCurrentPage(): PageProbe = suspendCancellableCoroutine { cont ->
+        val js = """
+            (function(){
+              function q(sel){ try { return document.querySelector(sel); } catch(_) { return null; } }
+              const text = ((document.body && document.body.innerText) ? document.body.innerText : '').toLowerCase();
+              const hasLoginAnchor = !!q("a[href*='login' i], a[href*='signin' i], a[href*='auth' i]");
+              const hasLoginButton = !!q("button[data-testid*='login' i], button[aria-label*='log in' i], button[aria-label*='sign in' i]");
+              const loginPrompt = hasLoginAnchor || hasLoginButton || text.includes('log in') || text.includes('sign in') || text.includes('ログイン') || text.includes('サインイン');
+              const accountMenu = !!q("button[data-testid='profile-button'], [aria-label*='profile' i], [aria-label*='account' i], a[href*='settings' i], img[alt*='profile' i]");
+              const challengeStrong = text.includes('i am not a robot') ||
+                text.includes('verify you are human') ||
+                text.includes('captcha') ||
+                text.includes('challenge.cloudflare.com') ||
+                text.includes('checking your browser') ||
+                text.includes('security check to access') ||
+                text.includes('私はロボットではありません') ||
+                !!q("iframe[src*='challenge' i],iframe[src*='captcha' i]");
+              const input = q("textarea, div[contenteditable='true'][role='textbox'], [contenteditable='true']");
+              const send = q("button[data-testid*='send' i], button[aria-label*='送信' i], button[aria-label*='send' i], button[type='submit'], [data-testid='fruitjuice-send-button'], #send-button");
+              const challenge = !!challengeStrong && !input;
+              return JSON.stringify({
+                inputReady: !!input,
+                sendReady: !!send || !!input,
+                challenge: !!challenge,
+                loginPrompt: !!loginPrompt,
+                accountMenu: !!accountMenu,
+                title: document.title || ''
+              });
+            })();
+        """.trimIndent()
+        webViewManager.webView?.post {
+            webViewManager.webView?.evaluateJavascript(js) { raw ->
+                try {
+                    val decoded = JSONObject("{\"v\":$raw}").optString("v", "")
+                    val obj = if (decoded.isBlank()) JSONObject() else JSONObject(decoded)
+                    cont.resume(
+                        PageProbe(
+                            inputReady = obj.optBoolean("inputReady", false),
+                            sendReady = obj.optBoolean("sendReady", false),
+                            challenge = obj.optBoolean("challenge", false),
+                            loginPrompt = obj.optBoolean("loginPrompt", false),
+                            accountMenu = obj.optBoolean("accountMenu", false),
+                            title = obj.optString("title", "")
+                        )
+                    )
+                } catch (_: Exception) {
+                    cont.resume(PageProbe(false, false, true, true, false, ""))
+                }
+            }
+        } ?: cont.resume(PageProbe(false, false, true, true, false, ""))
+    }
+
+    private fun isSignedInForSetup(target: AiTarget, p: PageProbe): Boolean {
+        val url = webViewManager.currentUrl().lowercase()
+        if (p.loginPrompt) return false
+        return when (target) {
+            AiTarget.GEMINI -> {
+                !url.contains("accounts.google.com") &&
+                    !url.contains("servicelogin") &&
+                    p.inputReady
+            }
+            AiTarget.CHATGPT -> {
+                !url.contains("auth.openai.com") &&
+                    !url.contains("chatgpt.com/auth") &&
+                    p.inputReady &&
+                    (p.accountMenu || !p.loginPrompt)
+            }
+            AiTarget.COPILOT -> {
+                (!url.contains("claude.ai/login") || url.contains("app-google-auth")) &&
+                    p.inputReady &&
+                    (p.accountMenu || !p.loginPrompt)
+            }
+            else -> p.inputReady
+        }
+    }
+
+    private suspend fun runSmokeTest(target: AiTarget): Boolean {
+        val (inputSel, sendSel) = prefs.getSelectorsFor(target.name)
+        if (inputSel.isBlank() || sendSel.isBlank()) return false
+        val waiter = CompletableDeferred<String?>()
+        smokeWaiter = waiter
+        val token = "SETUP_OK_" + (System.currentTimeMillis() % 100000)
+        val prompt = "接続確認です。次の文字列をそのまま返答してください: $token"
+        webViewManager.injectPromptForcefully(inputSel, sendSel, prompt)
+        val result = withTimeoutOrNull(35_000L) { waiter.await() } ?: ""
+        smokeWaiter = null
+        val lower = result.lowercase()
+        val normalized = lower.trim()
+        if (lower.contains("cloudflare") || lower.contains("captcha") || lower.contains("robot")) return false
+        if (normalized == "ok" || normalized == "ok." || normalized == "okay") return true
+        if (result.contains(token)) return true
+        return result.isNotBlank() && result.length >= 6
+    }
+
+    private suspend fun awaitManualStep(title: String, message: String, url: String): ManualStepAction =
+        suspendCancellableCoroutine { cont ->
+            val dlg = AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setCancelable(false)
+                .setNegativeButton("このAIをスキップ") { _, _ ->
+                    if (!cont.isCompleted) cont.resume(ManualStepAction.SKIP_CURRENT)
+                }
+                .setNeutralButton(getString(R.string.btn_open_external_browser)) { _, _ ->
+                    openExternalBrowser(url)
+                    if (!cont.isCompleted) cont.resume(ManualStepAction.RECHECK)
+                }
+                .setPositiveButton(getString(R.string.btn_recheck)) { _, _ ->
+                    if (!cont.isCompleted) cont.resume(ManualStepAction.RECHECK)
+                }
+                .create()
+            dlg.show()
+            cont.invokeOnCancellation { dlg.dismiss() }
+        }
+
+    private fun maybeShowVerificationDialog(type: String, data: String?) {
+        if (!requiresManualVerification(type, data)) return
+        val now = System.currentTimeMillis()
+        if (now - lastVerificationPromptAtMs < 12_000L) return
+        if (verificationDialog?.isShowing == true) return
+        lastVerificationPromptAtMs = now
+
+        val targetUrl = when {
+            type.contains("COPILOT", ignoreCase = true) ||
+                (data ?: "").contains("copilot", ignoreCase = true) ||
+                (data ?: "").contains("claude", ignoreCase = true) ->
+                prefs.getUrlFor("copilot")
+            type.contains("LOGIN_REQUIRED", ignoreCase = true) && !data.isNullOrBlank() ->
+                data
+            else -> webViewManager.currentUrl().ifBlank { prefs.getUrlFor("copilot") }
+        }
+
+        verificationDialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.title_verification_required))
+            .setMessage(getString(R.string.msg_verification_required))
+            .setCancelable(false)
+            .setNegativeButton(getString(R.string.btn_guide_close)) { _, _ ->
+                arcWorker.announceStatus("verification_deferred")
+            }
+            .setNeutralButton(getString(R.string.btn_open_external_browser)) { _, _ ->
+                openExternalBrowser(targetUrl)
+            }
+            .setPositiveButton(getString(R.string.btn_resume_here)) { _, _ ->
+                val target = inferVerificationTarget(type, data)
+                switchAiTarget(target)
+                webViewManager.webView?.post { webViewManager.webView?.loadUrl(prefs.getUrlFor(target.name)) }
+                arcWorker.announceStatus("verification_resumed")
+                Toast.makeText(this, getString(R.string.toast_verification_resumed), Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun inferVerificationTarget(type: String, data: String?): AiTarget {
+        val merged = (type + " " + (data ?: "") + " " + webViewManager.currentUrl()).lowercase()
+        return when {
+            merged.contains("copilot") || merged.contains("claude.ai") || merged.contains("claude") -> AiTarget.COPILOT
+            merged.contains("chatgpt") || merged.contains("auth.openai.com") || merged.contains("openai") -> AiTarget.CHATGPT
+            merged.contains("gemini") || merged.contains("google.com") || merged.contains("accounts.google") -> AiTarget.GEMINI
+            else -> currentTarget
+        }
+    }
+
+    private fun requiresManualVerification(type: String, data: String?): Boolean {
+        val s = (type + " " + (data ?: "")).lowercase()
+        val marks = listOf(
+            "copilot_bot_blocked",
+            "challenge.cloudflare.com",
+            "checking your browser",
+            "captcha",
+            "recaptcha",
+            "robot",
+            "verify you are human",
+            "私はロボットではありません"
+        )
+        val hasExplicitLogin = s.contains("login_required") && (
+            s.contains("accounts.google.com") ||
+                s.contains("auth.openai.com") ||
+                s.contains("chatgpt.com/auth") ||
+                s.contains("claude.ai/login")
+            )
+        return hasExplicitLogin || marks.any { s.contains(it) }
+    }
+
+    private fun openExternalBrowser(url: String) {
+        val u = if (url.isBlank()) prefs.getUrlFor("copilot") else url
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(u)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        } catch (_: Exception) {
+            debugHud.update("EXT_BROWSER_OPEN_FAIL")
+        }
+    }
+
     private fun updateRunModeUi() {
         val isHeadless = prefs.headlessMode
         binding.aiTabRow.visibility = if (isHeadless) View.GONE else View.VISIBLE
@@ -451,7 +862,7 @@ class MainActivity : AppCompatActivity() {
         val label = when (target) {
             AiTarget.GEMINI -> "Gemini"
             AiTarget.CHATGPT -> "ChatGPT"
-            AiTarget.COPILOT -> "Copilot"
+            AiTarget.COPILOT -> "Claude"
             else -> target.name
         }
         Log.d("ARC_UI", "Switched AI target: $label")
@@ -478,12 +889,21 @@ class MainActivity : AppCompatActivity() {
         webViewManager.resumeRuntime()
     }
 
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleGuideIntent(intent)
+        handleDynamicSetupIntent(intent)
+    }
+
     override fun onPause() {
         super.onPause()
         wakeLock?.let { if (it.isHeld) it.release() }
     }
 
     override fun onDestroy() {
+        verificationDialog?.dismiss()
+        verificationDialog = null
         heartbeatJob?.cancel()
         mainScope.cancel()
         arcServer?.stop(); webViewManager.destroy()

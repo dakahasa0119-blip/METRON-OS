@@ -43,6 +43,9 @@ class ArcWorker(
     private var pendingFastHeartbeatJob: Job? = null
     private var lastCopilotDiagAtMs: Long = 0L
     private val copilotDiagCooldownMs: Long = 20_000L
+    private var consultInFlight: Boolean = false
+    private var consultAttemptCount: Int = 0
+    private var lastConsultAtMs: Long = 0L
     private val webDiag by lazy { WebViewDiagnosticProbe(web, gateway, prefs, workerScope) }
     private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
     private val timingModels = mutableMapOf<String, TimingModel>()
@@ -75,12 +78,10 @@ class ArcWorker(
         if (isDriveReferencePrompt(prompt)) {
             return when (target.lowercase()) {
                 "gemini" -> 150_000L
-                "copilot" -> 120_000L
                 else -> 120_000L
             }
         }
         return when (target.lowercase()) {
-            "copilot" -> 90_000L
             else -> 45_000L
         }
     }
@@ -89,13 +90,10 @@ class ArcWorker(
         if (isDriveReferencePrompt(prompt)) {
             return when (target.lowercase()) {
                 "gemini" -> 95_000L
-                "copilot" -> 45_000L
                 else -> 70_000L
             }
         }
         return when (target.lowercase()) {
-            // Copilot の bot 壁は早めに見切って failover を促進
-            "copilot" -> 18_000L
             else -> 28_000L
         }
     }
@@ -152,6 +150,16 @@ class ArcWorker(
                 put("hud_tail", snapshotStatusTrail())
                 put("hud_last", latestStatus())
                 put("arc_qid", currentQid ?: "")
+                put("runtime_mode", prefs.normalizedRuntimeMode())
+                put("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
+                put("effective_keep_screen_awake", prefs.shouldKeepScreenAwakeNow())
+                put("capabilities", JSONObject().apply {
+                    put("supports_slot_mode", false)
+                    put("supports_consensus", true)
+                    put("supports_runtime_mode_switch", true)
+                    put("supports_compact_corner_mode", prefs.compactCornerMode)
+                    put("supports_minimize_guard", prefs.minimizeGuardEnabled)
+                })
             }
         }
         // 🚀 現場(WebView)からの全信号を掌握し、ミッション文脈に合わせてルーティング
@@ -213,8 +221,28 @@ class ArcWorker(
      * 🧠 [知能統合] 現場の失敗を、Gatewayの長期記憶または外部AIで連動解決する
      */
     private fun handleOperationFailure(precisionData: String) {
+        if (!prefs.consultGatewayEnabled) {
+            emitStatus("CONSULT_DISABLED")
+            startExpertHealing(precisionData)
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (consultInFlight) {
+            emitStatus("CONSULT_SKIP:IN_FLIGHT")
+            startExpertHealing(precisionData)
+            return
+        }
+        if (consultAttemptCount >= 1 || now - lastConsultAtMs < 7_000L) {
+            emitStatus("CONSULT_SKIP:THROTTLED")
+            startExpertHealing(precisionData)
+            return
+        }
+        consultInFlight = true
+        consultAttemptCount++
+        lastConsultAtMs = now
         emitStatus("CONSULTING BRAIN...")
         gateway.consultGateway("Failed at $lastFailedSelector", precisionData) { advice ->
+            consultInFlight = false
             if (advice.isNullOrBlank()) {
                 startExpertHealing(precisionData)
                 return@consultGateway
@@ -276,7 +304,7 @@ class ArcWorker(
         val nowMs = System.currentTimeMillis()
         val statusHint = when {
             status.startsWith("MISSION OK") || status.startsWith("PIPE_STEP_DONE") -> "success"
-            status.startsWith("ERROR") || status.startsWith("COPILOT_BOT_BLOCKED") -> "error"
+            status.startsWith("ERROR") || status.startsWith("BOT_BLOCKED") -> "error"
             else -> "running"
         }
         val delayMs = reserveFastHeartbeatDelayMs(nowMs)
@@ -380,6 +408,9 @@ class ArcWorker(
                 if (!task.isSelfHealing) {
                     stealthRetryCount = 0
                     adaptiveRetryCount = 0
+                    consultAttemptCount = 0
+                    consultInFlight = false
+                    lastConsultAtMs = 0L
                 }
                 currentDoneCallback = done
                 announceStatus("running")
@@ -469,7 +500,6 @@ class ArcWorker(
             emitStatus("LONG_WAIT_MODE:DRIVE_REF")
         }
         val timeoutMs = perAttemptTimeoutMsFor(target, task.prompt)
-        val isCopilot = target == "copilot"
         timeoutJob = workerScope.launch {
             val startedAt = System.currentTimeMillis()
             var lastSeq = currentStatusSeq()
@@ -498,42 +528,34 @@ class ArcWorker(
                     return@launch
                 }
 
-                if (isCopilot && elapsed >= 6_000L) {
+                if (elapsed >= 12_000L) {
                     val bot = detectBotWallQuick()
                     if (bot.first) {
-                        handleDomError("COPILOT_BOT_BLOCKED", bot.second)
-                        return@launch
-                    }
-                } else if (elapsed >= 12_000L) {
-                    val bot = detectBotWallQuick()
-                    if (bot.first) {
-                        handleDomError("COPILOT_BOT_BLOCKED", bot.second)
+                        handleDomError("BOT_BLOCKED", bot.second)
                         return@launch
                     }
                 }
 
-                if (target == "gemini") {
-                    val signal = probeProgressQuick()
-                    generatingNow = signal.generating
-                    if (elapsed >= 7_000L && signal.marker.isNotBlank()) {
-                        val code = Regex("""code[:_](\d+)""", RegexOption.IGNORE_CASE)
-                            .find(signal.marker)
-                            ?.groupValues
-                            ?.getOrNull(1)
-                            ?.trim()
-                        val errType = if (!code.isNullOrBlank()) "GEMINI_FAIL_$code" else "GEMINI_FAIL_GENERIC"
-                        handleDomError(errType, signal.marker)
-                        return@launch
-                    }
-                    if (signal.generating) {
-                        lastProgressAt = now
-                    }
-                    if (signal.assistantLen > lastAssistantLen + 8) {
-                        lastAssistantLen = signal.assistantLen
-                        lastProgressAt = now
-                    } else if (signal.assistantLen > lastAssistantLen) {
-                        lastAssistantLen = signal.assistantLen
-                    }
+                val signal = probeProgressQuick()
+                generatingNow = signal.generating
+                if (target == "gemini" && elapsed >= 7_000L && signal.marker.isNotBlank()) {
+                    val code = Regex("""code[:_](\d+)""", RegexOption.IGNORE_CASE)
+                        .find(signal.marker)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.trim()
+                    val errType = if (!code.isNullOrBlank()) "GEMINI_FAIL_$code" else "GEMINI_FAIL_GENERIC"
+                    handleDomError(errType, signal.marker)
+                    return@launch
+                }
+                if (signal.generating) {
+                    lastProgressAt = now
+                }
+                if (signal.assistantLen > lastAssistantLen + 8) {
+                    lastAssistantLen = signal.assistantLen
+                    lastProgressAt = now
+                } else if (signal.assistantLen > lastAssistantLen) {
+                    lastAssistantLen = signal.assistantLen
                 }
 
                 if (elapsed >= 15_000L) {
@@ -564,16 +586,8 @@ class ArcWorker(
                 if (noProgressMs >= dynamicNoProgressMs) {
                     val bot = detectBotWallQuick()
                     if (bot.first) {
-                        handleDomError("COPILOT_BOT_BLOCKED", bot.second)
+                        handleDomError("BOT_BLOCKED", bot.second)
                         return@launch
-                    }
-                    if (target == "copilot") {
-                        delay(450)
-                        val botRetry = detectBotWallQuick()
-                        if (botRetry.first) {
-                            handleDomError("COPILOT_BOT_BLOCKED", botRetry.second)
-                            return@launch
-                        }
                     }
                     handleDomError("STALL_NO_PROGRESS", "no_status_change_ms=$noProgressMs")
                     return@launch
@@ -615,7 +629,7 @@ class ArcWorker(
         taskHeartbeatJob = workerScope.launch {
             while (isActive && !isAborted && currentQid == qid) {
                 announceStatus("running")
-                delay(4_000L)
+                delay(10_000L)
             }
         }
     }
@@ -627,21 +641,6 @@ class ArcWorker(
         val done = currentDoneCallback
         val elapsedMs = (System.currentTimeMillis() - currentAttemptStartedAtMs).coerceAtLeast(0L)
         val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
-        if (target == "copilot" && looksLikeCopilotBotWall(result)) {
-            emitStatus("COPILOT_BOT_BLOCKED_RESULT")
-            triggerCopilotDiag("result_block")
-            gateway.sendArcError(
-                qid,
-                "COPILOT_BOT_BLOCKED",
-                "challenge_detected_in_result",
-                missionId = currentMissionId,
-                target = lastAiTask?.target,
-                prompt = lastAiTask?.prompt
-            )
-            announceStatus("error")
-            finishTask(done)
-            return
-        }
         if (qid.startsWith("HEAL_")) {
             gateway.reportLearning(lastTarget, result)
             applyHealing(result); finishTask(done)
@@ -684,34 +683,19 @@ class ArcWorker(
         }
     }
 
-    private fun looksLikeCopilotBotWall(text: String): Boolean {
-        val lower = text.lowercase()
-        val marks = listOf(
-            "検証に失敗しました",
-            "トラブルシューティング",
-            "challenge.cloudflare.com",
-            "cloudflare",
-            "verify you are human",
-            "i am not a robot",
-            "security check"
-        )
-        return marks.any { lower.contains(it.lowercase()) }
-    }
-
     private fun isLoginRequiredUrl(target: String, url: String): Boolean {
         val u = url.lowercase()
         if (u.isBlank()) return false
-        if (u.contains("bot.sannysoft.com") && target != "mobile_browser" && target != "full_browser") return true
         return when (target.lowercase()) {
             "gemini" ->
-                u.contains("accounts.google.com") || u.contains("/signin") || u.contains("/serviceLogin".lowercase())
+                u.contains("accounts.google.com") ||
+                    u.contains("myaccount.google.com") ||
+                    u.contains("servicelogin")
             "chatgpt" ->
-                u.contains("auth.openai.com") || u.contains("chatgpt.com/auth") || u.contains("/login")
+                u.contains("auth.openai.com") ||
+                    u.contains("chatgpt.com/auth")
             "copilot" ->
-                u.contains("login.live.com") ||
-                    u.contains("microsoftonline.com") ||
-                    u.contains("/signin") ||
-                    u.contains("/login")
+                u.contains("claude.ai/login") && !u.contains("app-google-auth")
             else -> false
         }
     }
@@ -744,18 +728,6 @@ class ArcWorker(
         val qid = currentQid ?: ""
         val isGeminiTransient = type == "GEMINI_FAIL_2" || type == "GEMINI_FAIL_13"
         if (
-            type.contains("COPILOT_BOT_BLOCKED", ignoreCase = true) ||
-            type.contains("COPILOT_CLOUDFLARE_BYPASS", ignoreCase = true)
-        ) {
-            triggerCopilotDiag("dom_error:${type.take(48)}")
-        } else if (type.contains("STALL_NO_PROGRESS", ignoreCase = true)) {
-            val targetNow = inferTargetFromUrl(web.currentUrl()).ifBlank { lastTarget }
-            if (targetNow == "copilot") {
-                triggerCopilotDiag("copilot_stall_no_progress")
-            }
-        }
-
-        if (
             isGeminiTransient &&
             currentQid != null &&
             qid != "manual" &&
@@ -775,11 +747,6 @@ class ArcWorker(
                 }
                 return
             }
-        }
-
-        if (type.contains("COPILOT_BOT_BLOCKED", ignoreCase = true)) {
-            handleDomErrorFallback("COPILOT_BOT_BLOCKED", data ?: "cloudflare_challenge_persistent")
-            return
         }
 
         val maybeRecoverable = currentQid != null &&
@@ -896,6 +863,11 @@ class ArcWorker(
             onDone(false)
             return
         }
+        if (!prefs.consultGatewayEnabled) {
+            val fallback = ScreenDecision("RETRY", note = "consult_disabled")
+            executeDecision(fallback, task, onDone)
+            return
+        }
 
         emitStatus("SCREEN_ANALYZE")
         web.captureBitmap { bmp ->
@@ -999,9 +971,15 @@ class ArcWorker(
     }
 
     private fun currentRecoveryTarget(): String {
-        val t = lastAiTask?.target?.lowercase()?.trim().orEmpty()
+        val t = when (lastAiTask?.target?.lowercase()?.trim().orEmpty()) {
+            "claude" -> "copilot"
+            else -> lastAiTask?.target?.lowercase()?.trim().orEmpty()
+        }
         if (t == "chatgpt" || t == "gemini" || t == "copilot") return t
-        val fallback = lastTarget.lowercase().trim()
+        val fallback = when (lastTarget.lowercase().trim()) {
+            "claude" -> "copilot"
+            else -> lastTarget.lowercase().trim()
+        }
         if (fallback == "chatgpt" || fallback == "gemini" || fallback == "copilot") return fallback
         return "gemini"
     }
@@ -1092,7 +1070,7 @@ class ArcWorker(
         return when {
             u.contains("chatgpt.com") -> "chatgpt"
             u.contains("gemini.google.com") -> "gemini"
-            u.contains("copilot.microsoft.com") || u.contains("bing.com/chat") -> "copilot"
+            u.contains("copilot.microsoft.com") || u.contains("bing.com/chat") || u.contains("claude.ai") -> "copilot"
             else -> ""
         }
     }

@@ -2,7 +2,7 @@
     <string name="app_name">ARC</string>
     <string name="btn_gemini">ジェミニ</string>
     <string name="btn_chatgpt">チャットGPT</string>
-    <string name="btn_copilot">コパイロット</string>
+    <string name="btn_copilot">Claude</string>
     <string name="hint_prompt">メッセージを入力…</string>
     <string name="btn_send">送信</string>
     <string name="btn_settings">設定</string>
@@ -22,10 +22,24 @@
     <string name="hint_sheet_id">スプレッドシート ID（任意）</string>
     <string name="btn_auto_setup">自動セットアップ実行</string>
     <string name="btn_auto_setup_running">環境構築中…</string>
+    <string name="btn_login_guide">ログインガイド開始</string>
+    <string name="title_login_guide">AIログインガイド</string>
+    <string name="msg_login_guide_start">初期構築時に各AIへ順番に遷移し、ログイン/認証を手動で完了します。完了後は次へ進んでください。</string>
+    <string name="msg_login_guide_step">[%1$s]\n1) 正規ログイン状態を確認\n2) 必要なら認証チェックを完了\n3) 完了後に「このAIは完了」を押す</string>
+    <string name="btn_guide_start">開始</string>
+    <string name="btn_guide_next">このAIは完了</string>
+    <string name="btn_guide_close">あとで</string>
+    <string name="toast_login_guide_done">ログインガイドを完了しました</string>
+    <string name="title_verification_required">手動確認が必要です</string>
+    <string name="msg_verification_required">外部AI側で確認画面が出ています。\n「外部ブラウザで開く」で確認を完了し、終わったら「この端末で再開」を押してください。</string>
+    <string name="btn_open_external_browser">外部ブラウザで開く</string>
+    <string name="btn_resume_here">この端末で再開</string>
+    <string name="btn_recheck">再チェック</string>
+    <string name="toast_verification_resumed">確認完了として再開しました</string>
 
     <string name="label_gemini">Google Gemini 設定</string>
     <string name="label_chatgpt">OpenAI ChatGPT 設定</string>
-    <string name="label_copilot">Microsoft Copilot 設定</string>
+    <string name="label_copilot">Anthropic Claude 設定</string>
     <string name="hint_url">サービス URL</string>
     <string name="hint_input_sel">入力セレクタ</string>
     <string name="hint_send_sel">送信セレクタ</string>

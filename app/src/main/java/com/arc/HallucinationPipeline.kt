@@ -73,7 +73,7 @@ class HallucinationPipeline(
         phase = 1
 
         Log.d("ARC_HALLUCINATION", "🔍 Starting Fact Check Phase...")
-        // Copilot は bot/challenge 影響を受けやすいため、最終検証は ChatGPT 側で実施
+        // 最終検証は安定性重視で ChatGPT 側で実施
         
         val factCheckPrompt = """
             以下の内容に事実誤認や矛盾がないか最終確認し、必要なら修正して完成させてください。
