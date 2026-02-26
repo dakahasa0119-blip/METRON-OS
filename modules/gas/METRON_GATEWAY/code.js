@@ -189,7 +189,7 @@ function submitGatewayChat(text) {
 
 /**
  * UI から複数メッセージをまとめて投入し、ルーティングを一度だけ実行する。
- * AllAI 送信時の route_chat 競合を避けるための入口。
+ * 複数スロット送信時の route_chat 競合を避けるための入口。
  */
 function submitGatewayChatBatch(texts) {
   const list = Array.isArray(texts) ? texts : [];
@@ -565,6 +565,99 @@ function fetchStaging() {
     console.error("fetchStaging error:", e);
     return [];
   }
+}
+
+/**
+ * Settingsタブ向け: スロット一覧を取得する。
+ */
+function fetchGatewaySlotsForUi() {
+  const res = callGatewayMode_("admin_slot_list", {});
+  if (!res || String(res.status || "ok") !== "ok") {
+    return { status: "error", error: String((res && res.error) || "slot_list_failed"), slots: [] };
+  }
+  return {
+    status: "ok",
+    count: Number(res.count || 0),
+    slots: Array.isArray(res.slots) ? res.slots : []
+  };
+}
+
+/**
+ * Settingsタブ向け: スロットを追加/更新する。
+ */
+function upsertGatewaySlotForUi(slot) {
+  const s = slot && typeof slot === "object" ? slot : {};
+  const payload = {
+    slot_id: String(s.slot_id || "").trim(),
+    display_name: String(s.display_name || "").trim(),
+    target: String(s.target || "").trim(),
+    url: String(s.url || "").trim(),
+    enabled: !!s.enabled,
+    priority: Number(s.priority || 100),
+    selectors_json: String(s.selectors_json || "").trim()
+  };
+  const res = callGatewayMode_("admin_slot_upsert", payload);
+  if (!res || String(res.status || "ok") !== "ok") {
+    return { status: "error", error: String((res && res.error) || "slot_upsert_failed") };
+  }
+  return { status: "ok", slot: res.slot || null, count: Number(res.count || 0) };
+}
+
+/**
+ * Settingsタブ向け: スロットを削除/無効化する。
+ */
+function deleteGatewaySlotForUi(slotId, hardDelete) {
+  const payload = {
+    slot_id: String(slotId || "").trim(),
+    hard_delete: !!hardDelete
+  };
+  const res = callGatewayMode_("admin_slot_delete", payload);
+  if (!res || String(res.status || "ok") !== "ok") {
+    return { status: "error", error: String((res && res.error) || "slot_delete_failed") };
+  }
+  return {
+    status: "ok",
+    slot: res.slot || null,
+    count: Number(res.count || 0),
+    hard_delete: !!res.hard_delete
+  };
+}
+
+/**
+ * Settingsタブ向け: スロット選択の評価結果を確認する。
+ */
+function fetchGatewaySlotScoresForUi(target) {
+  const res = callGatewayMode_("admin_slot_scores", {
+    target: String(target || "all").trim() || "all"
+  });
+  if (!res || String(res.status || "ok") !== "ok") {
+    return { status: "error", error: String((res && res.error) || "slot_scores_failed") };
+  }
+  return res;
+}
+
+/**
+ * Settingsタブ向け: Gateway長期記憶を検索する。
+ */
+function searchGatewayMemoryForUi(query, options) {
+  const opt = options && typeof options === "object" ? options : {};
+  const payload = {
+    query: String(query || "").trim(),
+    limit: Number(opt.limit || 8),
+    target: String(opt.target || "").trim(),
+    slot_id: String(opt.slot_id || "").trim(),
+    user: String(opt.user || "").trim()
+  };
+  const res = callGatewayMode_("memory_search", payload);
+  if (!res || String(res.status || "ok") !== "ok") {
+    return { status: "error", error: String((res && res.error) || "memory_search_failed"), items: [] };
+  }
+  return {
+    status: "ok",
+    query: String(res.query || payload.query),
+    total: Number(res.total || 0),
+    items: Array.isArray(res.items) ? res.items : []
+  };
 }
 
 /* ==================================================

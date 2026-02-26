@@ -2,6 +2,7 @@ package com.arc
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
@@ -49,8 +50,11 @@ class WebViewManager(
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var isPatchTesting = false
     private var resultPollJob: Job? = null
+    private var heartbeatMonitorJob: Job? = null
     private var lastInterstitialReportMs: Long = 0L
     private var lastBlockRecoverTryMs: Long = 0L
+    private var lastHeartbeatLostReportMs: Long = 0L
+    private var lastHeartbeatRecoveryTryMs: Long = 0L
     private var lastCopilotBypassMs: Long = 0L
     private var copilotChallengeCount: Int = 0
 
@@ -99,6 +103,7 @@ class WebViewManager(
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView(wv: WebView) {
         WebView.setWebContentsDebuggingEnabled(true)
+        wv.setBackgroundColor(Color.BLACK)
         val cm = CookieManager.getInstance()
         cm.setAcceptCookie(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -846,11 +851,17 @@ class WebViewManager(
 
     fun setMonitoring(active: Boolean) {
         isMonitoringActive = active
-        if (active) startHeartbeatMonitor()
+        if (!active) {
+            heartbeatMonitorJob?.cancel()
+            heartbeatMonitorJob = null
+            return
+        }
+        startHeartbeatMonitor()
     }
 
     private fun startHeartbeatMonitor() {
-        scope.launch {
+        heartbeatMonitorJob?.cancel()
+        heartbeatMonitorJob = scope.launch {
             while(isMonitoringActive) {
                 val u = (webView?.url ?: "").lowercase()
                 val tickMs = if (u.contains("copilot.microsoft.com") || u.contains("bing.com/chat")) 2_000L else 10_000L
@@ -875,8 +886,16 @@ class WebViewManager(
                     injectHumanNoise(webView)
                 }
                 if (lastHeartbeat > 0 && System.currentTimeMillis() - lastHeartbeat > 30000) {
-                    onDomErrorCallback("heartbeat_lost", null)
-                    lastHeartbeat = System.currentTimeMillis()
+                    val now = System.currentTimeMillis()
+                    if (now - lastHeartbeatLostReportMs > 20_000L) {
+                        onDomErrorCallback("heartbeat_lost", null)
+                        lastHeartbeatLostReportMs = now
+                    }
+                    if (now - lastHeartbeatRecoveryTryMs > 30_000L) {
+                        lastHeartbeatRecoveryTryMs = now
+                        refreshKeepingSession()
+                    }
+                    lastHeartbeat = now
                 }
             }
         }

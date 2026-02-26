@@ -380,11 +380,20 @@ function respond(obj) {
 ================================================== */
 
 function runLocalLLM(text) {
-  // TODO: Ollama API 呼び出し
-  return "（Ollama未実装）" + text;
+  const prompt = String(text || "").trim();
+  if (!prompt) return "";
+  // 旧Gateway互換: ローカルLLM未接続時は明示的にフォールバック応答を返す。
+  return "（LOCAL_LLM未接続）" + prompt;
 }
 
 function needsARC(answer) {
-  // TODO: LLM が「ARCが必要」と判断したときの条件
-  return false;
+  const s = String(answer || "").toLowerCase();
+  if (!s) return false;
+  return (
+    s.includes("arc") ||
+    s.includes("external ai") ||
+    s.includes("外部ai") ||
+    s.includes("ブラウザ操作") ||
+    s.includes("要web")
+  );
 }

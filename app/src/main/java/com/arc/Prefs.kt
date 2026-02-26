@@ -85,6 +85,7 @@ class Prefs(context: Context) {
     var copilotSendSelector: String by StringPref("copilot_send", "button[aria-label*='Send' i], button[data-testid*='send' i], button[type='submit']")
     var copilotResponseSelector: String by StringPref("copilot_resp", "div[data-testid*='assistant'], article, .prose")
     var copilotUrl: String by StringPref("copilot_url", "https://claude.ai/")
+    var gatewaySlotRegistryJson: String by StringPref("gateway_slot_registry_json", "[]")
 
     fun normalizedRuntimeMode(): String {
         val m = runtimeMode.trim().lowercase()
@@ -107,6 +108,8 @@ class Prefs(context: Context) {
         if (migrateCopilotSlotToClaudeIfNeeded()) {
             notes += "copilot_slot_to_claude"
         }
+        syncLegacyTargetsToSlotRegistry()
+        applySlotRegistryToLegacyTargets()
         return notes
     }
 
@@ -116,6 +119,206 @@ class Prefs(context: Context) {
         "copilot" -> normalizeCopilotUrl(copilotUrl)
         "full_browser", "mobile_browser" -> "https://bot.sannysoft.com/"
         else -> geminiUrl
+    }
+
+    fun resolveTargetForSlot(slotId: String?, fallbackTarget: String = ""): String {
+        val sid = normalizeSlotId(slotId)
+        val fallback = normalizeTarget(fallbackTarget)
+        if (sid.isBlank()) return fallback.ifBlank { "gemini" }
+        if (sid == "chatgpt" || sid == "gemini" || sid == "copilot" || sid == "claude") {
+            return normalizeTarget(sid).ifBlank { fallback.ifBlank { "gemini" } }
+        }
+        return try {
+            val arr = JSONArray(gatewaySlotRegistryJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val id = normalizeSlotId(obj.optString("slot_id", ""))
+                if (id != sid) continue
+                val t = normalizeTarget(obj.optString("target", ""))
+                if (t.isNotBlank()) return t
+            }
+            fallback.ifBlank { "gemini" }
+        } catch (_: Exception) {
+            fallback.ifBlank { "gemini" }
+        }
+    }
+
+    fun upsertGatewaySlotBinding(slotId: String?, target: String?, enabled: Boolean? = null) {
+        upsertGatewaySlotBinding(slotId, target, enabled, null, null, null, null)
+    }
+
+    fun upsertGatewaySlotBinding(
+        slotId: String?,
+        target: String?,
+        enabled: Boolean? = null,
+        url: String? = null,
+        inputSelector: String? = null,
+        sendSelector: String? = null,
+        responseSelector: String? = null
+    ) {
+        val sid = normalizeSlotId(slotId)
+        val t = normalizeTarget(target)
+        if (sid.isBlank() || t.isBlank()) return
+        try {
+            val arr = JSONArray(gatewaySlotRegistryJson)
+            var idx = -1
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                if (normalizeSlotId(obj.optString("slot_id", "")) == sid) {
+                    idx = i
+                    break
+                }
+            }
+            val next = if (idx >= 0) arr.optJSONObject(idx) ?: JSONObject() else JSONObject()
+            next.put("slot_id", sid)
+            next.put("target", t)
+            if (enabled != null) next.put("enabled", enabled)
+            if (!url.isNullOrBlank()) next.put("url", url.take(400))
+            if (!inputSelector.isNullOrBlank()) next.put("input_selector", inputSelector.take(240))
+            if (!sendSelector.isNullOrBlank()) next.put("send_selector", sendSelector.take(240))
+            if (!responseSelector.isNullOrBlank()) next.put("response_selector", responseSelector.take(240))
+            if (idx >= 0) arr.put(idx, next) else arr.put(next)
+            gatewaySlotRegistryJson = arr.toString()
+        } catch (_: Exception) {
+            gatewaySlotRegistryJson = JSONArray().put(
+                JSONObject().apply {
+                    put("slot_id", sid)
+                    put("target", t)
+                    if (enabled != null) put("enabled", enabled)
+                    if (!url.isNullOrBlank()) put("url", url.take(400))
+                    if (!inputSelector.isNullOrBlank()) put("input_selector", inputSelector.take(240))
+                    if (!sendSelector.isNullOrBlank()) put("send_selector", sendSelector.take(240))
+                    if (!responseSelector.isNullOrBlank()) put("response_selector", responseSelector.take(240))
+                }
+            ).toString()
+        }
+    }
+
+    fun resolveUrlForSlot(slotId: String?, fallbackTarget: String): String {
+        val sid = normalizeSlotId(slotId)
+        val target = resolveTargetForSlot(sid, fallbackTarget)
+        if (sid.isBlank()) return getUrlFor(target)
+        return try {
+            val arr = JSONArray(gatewaySlotRegistryJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                if (normalizeSlotId(obj.optString("slot_id", "")) != sid) continue
+                val customUrl = obj.optString("url", "").trim()
+                if (customUrl.isNotBlank()) return customUrl
+                break
+            }
+            getUrlFor(target)
+        } catch (_: Exception) {
+            getUrlFor(target)
+        }
+    }
+
+    fun resolveSelectorsForSlot(slotId: String?, fallbackTarget: String): Pair<String, String> {
+        val sid = normalizeSlotId(slotId)
+        val target = resolveTargetForSlot(sid, fallbackTarget)
+        val defaultPair = getSelectorsFor(target)
+        if (sid.isBlank()) return defaultPair
+        return try {
+            val arr = JSONArray(gatewaySlotRegistryJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                if (normalizeSlotId(obj.optString("slot_id", "")) != sid) continue
+                val input = obj.optString("input_selector", "").trim()
+                val send = obj.optString("send_selector", "").trim()
+                return (if (input.isNotBlank()) input else defaultPair.first) to
+                    (if (send.isNotBlank()) send else defaultPair.second)
+            }
+            defaultPair
+        } catch (_: Exception) {
+            defaultPair
+        }
+    }
+
+    fun syncLegacyTargetsToSlotRegistry() {
+        upsertGatewaySlotBinding(
+            slotId = "chatgpt",
+            target = "chatgpt",
+            url = chatGptUrl,
+            inputSelector = chatGptInputSelector,
+            sendSelector = chatGptSendSelector,
+            responseSelector = chatGptResponseSelector
+        )
+        upsertGatewaySlotBinding(
+            slotId = "gemini",
+            target = "gemini",
+            url = geminiUrl,
+            inputSelector = geminiInputSelector,
+            sendSelector = geminiSendSelector,
+            responseSelector = geminiResponseSelector
+        )
+        upsertGatewaySlotBinding(
+            slotId = "claude",
+            target = "copilot",
+            url = copilotUrl,
+            inputSelector = copilotInputSelector,
+            sendSelector = copilotSendSelector,
+            responseSelector = copilotResponseSelector
+        )
+    }
+
+    fun applySlotRegistryToLegacyTargets() {
+        try {
+            val arr = JSONArray(gatewaySlotRegistryJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val sid = normalizeSlotId(obj.optString("slot_id", ""))
+                when (sid) {
+                    "chatgpt" -> {
+                        val u = obj.optString("url", "").trim()
+                        val input = obj.optString("input_selector", "").trim()
+                        val send = obj.optString("send_selector", "").trim()
+                        val resp = obj.optString("response_selector", "").trim()
+                        if (u.isNotBlank()) chatGptUrl = u
+                        if (input.isNotBlank()) chatGptInputSelector = input
+                        if (send.isNotBlank()) chatGptSendSelector = send
+                        if (resp.isNotBlank()) chatGptResponseSelector = resp
+                    }
+                    "gemini" -> {
+                        val u = obj.optString("url", "").trim()
+                        val input = obj.optString("input_selector", "").trim()
+                        val send = obj.optString("send_selector", "").trim()
+                        val resp = obj.optString("response_selector", "").trim()
+                        if (u.isNotBlank()) geminiUrl = u
+                        if (input.isNotBlank()) geminiInputSelector = input
+                        if (send.isNotBlank()) geminiSendSelector = send
+                        if (resp.isNotBlank()) geminiResponseSelector = resp
+                    }
+                    "copilot", "claude" -> {
+                        val u = obj.optString("url", "").trim()
+                        val input = obj.optString("input_selector", "").trim()
+                        val send = obj.optString("send_selector", "").trim()
+                        val resp = obj.optString("response_selector", "").trim()
+                        if (u.isNotBlank()) copilotUrl = u
+                        if (input.isNotBlank()) copilotInputSelector = input
+                        if (send.isNotBlank()) copilotSendSelector = send
+                        if (resp.isNotBlank()) copilotResponseSelector = resp
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun normalizeSlotId(raw: String?): String {
+        val n = raw.orEmpty()
+            .trim()
+            .lowercase()
+            .replace(Regex("[^a-z0-9_-]"), "")
+            .take(40)
+        return if (n == "copilot") "claude" else n
+    }
+
+    private fun normalizeTarget(raw: String?): String {
+        return when (raw.orEmpty().trim().lowercase()) {
+            "claude" -> "copilot"
+            "chatgpt", "gemini", "copilot" -> raw.orEmpty().trim().lowercase().let { if (it == "claude") "copilot" else it }
+            else -> ""
+        }
     }
 
     private fun normalizeCopilotUrl(raw: String): String {

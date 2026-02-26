@@ -28,10 +28,170 @@ function doPost(e) {
   const lower = (v) => norm(v).toLowerCase();
   const upper = (v) => norm(v).toUpperCase();
   const canonicalTarget = (v) => {
-    const t = lower(v);
+    const t = lower(v).replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+    if (!t) return "";
     if (t === "claude") return "copilot";
-    if (t === "chatgpt" || t === "gemini" || t === "copilot" || t === "all") return t;
-    return "";
+    return t;
+  };
+  const canonicalSlotId = (v) => {
+    const s = lower(v).replace(/[^a-z0-9_-]/g, "");
+    return s.slice(0, 40);
+  };
+  const normalizeSlotAliasId = (slotId) => {
+    const sid = canonicalSlotId(slotId);
+    if (sid === "copilot") return "claude";
+    return sid;
+  };
+  const defaultSlotRegistry = () => ([
+    {
+      slot_id: "chatgpt",
+      display_name: "ChatGPT",
+      target: "chatgpt",
+      enabled: true,
+      priority: 10,
+      login: "openai"
+    },
+    {
+      slot_id: "gemini",
+      display_name: "Gemini",
+      target: "gemini",
+      enabled: true,
+      priority: 20,
+      login: "google"
+    },
+    {
+      slot_id: "claude",
+      display_name: "Claude",
+      target: "copilot",
+      enabled: false,
+      priority: 30,
+      login: "google_or_email"
+    }
+  ]);
+  const normalizeSlotEntry = (slot, idx) => {
+    const s = slot && typeof slot === "object" ? slot : {};
+    const target = canonicalTarget(s.target);
+    const slotIdSeed = normalizeSlotAliasId(s.slot_id) || (target && target !== "all" ? target : ("slot" + (idx + 1)));
+    const enabled = (() => {
+      if (typeof s.enabled === "boolean") return s.enabled;
+      const ev = lower(norm(s.enabled));
+      if (!ev) return true;
+      return ev !== "false" && ev !== "0" && ev !== "off";
+    })();
+    return {
+      slot_id: slotIdSeed,
+      display_name: norm(s.display_name) || slotIdSeed,
+      target: target && target !== "all" ? target : "gemini",
+      enabled: enabled,
+      priority: clamp(parseInt(norm(s.priority), 10), 1, 999) || ((idx + 1) * 10),
+      login: norm(s.login).slice(0, 40),
+      url: norm(s.url).slice(0, 400),
+      input_selector: norm(s.input_selector).slice(0, 240),
+      send_selector: norm(s.send_selector).slice(0, 240),
+      response_selector: norm(s.response_selector).slice(0, 240)
+    };
+  };
+  const loadSlotRegistry = () => {
+    const raw = norm(props.getProperty("ARC_SLOT_REGISTRY_JSON"));
+    const base = (() => {
+      if (!raw) return defaultSlotRegistry();
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) return defaultSlotRegistry();
+        return parsed;
+      } catch (_) {
+        return defaultSlotRegistry();
+      }
+    })();
+    const out = [];
+    const seen = {};
+    for (let i = 0; i < base.length; i++) {
+      const n = normalizeSlotEntry(base[i], i);
+      if (!n.slot_id || seen[n.slot_id]) continue;
+      seen[n.slot_id] = true;
+      out.push(n);
+    }
+    if (out.length === 0) {
+      const defs = defaultSlotRegistry().map((s, i) => normalizeSlotEntry(s, i));
+      props.setProperty("ARC_SLOT_REGISTRY_JSON", JSON.stringify(defs));
+      return defs;
+    }
+    const sorted = out.sort((a, b) => a.priority - b.priority);
+    const hasLegacyCopilot = sorted.some((s) => canonicalSlotId(s.slot_id) === "copilot");
+    const hasClaude = sorted.some((s) => canonicalSlotId(s.slot_id) === "claude");
+    if (hasLegacyCopilot && !hasClaude) {
+      const migrated = sorted.map((s) => {
+        if (canonicalSlotId(s.slot_id) !== "copilot") return s;
+        return Object.assign({}, s, { slot_id: "claude", display_name: norm(s.display_name) || "Claude" });
+      });
+      saveSlotRegistry(migrated);
+      return migrated;
+    }
+    return sorted;
+  };
+  const saveSlotRegistry = (slots) => {
+    const arr = Array.isArray(slots) ? slots : [];
+    props.setProperty("ARC_SLOT_REGISTRY_JSON", JSON.stringify(arr));
+  };
+  const findSlotById = (slotId, slots) => {
+    const sid = normalizeSlotAliasId(slotId);
+    if (!sid) return null;
+    const arr = Array.isArray(slots) ? slots : loadSlotRegistry();
+    for (let i = 0; i < arr.length; i++) {
+      if (normalizeSlotAliasId(arr[i].slot_id) === sid) return arr[i];
+    }
+    return null;
+  };
+  const preferredSlotForTarget = (target, slots) => {
+    const t = canonicalTarget(target);
+    if (!t || t === "all") return null;
+    const arr = Array.isArray(slots) ? slots : loadSlotRegistry();
+    const enabled = arr.filter((s) => s.enabled && canonicalTarget(s.target) === t);
+    if (enabled.length > 0) return enabled[0];
+    const any = arr.filter((s) => canonicalTarget(s.target) === t);
+    return any.length > 0 ? any[0] : null;
+  };
+  const resolveSlotForTarget = (target, requestedSlotId, slots) => {
+    const arr = Array.isArray(slots) ? slots : loadSlotRegistry();
+    const t = canonicalTarget(target);
+    const sid = canonicalSlotId(requestedSlotId);
+    if (sid) {
+      const hit = findSlotById(sid, arr);
+      if (hit && canonicalTarget(hit.target) === t) return sid;
+    }
+    const preferred = preferredSlotForTarget(t, arr);
+    return preferred ? canonicalSlotId(preferred.slot_id) : "";
+  };
+  const listSlotTargets = (enabledOnly) => {
+    const arr = loadSlotRegistry();
+    const out = [];
+    const seen = {};
+    for (let i = 0; i < arr.length; i++) {
+      const s = arr[i];
+      if (enabledOnly && !s.enabled) continue;
+      const t = canonicalTarget(s.target || "");
+      if (!t || t === "all" || seen[t]) continue;
+      seen[t] = true;
+      out.push(t);
+    }
+    return out;
+  };
+  const resolveOperationalTarget = (target, options) => {
+    const opt = options && typeof options === "object" ? options : {};
+    const allowAll = opt.allowAll === true;
+    const fallback = canonicalTarget(opt.fallback || "");
+    const t = canonicalTarget(target || "");
+    if (allowAll && t === "all") return "all";
+    if (t && t !== "all") {
+      const known = listSlotTargets(false);
+      if (known.indexOf(t) >= 0) return t;
+    }
+    if (fallback && fallback !== "all") return fallback;
+    const enabledTargets = listSlotTargets(true);
+    if (enabledTargets.length > 0) return enabledTargets[0];
+    const allTargets = listSlotTargets(false);
+    if (allTargets.length > 0) return allTargets[0];
+    return "gemini";
   };
   const normalizeRuntimeMode = (v) => {
     const m = lower(v);
@@ -177,6 +337,9 @@ function doPost(e) {
     Object.keys(defaults).forEach((k) => {
       if (!norm(props.getProperty(k))) props.setProperty(k, defaults[k]);
     });
+    if (!norm(props.getProperty("ARC_SLOT_REGISTRY_JSON"))) {
+      props.setProperty("ARC_SLOT_REGISTRY_JSON", JSON.stringify(defaultSlotRegistry()));
+    }
   };
 
   const expectedAuth = props.getProperty("ARC_AUTH_KEY") || "";
@@ -187,9 +350,9 @@ function doPost(e) {
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
     "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
-    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts", "admin_target_scores",
+    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts", "admin_target_scores", "admin_slot_scores", "admin_slot_list", "admin_slot_upsert", "admin_slot_delete",
     "admin_diag_latest",
-    "gateway_memory_put", "gateway_memory_get", "memory_put", "memory_get",
+    "gateway_memory_put", "gateway_memory_get", "gateway_memory_search", "memory_put", "memory_get", "memory_search",
     "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get",
     "arc_diag_snapshot",
     "arc_runtime_status", "arc_runtime_set", "arc_set_runtime_mode"
@@ -539,6 +702,151 @@ function doPost(e) {
     return out;
   };
 
+  const tokenizeForMemory = (text) => {
+    const src = lower(text)
+      .replace(/https?:\/\/\S+/g, " ")
+      .replace(/[^a-z0-9_\-\u3040-\u30ff\u3400-\u9fff]+/g, " ");
+    const parts = src.split(/\s+/).map((x) => norm(x)).filter((x) => x.length >= 2);
+    const stop = {
+      the: 1, and: 1, for: 1, with: 1, from: 1, this: 1, that: 1, your: 1, you: 1, are: 1,
+      の: 1, に: 1, は: 1, を: 1, が: 1, と: 1, で: 1, です: 1, ます: 1, する: 1
+    };
+    const out = [];
+    const seen = {};
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (stop[p]) continue;
+      if (seen[p]) continue;
+      seen[p] = true;
+      out.push(p);
+      if (out.length >= 12) break;
+    }
+    return out;
+  };
+
+  const searchGatewayLongMemory = (query, opts) => {
+    const options = opts && typeof opts === "object" ? opts : {};
+    const limit = clamp(parseIntSafe(options.limit, 4), 1, 12);
+    const scan = clamp(parseIntSafe(options.scan, 300), 50, 1200);
+    const sourceFilter = norm(options.source);
+    const tokens = tokenizeForMemory(query);
+    const rows = readRecentRows(sheets.gatewayMemory, 6, scan).rows;
+    const ranked = [];
+    const sourceWeight = (src) => {
+      const s = lower(src);
+      if (s === "arc_result_auto") return 3.0;
+      if (s === "arc_error_auto") return 2.2;
+      if (s === "gateway_manual" || s === "gateway") return 1.6;
+      if (s.indexOf("diag") >= 0 || s.indexOf("webview") >= 0) return 0.2;
+      return 1.0;
+    };
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      const source = norm(row[3]);
+      if (sourceFilter && source !== sourceFilter) continue;
+      const key = norm(row[1]);
+      const value = norm(row[2]);
+      const tags = norm(row[5]);
+      const keyL = lower(key);
+      const valL = lower(value);
+      const tagL = lower(tags);
+      let score = 0;
+      for (let t = 0; t < tokens.length; t++) {
+        const tok = tokens[t];
+        if (!tok) continue;
+        if (keyL.indexOf(tok) >= 0) score += 2.2;
+        if (valL.indexOf(tok) >= 0) score += 1.0;
+        if (tagL.indexOf(tok) >= 0) score += 1.2;
+      }
+      if (tokens.length > 0 && score < 2.0) continue;
+      const ts = toMs(row[0]);
+      const recency = Number.isFinite(ts) ? Math.max(0, 1 - ((Date.now() - ts) / (1000 * 60 * 60 * 24 * 30))) : 0;
+      const weighted = score * sourceWeight(source);
+      ranked.push({
+        timestamp: row[0],
+        key: key,
+        value: value,
+        source: source,
+        trace_id: norm(row[4]),
+        tags: tags,
+        _score: weighted + recency
+      });
+    }
+    ranked.sort((a, b) => b._score - a._score);
+    return ranked.slice(0, limit).map((r) => ({
+      timestamp: r.timestamp,
+      key: r.key,
+      value: r.value,
+      source: r.source,
+      trace_id: r.trace_id,
+      tags: r.tags
+    }));
+  };
+
+  const compactMemoryItems = (rows, limitChars) => {
+    const maxChars = clamp(parseIntSafe(limitChars, 900), 240, 2400);
+    let used = 0;
+    const lines = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const line = "[" + norm(r.key) + "] " + norm(r.value).slice(0, 360);
+      if (!line.trim()) continue;
+      if (used + line.length + 1 > maxChars) break;
+      lines.push(line);
+      used += line.length + 1;
+    }
+    return lines.join("\n");
+  };
+
+  const findMainChatByMissionId = (missionId) => {
+    const mid = norm(missionId);
+    if (!mid) return null;
+    const rows = sheets.main.getDataRange().getValues();
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if (norm(rows[i][5]) !== mid) continue;
+      return {
+        row_index: i + 1,
+        ts: rows[i][0],
+        user: norm(rows[i][1]),
+        content: norm(rows[i][2]),
+        status: norm(rows[i][3]),
+        response: norm(rows[i][4]),
+        mission_id: norm(rows[i][5])
+      };
+    }
+    return null;
+  };
+
+  const buildGatewayMemoryContextForRoute = (user, target, slotId, prompt, missionId) => {
+    const u = norm(user);
+    const t = canonicalTarget(target);
+    const sid = canonicalSlotId(slotId);
+    const baseQuery = [u, t, sid, prompt].join(" ").trim();
+    const hits = []
+      .concat(searchGatewayLongMemory(baseQuery, { limit: 3, scan: 500, source: "arc_result_auto" }))
+      .concat(searchGatewayLongMemory(baseQuery, { limit: 2, scan: 500, source: "arc_error_auto" }))
+      .concat(searchGatewayLongMemory(baseQuery, { limit: 2, scan: 500, source: "gateway_manual" }));
+    const dedup = [];
+    const seen = {};
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i];
+      const k = norm(h.key) + "|" + norm(h.trace_id);
+      if (!k || seen[k]) continue;
+      seen[k] = true;
+      dedup.push(h);
+      if (dedup.length >= 6) break;
+    }
+    if (!dedup || dedup.length === 0) return { context: "", hit_count: 0, keys: [] };
+    const compact = compactMemoryItems(dedup, 900);
+    if (!compact) return { context: "", hit_count: 0, keys: [] };
+    const memoryHeader = "【Gateway記憶(関連)】\n" + compact + "\n";
+    return {
+      context: memoryHeader,
+      hit_count: dedup.length,
+      keys: dedup.map((x) => norm(x.key)).filter((x) => x)
+    };
+  };
+
   const cleanupArcShortMemory = (maxRowsToScan) => {
     const limit = clamp(parseIntSafe(maxRowsToScan, 500), 50, 5000);
     const last = sheets.arcShortMemory.getLastRow();
@@ -699,7 +1007,23 @@ function doPost(e) {
     const windowSec = clamp(parseIntSafe(windowSecRaw, adaptiveWindowSec), 120, 86400);
     const nowMs = Date.now();
     const fromMs = nowMs - windowSec * 1000;
-    const targets = ["chatgpt", "gemini", "copilot"];
+    const targets = (() => {
+      const slots = loadSlotRegistry();
+      const seen = {};
+      const out = [];
+      for (let i = 0; i < slots.length; i++) {
+        const t = canonicalTarget(slots[i].target || "");
+        if (!t || seen[t]) continue;
+        seen[t] = true;
+        out.push(t);
+      }
+      if (!seen[defaultTarget]) {
+        seen[defaultTarget] = true;
+        out.push(defaultTarget);
+      }
+      if (out.length === 0) return ["gemini"];
+      return out;
+    })();
     const stats = {};
     targets.forEach((t) => {
       stats[t] = {
@@ -828,10 +1152,137 @@ function doPost(e) {
     };
   };
 
+  const buildAdaptiveSlotScores = (windowSecRaw) => {
+    const windowSec = clamp(parseIntSafe(windowSecRaw, adaptiveWindowSec), 120, 86400);
+    const nowMs = Date.now();
+    const fromMs = nowMs - windowSec * 1000;
+    const slots = loadSlotRegistry();
+    const stats = {};
+    slots.forEach((s) => {
+      const sid = canonicalSlotId(s.slot_id);
+      if (!sid) return;
+      stats[sid] = {
+        slot_id: sid,
+        display_name: norm(s.display_name) || sid,
+        target: canonicalTarget(s.target) || "",
+        enabled: !!s.enabled,
+        priority: Number(s.priority || 0),
+        success: 0,
+        error: 0,
+        latency_sum_sec: 0,
+        latency_count: 0,
+        avg_latency_sec: null,
+        terminated: 0,
+        success_rate: null
+      };
+    });
+
+    const fallbackSlotForTarget = (target) => {
+      const slot = preferredSlotForTarget(target, slots);
+      return slot ? canonicalSlotId(slot.slot_id) : "";
+    };
+
+    const jobMap = {};
+    const jobs = readRecentRows(sheets.jobs, 7, adaptiveScanMax).rows;
+    for (let i = jobs.length - 1; i >= 0; i--) {
+      const row = jobs[i];
+      const jobId = norm(row[1]);
+      if (!jobId || jobMap[jobId]) continue;
+      const createdMs = toMs(row[0]);
+      if (!Number.isFinite(createdMs) || createdMs < fromMs) continue;
+      const payload = parseJsonSafe(norm(row[4]));
+      const target = canonicalTarget(payload.target || "");
+      const sid = canonicalSlotId(payload.slot_id || "") || fallbackSlotForTarget(target);
+      if (!sid || !stats[sid]) continue;
+      jobMap[jobId] = { slot_id: sid, createdMs: createdMs };
+    }
+
+    const results = readRecentRows(sheets.results, 6, adaptiveScanMax).rows;
+    for (let i = results.length - 1; i >= 0; i--) {
+      const row = results[i];
+      const tsMs = toMs(row[0]);
+      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
+      const missionId = norm(row[1]);
+      const job = jobMap[missionId];
+      const sid = job ? job.slot_id : fallbackSlotForTarget(row[2]);
+      if (!sid || !stats[sid]) continue;
+      const st = stats[sid];
+      st.success++;
+      if (job && Number.isFinite(job.createdMs)) {
+        const latencySec = Math.max(0, Math.floor((tsMs - job.createdMs) / 1000));
+        st.latency_sum_sec += latencySec;
+        st.latency_count++;
+      }
+    }
+
+    const errors = readRecentRows(sheets.errors, 4, adaptiveScanMax).rows;
+    for (let i = errors.length - 1; i >= 0; i--) {
+      const row = errors[i];
+      const tsMs = toMs(row[0]);
+      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
+      const missionId = norm(row[1]);
+      const job = jobMap[missionId];
+      if (!job || !stats[job.slot_id]) continue;
+      stats[job.slot_id].error++;
+    }
+
+    Object.keys(stats).forEach((sid) => {
+      const st = stats[sid];
+      st.terminated = st.success + st.error;
+      st.success_rate = st.terminated > 0 ? Number((st.success / st.terminated).toFixed(3)) : null;
+      st.avg_latency_sec = st.latency_count > 0 ? Number((st.latency_sum_sec / st.latency_count).toFixed(2)) : null;
+    });
+    return stats;
+  };
+
+  const pickAdaptiveSlot = (opts) => {
+    const options = opts && typeof opts === "object" ? opts : {};
+    const slots = loadSlotRegistry();
+    const preferred = canonicalSlotId(options.preferred || "");
+    const exclude = canonicalSlotId(options.exclude || "");
+    const forceAdaptive = options.forceAdaptive === true;
+    const scores = buildAdaptiveSlotScores(options.windowSec);
+    const candidates = Object.keys(scores).filter((sid) => {
+      const st = scores[sid];
+      if (!st || !st.enabled) return false;
+      if (sid === exclude) return false;
+      return true;
+    });
+    if (candidates.length === 0) {
+      const fallback = preferred || (slots.find((s) => s.enabled) ? canonicalSlotId(slots.find((s) => s.enabled).slot_id) : "");
+      return { slot_id: fallback, reason: "no_enabled_slot", scores: scores };
+    }
+    const ranked = candidates.sort((a, b) => {
+      const A = scores[a];
+      const B = scores[b];
+      const aSr = A.success_rate === null ? -1 : A.success_rate;
+      const bSr = B.success_rate === null ? -1 : B.success_rate;
+      if (aSr !== bSr) return bSr - aSr;
+      const aLat = A.avg_latency_sec === null ? 999999 : A.avg_latency_sec;
+      const bLat = B.avg_latency_sec === null ? 999999 : B.avg_latency_sec;
+      if (aLat !== bLat) return aLat - bLat;
+      if (A.success !== B.success) return B.success - A.success;
+      return (A.priority || 999) - (B.priority || 999);
+    });
+    const best = scores[ranked[0]];
+    if (!best) return { slot_id: preferred || ranked[0], reason: "no_stats", scores: scores };
+    if (best.terminated <= 0 && !forceAdaptive && preferred && scores[preferred] && scores[preferred].enabled) {
+      return { slot_id: preferred, reason: "insufficient_stats", scores: scores };
+    }
+    return {
+      slot_id: best.slot_id,
+      reason: "adaptive_best",
+      success_rate: best.success_rate,
+      avg_latency_sec: best.avg_latency_sec,
+      scores: scores
+    };
+  };
+
   const parseCommandTags = (text) => {
     const raw = norm(text);
     const l = raw.toLowerCase();
     const has = (t) => l.indexOf(t) >= 0;
+    const slots = loadSlotRegistry();
 
     let route = defaultRoute;
     if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy") || has("#baku") || has("@baku")) route = "ARC";
@@ -843,9 +1294,33 @@ function doPost(e) {
 
     let target = defaultTarget;
     let requestedTarget = defaultTarget;
+    let slotId = "";
     let adaptiveDecision = null;
     let targetPinned = false;
-    if (has("#chatgpt") || has("@chatgpt") || has("[chatgpt]")) target = "chatgpt";
+    let useMemory = true;
+    const slotTag =
+      (raw.match(/(?:^|\s)[#@]slot:([a-zA-Z0-9_-]{1,40})(?:\s|$)/i) || [])[1] ||
+      (raw.match(/\[slot:([a-zA-Z0-9_-]{1,40})\]/i) || [])[1] ||
+      "";
+    const explicitTargetTag =
+      (raw.match(/(?:^|\s)[#@]target:([a-zA-Z0-9_-]{1,40})(?:\s|$)/i) || [])[1] ||
+      (raw.match(/\[target:([a-zA-Z0-9_-]{1,40})\]/i) || [])[1] ||
+      "";
+    if (slotTag) {
+      const foundSlot = findSlotById(slotTag, slots);
+      if (foundSlot) {
+        slotId = canonicalSlotId(foundSlot.slot_id);
+        target = canonicalTarget(foundSlot.target) || target;
+        targetPinned = true;
+      }
+    }
+    if (explicitTargetTag) {
+      const explicitTarget = canonicalTarget(explicitTargetTag);
+      if (explicitTarget) {
+        target = explicitTarget;
+        targetPinned = true;
+      }
+    } else if (has("#chatgpt") || has("@chatgpt") || has("[chatgpt]")) target = "chatgpt";
     else if (has("#copilot") || has("@copilot") || has("[copilot]")) target = "copilot";
     else if (has("#claude") || has("@claude") || has("[claude]")) target = "copilot";
     else if (has("#all") || has("@all")) target = "ALL";
@@ -858,7 +1333,21 @@ function doPost(e) {
     ) targetPinned = true;
     if (has("#pin_target") || has("@pin_target") || has("#locktarget") || has("#target_fixed")) targetPinned = true;
     if (has("#allow_failover") || has("@allow_failover")) targetPinned = false;
+    if (has("#no_memory") || has("@no_memory") || has("#memory_off")) useMemory = false;
+    if (has("#memory_on") || has("@memory_on")) useMemory = true;
+    if (lower(target) !== "all") {
+      target = resolveOperationalTarget(target, { fallback: defaultTarget });
+    }
     requestedTarget = target;
+    if (slotId) {
+      const hitSlot = findSlotById(slotId, slots);
+      if (!hitSlot || canonicalTarget(hitSlot.target) !== canonicalTarget(target)) {
+        slotId = "";
+      }
+    }
+    if (!slotId && lower(target) !== "all") {
+      slotId = resolveSlotForTarget(target, "", slots);
+    }
 
     let opMode = "request_arc";
     if (has("#refresh")) opMode = "arc_refresh";
@@ -885,6 +1374,8 @@ function doPost(e) {
     let cleanPrompt = raw
       .replace(/#[a-zA-Z0-9_:-]+/g, " ")
       .replace(/@[a-zA-Z0-9_:-]+/g, " ")
+      .replace(/\[target:[a-zA-Z0-9_-]{1,40}\]/gi, " ")
+      .replace(/\[slot:[a-zA-Z0-9_-]{1,40}\]/gi, " ")
       .replace(/\[arc\]/gi, " ")
       .replace(/\[(chatgpt|gemini|copilot|claude)\]/gi, " ")
       .replace(/\s+/g, " ")
@@ -896,11 +1387,14 @@ function doPost(e) {
       const picked = pickAdaptiveTarget({ preferred: target });
       adaptiveDecision = picked;
       target = picked.target || target;
+      const adaptiveSlot = preferredSlotForTarget(target, slots);
+      if (adaptiveSlot) slotId = canonicalSlotId(adaptiveSlot.slot_id);
     }
 
     return {
       route: route,
       target: target,
+      slotId: slotId,
       opMode: opMode,
       script: script,
       prompt: cleanPrompt,
@@ -908,7 +1402,8 @@ function doPost(e) {
       pinTarget: targetPinned,
       runtimeMode: runtimeMode,
       requestedTarget: requestedTarget,
-      adaptiveDecision: adaptiveDecision
+      adaptiveDecision: adaptiveDecision,
+      useMemory: useMemory
     };
   };
 
@@ -968,9 +1463,12 @@ function doPost(e) {
     const traceId = toTraceId(job.traceId);
     const retryCountRaw = parseInt(norm(job.retryCount) || "0", 10);
     const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
+    const resolvedTarget = resolveOperationalTarget(job.target, { allowAll: true, fallback: defaultTarget });
+    const resolvedSlot = resolveSlotForTarget(resolvedTarget, job.slotId || job.slot_id);
     const payload = {
       qid: norm(job.qid) || jobId,
-      target: canonicalTarget(job.target) || "gemini",
+      target: resolvedTarget,
+      slot_id: resolvedSlot,
       pin_target: lower(norm(job.pinTarget || "false")) === "true" ? "true" : "false",
       prompt: norm(job.prompt).slice(0, MAX_PROMPT),
       script: norm(job.script),
@@ -993,7 +1491,7 @@ function doPost(e) {
       payload.runtime_mode = normalizeRuntimeMode(job.runtimeMode || job.runtime_mode);
     }
     sheets.jobs.appendRow([new Date(), jobId, norm(job.workerId), norm(job.mode) || "request_arc", JSON.stringify(payload), "pending", ""]);
-    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / retry=" + retryCount);
+    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / slot=" + (payload.slot_id || "-") + " / retry=" + retryCount);
     return { jobId: jobId, traceId: traceId, payload: payload };
   };
 
@@ -1168,16 +1666,23 @@ function doPost(e) {
     if (cmd.route === "ARC") {
       const effectiveMode = cmd.opMode;
       const resolvedId = missionId || ("CHAT_" + rowIndex + "_" + Date.now());
+      const memPack = cmd.useMemory
+        ? buildGatewayMemoryContextForRoute(user, cmd.target, cmd.slotId, cmd.prompt, resolvedId)
+        : { context: "", hit_count: 0, keys: [] };
+      const promptWithMemory = memPack.context
+        ? (memPack.context + "\n【依頼】\n" + cmd.prompt)
+        : cmd.prompt;
       const jobRes = enqueueArcJob({
         // qid と jobId は同一にして、結果報告の突合失敗を防ぐ
         jobId: resolvedId,
         qid: resolvedId,
         target: cmd.target,
+        slotId: cmd.slotId,
         targetStrategy: cmd.adaptiveDecision ? "adaptive" : "requested",
         targetReason: cmd.adaptiveDecision ? norm(cmd.adaptiveDecision.reason) : "requested",
         targetSuccessRate: cmd.adaptiveDecision ? cmd.adaptiveDecision.success_rate : null,
         targetAvgLatencySec: cmd.adaptiveDecision ? cmd.adaptiveDecision.avg_latency_sec : null,
-        prompt: cmd.prompt,
+        prompt: promptWithMemory,
         script: cmd.script,
         runtimeMode: cmd.runtimeMode,
         mode: effectiveMode,
@@ -1205,10 +1710,21 @@ function doPost(e) {
             " / lat=" + norm(cmd.adaptiveDecision.avg_latency_sec)
         );
       }
+      if (memPack.hit_count > 0) {
+        addAudit(
+          jobRes.traceId,
+          "ROUTE_MEMORY_ATTACHED",
+          jobRes.jobId,
+          "",
+          "ok",
+          "hits=" + memPack.hit_count + " / keys=" + memPack.keys.join(",").slice(0, 320)
+        );
+      }
       sheets.main.getRange(rowIndex, 4).setValue("QUEUED_ARC");
-      sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + " / " + cmd.executor + " / " + jobRes.traceId);
+      const slotNote = cmd.slotId ? (" / " + cmd.slotId) : "";
+      sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + slotNote + " / " + cmd.executor + " / " + jobRes.traceId);
       sheets.main.getRange(rowIndex, 6).setValue(jobRes.jobId);
-      return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode, traceId: jobRes.traceId };
+      return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode, traceId: jobRes.traceId, slotId: jobRes.payload.slot_id || "" };
     }
 
     const msgId = missionId || ("MS_" + rowIndex + "_" + Date.now());
@@ -1307,14 +1823,14 @@ function doPost(e) {
       const row = rows[i];
       const status = lower(row[5]);
       if (status !== "leased") continue;
-      const leasedAt = new Date(row[6]).getTime();
-      if (!Number.isFinite(leasedAt) || now - leasedAt < rowLeaseMs) continue;
-
       const payload = parseJsonSafe(norm(row[4]));
       const rowLeaseSecRaw = parseInt(norm(payload.lease_timeout_sec || ""), 10);
       const rowLeaseMs = Number.isFinite(rowLeaseSecRaw) && rowLeaseSecRaw >= 30
         ? rowLeaseSecRaw * 1000
         : thresholdMs;
+      const leasedAt = new Date(row[6]).getTime();
+      if (!Number.isFinite(leasedAt) || now - leasedAt < rowLeaseMs) continue;
+
       const leaseExpiredCountRaw = parseInt(norm(payload.lease_expire_count) || "0", 10);
       const leaseExpiredCount = (Number.isFinite(leaseExpiredCountRaw) ? leaseExpiredCountRaw : 0) + 1;
       payload.lease_expire_count = leaseExpiredCount;
@@ -1462,10 +1978,6 @@ function doPost(e) {
     }
 
     try {
-      recoverStalePendingJobs();
-      requeueExpiredLeases();
-      routePendingChatCommands(false);
-
       const rows = sheets.jobs.getDataRange().getValues();
       // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
       for (let i = rows.length - 1; i >= 1; i--) {
@@ -1531,6 +2043,24 @@ function doPost(e) {
     }
   };
 
+  const runArcQueueMaintenance = (traceId, workerId, consumer) => {
+    try {
+      recoverStalePendingJobs();
+      requeueExpiredLeases();
+      routePendingChatCommands(false);
+    } catch (err) {
+      const detail = (() => {
+        try {
+          if (err && err.stack) return String(err.stack).slice(0, 1200);
+          return String(err || "queue_maintenance_exception").slice(0, 1200);
+        } catch (_) {
+          return "queue_maintenance_exception";
+        }
+      })();
+      addAudit(norm(traceId), "QUEUE_MAINT_EXCEPTION", "", norm(workerId), "error", norm(consumer) + ":" + detail);
+    }
+  };
+
   const hasLeasedJobForWorker = (workerId) => {
     const wid = norm(workerId);
     if (!wid) return false;
@@ -1592,15 +2122,37 @@ function doPost(e) {
 
   const nextFailoverTarget = (currentTarget) => {
     const t = canonicalTarget(currentTarget);
+    const fallbackTargets = (() => {
+      const seen = {};
+      const out = [];
+      const slots = loadSlotRegistry();
+      slots.forEach((s) => {
+        const target = canonicalTarget(s.target || "");
+        if (!target || target === "all" || !s.enabled || seen[target]) return;
+        seen[target] = true;
+        out.push(target);
+      });
+      slots.forEach((s) => {
+        const target = canonicalTarget(s.target || "");
+        if (!target || target === "all" || seen[target]) return;
+        seen[target] = true;
+        out.push(target);
+      });
+      if (!seen[defaultTarget]) out.push(defaultTarget);
+      return out.filter((x, i, arr) => x && arr.indexOf(x) === i);
+    })();
     if (adaptiveTargetEnabled) {
       const picked = pickAdaptiveTarget({ preferred: defaultTarget, exclude: t, forceAdaptive: true });
       const target = canonicalTarget(picked.target || "");
       if (target && target !== t) return target;
     }
-    if (t === "chatgpt") return "gemini";
-    if (t === "gemini") return "chatgpt";
-    if (t === "copilot") return "chatgpt";
-    return "gemini";
+    if (!t) return fallbackTargets[0] || defaultTarget || "gemini";
+    const idx = fallbackTargets.indexOf(t);
+    if (idx >= 0 && fallbackTargets.length > 1) {
+      return fallbackTargets[(idx + 1) % fallbackTargets.length];
+    }
+    const alt = fallbackTargets.find((x) => x !== t);
+    return alt || fallbackTargets[0] || defaultTarget || "gemini";
   };
 
   const maybeSwitchJobTargetForRecovery = (jobRowIndex, row, payload, reasonTag) => {
@@ -1613,6 +2165,7 @@ function doPost(e) {
     const to = nextFailoverTarget(from);
     if (from === to) return { switched: false, reason: "same_target" };
     payload.target = to;
+    payload.slot_id = resolveSlotForTarget(to, payload.slot_id);
     payload.target_failover_count = (parseInt(norm(payload.target_failover_count) || "0", 10) || 0) + 1;
     payload.target_failover_reason = norm(reasonTag);
     payload.target_failover_at = nowIso();
@@ -1651,7 +2204,7 @@ function doPost(e) {
     const follow = bakuReport.followup;
     if (follow.auto_enqueue !== true) return null;
     const modeName = norm(follow.mode) || "request_arc";
-    const target = canonicalTarget(norm(follow.target) || "chatgpt") || "chatgpt";
+    const target = resolveOperationalTarget(norm(follow.target) || defaultTarget, { fallback: defaultTarget });
     const executor = upper(norm(follow.executor) || "ARC");
     const prompt = norm(follow.prompt || "");
     if (!prompt) return null;
@@ -1860,16 +2413,37 @@ function doPost(e) {
   }
 
   if (mode === "admin_status") {
+    const slots = loadSlotRegistry();
+    const enabledSlots = slots.filter((s) => s.enabled);
     const adaptivePick = pickAdaptiveTarget({ preferred: defaultTarget, forceAdaptive: true });
-    const coolChatgpt = getTargetCooldownState("chatgpt");
-    const coolGemini = getTargetCooldownState("gemini");
-    const coolCopilot = getTargetCooldownState("copilot");
+    const adaptiveSlotPick = pickAdaptiveSlot({ forceAdaptive: true });
+    const targetCooldowns = (() => {
+      const keys = {};
+      slots.forEach((s) => {
+        const t = canonicalTarget(s.target || "");
+        if (t) keys[t] = true;
+      });
+      keys[defaultTarget] = true;
+      const out = {};
+      Object.keys(keys).sort().forEach((t) => {
+        out[t] = getTargetCooldownState(t);
+      });
+      return out;
+    })();
     const rows = sheets.jobs.getDataRange().getValues();
     const counts = { pending: 0, leased: 0, done: 0, error: 0, dead: 0, other: 0 };
     for (let i = 1; i < rows.length; i++) {
       const s = lower(rows[i][5]);
       if (counts.hasOwnProperty(s)) counts[s]++;
       else counts.other++;
+    }
+    const configWarnings = [];
+    const allTargets = listSlotTargets(false);
+    const enabledTargets = listSlotTargets(true);
+    if (allTargets.length === 0) configWarnings.push("slot_target_empty");
+    if (enabledTargets.length === 0) configWarnings.push("slot_target_enabled_empty");
+    if (allTargets.length > 0 && allTargets.indexOf(defaultTarget) < 0) {
+      configWarnings.push("default_target_not_in_slot_registry:" + defaultTarget);
     }
     return jsonOut({
       status: "ok",
@@ -1882,16 +2456,16 @@ function doPost(e) {
       default_route: defaultRoute,
       default_executor: defaultExecutor,
       default_target: defaultTarget,
+      slot_count: slots.length,
+      slot_enabled_count: enabledSlots.length,
+      slots: slots,
+      adaptive_slot_recommended: adaptiveSlotPick.slot_id || "",
       adaptive_target_enabled: adaptiveTargetEnabled,
       adaptive_target_window_sec: adaptiveWindowSec,
       adaptive_target_recommended: adaptivePick.target || defaultTarget,
       target_cooldown_sec: targetCooldownSec,
       target_fail_streak_threshold: targetFailStreakThreshold,
-      target_cooldowns: {
-        chatgpt: coolChatgpt,
-        gemini: coolGemini,
-        copilot: coolCopilot
-      },
+      target_cooldowns: targetCooldowns,
       target_failover_enabled: targetFailoverEnabled,
       require_signature: requireSignature,
       autonomy_paused: autonomyPaused,
@@ -1900,7 +2474,8 @@ function doPost(e) {
       dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
       audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
       mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1),
-      metrics: buildGatewayOpsMetrics()
+      metrics: buildGatewayOpsMetrics(),
+      config_warnings: configWarnings
     });
   }
 
@@ -1930,6 +2505,87 @@ function doPost(e) {
       avg_latency_sec: picked.avg_latency_sec,
       scores: scores
     });
+  }
+
+  if (mode === "admin_slot_scores") {
+    const preferred = normalizeSlotAliasId(data.preferred || "");
+    const exclude = normalizeSlotAliasId(data.exclude || "");
+    const forceAdaptive = lower(norm(data.force_adaptive || "false")) === "true";
+    const windowSec = parseIntSafe(data.window_sec, adaptiveWindowSec);
+    const scores = buildAdaptiveSlotScores(windowSec);
+    const picked = pickAdaptiveSlot({
+      preferred: preferred,
+      exclude: exclude,
+      forceAdaptive: forceAdaptive,
+      windowSec: windowSec
+    });
+    return jsonOut({
+      status: "ok",
+      preferred: preferred,
+      exclude: exclude,
+      window_sec: clamp(parseIntSafe(windowSec, adaptiveWindowSec), 120, 86400),
+      picked: picked.slot_id || preferred || "",
+      reason: norm(picked.reason),
+      success_rate: picked.success_rate,
+      avg_latency_sec: picked.avg_latency_sec,
+      scores: scores
+    });
+  }
+
+  if (mode === "admin_slot_list") {
+    const slots = loadSlotRegistry();
+    return jsonOut({
+      status: "ok",
+      count: slots.length,
+      slots: slots
+    });
+  }
+
+  if (mode === "admin_slot_upsert") {
+    const slots = loadSlotRegistry();
+    const inId = normalizeSlotAliasId(data.slot_id || data.id);
+    if (!inId) return jsonOut({ status: "error", error: "slot_id_required" });
+    const target = canonicalTarget(data.target || "");
+    if (!target || target === "all") return jsonOut({ status: "error", error: "target_required" });
+    const existingIdx = slots.findIndex((s) => normalizeSlotAliasId(s.slot_id) === inId);
+    const base = existingIdx >= 0 ? slots[existingIdx] : {};
+    const merged = normalizeSlotEntry({
+      slot_id: inId,
+      display_name: norm(data.display_name || base.display_name || inId),
+      target: target,
+      enabled: data.hasOwnProperty("enabled") ? data.enabled : (base.enabled !== undefined ? base.enabled : true),
+      priority: data.hasOwnProperty("priority") ? data.priority : (base.priority || 100),
+      login: norm(data.login || base.login || ""),
+      url: norm(data.url || base.url || ""),
+      input_selector: norm(data.input_selector || base.input_selector || ""),
+      send_selector: norm(data.send_selector || base.send_selector || ""),
+      response_selector: norm(data.response_selector || base.response_selector || "")
+    }, existingIdx >= 0 ? existingIdx : slots.length);
+    if (existingIdx >= 0) slots[existingIdx] = merged;
+    else slots.push(merged);
+    slots.sort((a, b) => a.priority - b.priority);
+    saveSlotRegistry(slots);
+    addAudit(norm(data.trace_id), "SLOT_UPSERT", "", "", "ok", merged.slot_id + "->" + merged.target + " enabled=" + merged.enabled);
+    return jsonOut({ status: "ok", slot: merged, count: slots.length });
+  }
+
+  if (mode === "admin_slot_delete") {
+    const slots = loadSlotRegistry();
+    const inId = normalizeSlotAliasId(data.slot_id || data.id);
+    if (!inId) return jsonOut({ status: "error", error: "slot_id_required" });
+    const hardDelete = lower(norm(data.hard_delete || "false")) === "true";
+    const idx = slots.findIndex((s) => normalizeSlotAliasId(s.slot_id) === inId);
+    if (idx < 0) return jsonOut({ status: "not_found", slot_id: inId });
+    let deleted = null;
+    if (hardDelete) {
+      deleted = slots.splice(idx, 1)[0];
+    } else {
+      slots[idx].enabled = false;
+      deleted = slots[idx];
+    }
+    saveSlotRegistry(slots);
+    addAudit(norm(data.trace_id), "SLOT_DELETE", "", "", "ok", inId + " hard=" + hardDelete);
+    return jsonOut({ status: "ok", slot: deleted, count: slots.length, hard_delete: hardDelete });
   }
 
   if (mode === "admin_set_timeouts") {
@@ -2067,6 +2723,7 @@ function doPost(e) {
         leased_at: norm(row[6]),
         trace_id: norm(payload.trace_id),
         target: norm(payload.target),
+        slot_id: norm(payload.slot_id),
         executor: norm(payload.executor),
         retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0),
         pending_recover_count: Number(parseInt(norm(payload.pending_recover_count) || "0", 10) || 0),
@@ -2320,6 +2977,17 @@ function doPost(e) {
     return jsonOut({ status: "ok", key: norm(data.key), rows: rows, count: rows.length });
   }
 
+  if (mode === "gateway_memory_search" || mode === "memory_search") {
+    const query = norm(data.query || data.q || data.text);
+    if (!query) return jsonOut({ status: "error", error: "query_required" });
+    const rows = searchGatewayLongMemory(query, {
+      limit: data.limit,
+      scan: data.scan,
+      source: data.source
+    });
+    return jsonOut({ status: "ok", query: query, rows: rows, count: rows.length });
+  }
+
   if (mode === "arc_memory_put" || mode === "arc_short_memory_put") {
     cleanupArcShortMemory(500);
     const mem = putArcShortMemory(data.worker_id, data.session_id, data.key, data.value, data.ttl_sec, data.trace_id);
@@ -2348,7 +3016,7 @@ function doPost(e) {
     const enq = enqueueArcJob({
       jobId: jobId,
       qid: jobId,
-      target: "gemini",
+      target: resolveOperationalTarget(defaultTarget, { fallback: "gemini" }),
       prompt: "runtime_mode_set",
       script: "",
       runtimeMode: requested,
@@ -2372,7 +3040,7 @@ function doPost(e) {
 
   if (mode === "arc_diag_snapshot") {
     const workerId = norm(data.worker_id);
-    const target = canonicalTarget(data.target || "copilot") || "copilot";
+    const target = resolveOperationalTarget(data.target || defaultTarget, { fallback: defaultTarget });
     const nav = data.navigator && typeof data.navigator === "object" ? data.navigator : {};
     const webgl = data.webgl && typeof data.webgl === "object" ? data.webgl : {};
     const headers = data.headers && typeof data.headers === "object" ? data.headers : {};
@@ -2423,6 +3091,10 @@ function doPost(e) {
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
     const found = findJobRowById(missionId);
     const resultTarget = canonicalTarget(data.target || (found && found.payload ? found.payload.target : "")) || "";
+    const resultSlot = canonicalSlotId((found && found.payload ? found.payload.slot_id : "") || data.slot_id || "");
+    const mainRef = findMainChatByMissionId(missionId || missionIdRaw);
+    const reqUser = mainRef ? norm(mainRef.user) : "";
+    const reqContent = mainRef ? norm(mainRef.content) : norm(data.prompt);
     if (found && evalSummary) {
       const payload = found.payload || {};
       payload.last_eval_summary = evalSummary.slice(0, 1200);
@@ -2450,6 +3122,30 @@ function doPost(e) {
     if (resultTarget) {
       markTargetSuccess(resultTarget, traceId);
     }
+    if (reqUser && result) {
+      const keyBase = "user:" + reqUser + ":" + (resultSlot || resultTarget || "general");
+      const memValue = ("request=" + reqContent + "\nresult=" + result)
+        .replace(/\s+/g, " ")
+        .slice(0, MAX_MEMORY_VALUE);
+      setGatewayLongMemory(
+        keyBase + ":last_success",
+        memValue,
+        "arc_result_auto",
+        traceId,
+        [resultTarget, resultSlot, "success", reqUser].filter((x) => x).join(",")
+      );
+      const qTokens = tokenizeForMemory(reqContent);
+      if (qTokens.length > 0) {
+        const topicKey = "topic:" + qTokens[0] + ":" + (resultTarget || "general");
+        setGatewayLongMemory(
+          topicKey,
+          ("user=" + reqUser + " / " + memValue).slice(0, MAX_MEMORY_VALUE),
+          "arc_result_auto",
+          traceId,
+          [resultTarget, resultSlot, "topic"].filter((x) => x).join(",")
+        );
+      }
+    }
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
     return jsonOut({ status: "ok", trace_id: traceId });
   }
@@ -2463,6 +3159,10 @@ function doPost(e) {
     const workerId = norm(data.worker_id);
     const foundJobForTarget = findJobRowById(missionId);
     const errorTarget = canonicalTarget(data.target || (foundJobForTarget && foundJobForTarget.payload ? foundJobForTarget.payload.target : "")) || "";
+    const errorSlot = canonicalSlotId((foundJobForTarget && foundJobForTarget.payload ? foundJobForTarget.payload.slot_id : "") || data.slot_id || "");
+    const mainRef = findMainChatByMissionId(missionId || missionIdRaw);
+    const reqUser = mainRef ? norm(mainRef.user) : "";
+    const reqContent = mainRef ? norm(mainRef.content) : "";
 
     const recentErr = readRecentRows(sheets.errors, 4, compactScanMax);
     let foundErr = -1;
@@ -2510,12 +3210,30 @@ function doPost(e) {
     }
     if (retry.retried) {
       if (errorTarget) markTargetFailure(errorTarget, err, errData, traceId);
+      if (reqUser) {
+        setGatewayLongMemory(
+          "user:" + reqUser + ":" + (errorSlot || errorTarget || "general") + ":last_error",
+          ("request=" + reqContent + "\nerror=[" + err + "] " + errData).replace(/\s+/g, " ").slice(0, MAX_MEMORY_VALUE),
+          "arc_error_auto",
+          traceId,
+          [errorTarget, errorSlot, "error", "retry"].filter((x) => x).join(",")
+        );
+      }
       addAudit(traceId, "ARC_ERROR_RETRY", missionId, workerId, "pending", "retry=" + retry.retry_count + ",executor=" + retry.executor);
       return jsonOut({ status: "retry_scheduled", trace_id: traceId, retry: retry });
     }
 
     completeArcJob(missionId, "error");
     if (errorTarget) markTargetFailure(errorTarget, err, errData, traceId);
+    if (reqUser) {
+      setGatewayLongMemory(
+        "user:" + reqUser + ":" + (errorSlot || errorTarget || "general") + ":last_error",
+        ("request=" + reqContent + "\nerror=[" + err + "] " + errData).replace(/\s+/g, " ").slice(0, MAX_MEMORY_VALUE),
+        "arc_error_auto",
+        traceId,
+        [errorTarget, errorSlot, "error"].filter((x) => x).join(",")
+      );
+    }
     addAudit(traceId, "ARC_ERROR", missionId, workerId, "error", err + " / " + retry.reason);
     return jsonOut({ status: "ok", trace_id: traceId, retry: retry });
   }
@@ -2615,6 +3333,7 @@ function doPost(e) {
     if (shouldLeaseTouch) {
       touchLeaseFromHeartbeat(workerId, Object.assign({}, data, { progress_signal: progressSignal ? "true" : "false" }));
     }
+    runArcQueueMaintenance(norm(data.trace_id), workerId, consumer);
     const runningLike =
       workerStatus === "running" ||
       workerStatus === "working" ||
@@ -2638,6 +3357,7 @@ function doPost(e) {
   if (mode === "lease_job") {
     const workerId = norm(data.worker_id);
     const consumer = upper(data.executor || "ARC");
+    runArcQueueMaintenance(norm(data.trace_id), workerId, consumer);
     const instruction = safeClaimNextInstruction(workerId, consumer, norm(data.trace_id));
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "empty" });
   }

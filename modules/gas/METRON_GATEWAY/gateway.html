@@ -159,10 +159,8 @@
     <select id="external-ai"
             style="width:100%; margin-top:8px; padding:10px; border-radius:var(--radius);
                    border:1px solid var(--border); font-size:14px;">
-      <option value="ChatGPT">ChatGPT</option>
-      <option value="Gemini">Gemini</option>
-      <option value="Copilot">Copilot</option>
-      <option value="AllAI">全AI（ChatGPT + Gemini + Copilot）</option>
+      <option value="auto">自動選択（推奨）</option>
+      <option value="all_slots">全スロット（有効）</option>
     </select>
   </div>
 
@@ -252,8 +250,50 @@
 =========================== -->
 <div id="page-settings" class="page">
   <div class="ios-card">
-    <h3>設定</h3>
-    <p>テーマや表示設定を管理します。</p>
+    <h3>スロット管理</h3>
+    <div style="display:grid; gap:8px;">
+      <input id="slot-id" placeholder="slot_id 例: claude" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-display" placeholder="表示名 例: Claude" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-target" placeholder="target 例: claude" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-url" placeholder="URL 例: https://claude.ai/new" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-priority" type="number" placeholder="priority 例: 25" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <textarea id="slot-selectors" placeholder='selectors_json 例: {"input":"textarea","send":"button[type=submit]"}' style="height:72px; padding:10px; border-radius:12px; border:1px solid var(--border);"></textarea>
+      <label style="font-size:13px; color:var(--text-secondary);">
+        <input id="slot-enabled" type="checkbox" checked> 有効
+      </label>
+      <div style="display:flex; gap:8px;">
+        <button onclick="saveSlotFromForm()" style="flex:1; padding:10px; border-radius:12px; border:none; background:var(--accent-blue); color:#fff;">保存</button>
+        <button onclick="resetSlotForm()" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border); background:var(--bg-main); color:var(--text-main);">クリア</button>
+        <button onclick="loadSlotRegistryUi()" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border); background:var(--bg-main); color:var(--text-main);">再読込</button>
+      </div>
+    </div>
+    <div id="slot-table-area" style="margin-top:10px; font-size:12px; color:var(--text-secondary);">読み込み中...</div>
+  </div>
+
+  <div class="ios-card">
+    <h3>記憶検索</h3>
+    <div style="display:grid; gap:8px;">
+      <input id="memory-query" placeholder="検索語 例: timeout arc_done retry" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <div style="display:flex; gap:8px;">
+        <input id="memory-target" placeholder="target (任意)" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+        <input id="memory-slot-id" placeholder="slot_id (任意)" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+      </div>
+      <div style="display:flex; gap:8px;">
+        <input id="memory-user" placeholder="user (任意)" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+        <input id="memory-limit" type="number" value="8" min="1" max="30" style="width:92px; padding:10px; border-radius:12px; border:1px solid var(--border);">
+        <button onclick="runMemorySearchUi()" style="padding:10px 16px; border-radius:12px; border:none; background:var(--accent-green); color:#fff;">検索</button>
+      </div>
+    </div>
+    <div id="memory-search-area" style="margin-top:10px; font-size:12px; color:var(--text-secondary);">クエリを入力して検索してください。</div>
+  </div>
+
+  <div class="ios-card">
+    <h3>スロット評価</h3>
+    <div style="display:flex; gap:8px;">
+      <input id="score-target" placeholder="target 例: chatgpt / all" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <button onclick="loadSlotScoresUi()" style="padding:10px 16px; border-radius:12px; border:none; background:var(--accent-purple); color:#fff;">評価取得</button>
+    </div>
+    <div id="slot-score-area" style="margin-top:10px; font-size:12px; color:var(--text-secondary);">評価はまだありません。</div>
   </div>
 </div>
 
@@ -275,6 +315,9 @@ const logsUiState = {
   aiCopyText: "",
   autoRecoverRunning: false,
   autoRecoverLastAtMs: 0
+};
+const settingsUiState = {
+  slots: []
 };
 
 /* ============================================================
@@ -304,37 +347,48 @@ function switchTab(name) {
   document.querySelectorAll(".tab-btn").forEach(b => {
     if ((b.dataset.tab || "") === name) b.classList.add("active");
   });
+  if (name === "settings") {
+    loadSlotRegistryUi();
+  }
 }
 
 /* ============================================================
    Utility: AI 判定・アイコン・色付け
 ============================================================ */
 function detectAIFromSource(source) {
-  if (source.includes("ChatGPT")) return "ChatGPT";
-  if (source.includes("Gemini")) return "Gemini";
-  if (source.includes("Copilot")) return "Copilot";
-  return "AI";
+  const src = String(source || "").trim();
+  const slot = (settingsUiState.slots || []).find((s) => {
+    const sid = String(s.slot_id || "");
+    const target = String(s.target || "");
+    return (sid && src.toLowerCase().includes(sid.toLowerCase())) ||
+      (target && src.toLowerCase().includes(target.toLowerCase()));
+  });
+  if (slot) return String(slot.display_name || slot.slot_id || "AI");
+  if (!src) return "AI";
+  if (src.toUpperCase().includes("ARC")) return "ARC";
+  return src;
 }
 
 function getAIIcon(ai) {
-  if (ai === "ChatGPT") return "🟦 ChatGPT";
-  if (ai === "Gemini") return "🟩 Gemini";
-  if (ai === "Copilot") return "🟪 Copilot";
-  return "🤖 AI";
+  return `🤖 ${escHtml(String(ai || "AI"))}`;
 }
 
 function applyAIColor(bubble, ai) {
-  if (ai === "ChatGPT") {
+  const key = String(ai || "").toLowerCase();
+  if (key.includes("chatgpt")) {
     bubble.style.background = "var(--accent-blue)";
     bubble.style.color = "white";
+    return;
   }
-  else if (ai === "Gemini") {
+  if (key.includes("gemini")) {
     bubble.style.background = "var(--accent-green)";
     bubble.style.color = "white";
+    return;
   }
-  else if (ai === "Copilot") {
+  if (key.includes("copilot") || key.includes("claude")) {
     bubble.style.background = "var(--accent-purple)";
     bubble.style.color = "white";
+    return;
   }
 }
 
@@ -598,7 +652,7 @@ function toJpStatusKey(s) {
 }
 
 /* ============================================================
-   Load Chat（AllAI 統合版）
+   Load Chat（スロット統合版）
 ============================================================ */
 function autoUpdateChat() {
   google.script.run.withSuccessHandler((rows) => {
@@ -613,20 +667,24 @@ function autoUpdateChat() {
     const log = document.getElementById("chat-log");
     log.innerHTML = "";
 
-    // AllAI の回答をまとめるための一時バッファ
-    const allAIGroup = {
-      ChatGPT: null,
-      Gemini: null,
-      Copilot: null
+    const groupedReplies = {
+      map: {},
+      ts: ""
     };
 
-    function flushAllAIGroup() {
-      const hasAny =
-        allAIGroup.ChatGPT ||
-        allAIGroup.Gemini ||
-        allAIGroup.Copilot;
+    function parseBracketReply(message) {
+      const msg = String(message || "");
+      const m = msg.match(/^\[([^\]]{1,40})\]\s*([\s\S]*)$/);
+      if (!m) return null;
+      const label = String(m[1] || "").trim();
+      const body = String(m[2] || "").trim();
+      if (!label || !body) return null;
+      return { label: label, body: body };
+    }
 
-      if (!hasAny) return;
+    function flushGroupedReplies() {
+      const labels = Object.keys(groupedReplies.map || {});
+      if (!labels.length) return;
 
       const card = document.createElement("div");
       card.style = `
@@ -638,61 +696,42 @@ function autoUpdateChat() {
         margin-bottom: 12px;
       `;
 
-      const stamp = formatChatTime(allAIGroup._ts || "");
+      const stamp = formatChatTime(groupedReplies.ts || "");
       card.innerHTML = `<div style="font-weight:600; margin-bottom:8px;">
-        🌈 全AI応答
+        🌈 複数スロット応答
         ${stamp ? `<span style="margin-left:8px; font-size:12px; color:var(--text-secondary);">${stamp}</span>` : ""}
       </div>`;
 
-      ["ChatGPT", "Gemini", "Copilot"].forEach(ai => {
-        if (allAIGroup[ai]) {
-          const section = document.createElement("div");
-          section.style = "margin-bottom:10px;";
-
-          const icon = getAIIcon(ai);
-
-          section.innerHTML = `
-            <div style="display:flex; align-items:center; gap:6px; font-weight:600;">
-              ${icon}
-            </div>
-            ${makeCollapsible(allAIGroup[ai])}
-          `;
-
-          card.appendChild(section);
-        }
+      labels.sort().forEach((label) => {
+        const section = document.createElement("div");
+        section.style = "margin-bottom:10px;";
+        section.innerHTML = `
+          <div style="display:flex; align-items:center; gap:6px; font-weight:600;">
+            ${getAIIcon(label)}
+          </div>
+          ${makeCollapsible(groupedReplies.map[label])}
+        `;
+        card.appendChild(section);
       });
 
       log.appendChild(card);
 
-      allAIGroup.ChatGPT = null;
-      allAIGroup.Gemini = null;
-      allAIGroup.Copilot = null;
-      allAIGroup._ts = null;
+      groupedReplies.map = {};
+      groupedReplies.ts = "";
     }
 
     normalized.forEach(r => {
       const source = r[1] || "";
       const msg = r[2] || "";
 
-      // AllAI の回答をまとめる
-      if (source.includes("ChatGPT") && msg.startsWith("[ChatGPT]")) {
-        allAIGroup.ChatGPT = msg.replace("[ChatGPT]", "").trim();
-        allAIGroup._ts = allAIGroup._ts || r[0];
-        return;
-      }
-      if (source.includes("Gemini") && msg.startsWith("[Gemini]")) {
-        allAIGroup.Gemini = msg.replace("[Gemini]", "").trim();
-        allAIGroup._ts = allAIGroup._ts || r[0];
-        return;
-      }
-      if (source.includes("Copilot") && msg.startsWith("[Copilot]")) {
-        allAIGroup.Copilot = msg.replace("[Copilot]", "").trim();
-        allAIGroup._ts = allAIGroup._ts || r[0];
+      const grouped = parseBracketReply(msg);
+      if (grouped) {
+        groupedReplies.map[grouped.label] = grouped.body;
+        groupedReplies.ts = groupedReplies.ts || r[0];
         return;
       }
 
-      // AllAI グループを flush
-      flushAllAIGroup();
+      flushGroupedReplies();
 
       // 通常のメッセージ
       const bubble = document.createElement("div");
@@ -737,8 +776,7 @@ function autoUpdateChat() {
       log.appendChild(bubble);
     });
 
-    // 最後に AllAI グループを flush
-    flushAllAIGroup();
+    flushGroupedReplies();
 
     scrollChatToBottom();
   }).withFailureHandler((err) => {
@@ -811,20 +849,25 @@ function sendChat() {
 }
 
 /* ============================================================
-   Send to External AI（AllAI 対応）
+   Send to External AI（スロット対応）
 ============================================================ */
 function sendToExternalAI() {
   const text = document.getElementById("chat-input").value.trim();
   if (!text) return;
 
-  const ai = document.getElementById("external-ai").value;
-  showGatewayStatus("外部AIへ送信中: " + ai, "info");
+  const selected = document.getElementById("external-ai").value;
+  showGatewayStatus("外部AIへ送信中: " + selected, "info");
 
   document.getElementById("external-loading").style.display = "block";
 
-  if (ai === "AllAI") {
-    const labels = ["ChatGPT", "Gemini", "Copilot"];
-    const messages = labels.map((a) => `[${a}] ${text}`);
+  if (selected === "all_slots") {
+    const slots = (settingsUiState.slots || []).filter((s) => s.enabled).slice(0, 6);
+    if (!slots.length) {
+      document.getElementById("external-loading").style.display = "none";
+      showGatewayStatus("有効スロットがありません", "warn");
+      return;
+    }
+    const messages = slots.map((s) => `#slot:${s.slot_id} ${text}`);
     const pendingIds = messages.map((m) => queuePendingMessage("USER (GW)", m));
     autoUpdateChat();
     google.script.run.withSuccessHandler((res) => {
@@ -833,21 +876,24 @@ function sendToExternalAI() {
         hideGlobalLoading: false,
         hideExternalLoading: true,
         clearInput: true,
-        successLabel: "全AIへ送信",
-        statusLabel: "全AIへ送信完了"
+        successLabel: "全スロットへ送信",
+        statusLabel: "全スロットへ送信完了"
       });
     }).withFailureHandler((err) => {
       handleSendFailure(err, {
         pendingIds: pendingIds,
         hideGlobalLoading: false,
         hideExternalLoading: true,
-        failLabel: "全AI送信失敗"
+        failLabel: "全スロット送信失敗"
       });
     }).submitGatewayChatBatch(messages);
     return;
   }
 
-  const pendingId = queuePendingMessage("USER (GW)", `[${ai}] ${text}`);
+  const message = selected.startsWith("slot:")
+    ? `#slot:${selected.slice(5)} ${text}`
+    : text;
+  const pendingId = queuePendingMessage("USER (GW)", message);
   autoUpdateChat();
   google.script.run.withSuccessHandler((res) => {
     handleSendSuccess(res, {
@@ -855,8 +901,8 @@ function sendToExternalAI() {
       hideGlobalLoading: false,
       hideExternalLoading: true,
       clearInput: true,
-      successLabel: ai + "へ送信",
-      statusLabel: ai + "へ送信完了"
+      successLabel: "送信",
+      statusLabel: "送信完了"
     });
   }).withFailureHandler((err) => {
     handleSendFailure(err, {
@@ -865,7 +911,7 @@ function sendToExternalAI() {
       hideExternalLoading: true,
       failLabel: "外部AI送信失敗"
     });
-  }).submitGatewayChat(`[${ai}] ${text}`);
+  }).submitGatewayChat(message);
 }
 
 /* ============================================================
@@ -1012,6 +1058,240 @@ ${p.code}
   }).fetchStaging();
 }
 
+function escHtml(v) {
+  return String(v == null ? "" : v)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function normalizeSlotList(slots) {
+  if (!Array.isArray(slots)) return [];
+  return slots.map((s) => ({
+    slot_id: String((s && s.slot_id) || ""),
+    display_name: String((s && s.display_name) || ""),
+    target: String((s && s.target) || ""),
+    url: String((s && s.url) || ""),
+    enabled: !!(s && s.enabled),
+    priority: Number((s && s.priority) || 100),
+    selectors_json: String((s && s.selectors_json) || "")
+  }));
+}
+
+function refreshExternalAiOptions() {
+  const sel = document.getElementById("external-ai");
+  if (!sel) return;
+  const current = sel.value || "auto";
+  const enabledSlots = (settingsUiState.slots || []).filter((s) => s.enabled);
+  const base = [
+    `<option value="auto">自動選択（推奨）</option>`,
+    `<option value="all_slots">全スロット（有効）</option>`
+  ];
+  const slotOptions = enabledSlots.map((s) => {
+    const label = `${s.display_name || s.slot_id} [${s.slot_id}]`;
+    return `<option value="slot:${escHtml(s.slot_id)}">${escHtml(label)}</option>`;
+  });
+  sel.innerHTML = base.concat(slotOptions).join("");
+  const stillExists = Array.from(sel.options).some((o) => o.value === current);
+  sel.value = stillExists ? current : "auto";
+}
+
+function renderSlotTableUi() {
+  const area = document.getElementById("slot-table-area");
+  const slots = settingsUiState.slots || [];
+  if (!slots.length) {
+    area.innerHTML = "スロットが未登録です。";
+    return;
+  }
+  const rows = slots.map((s) => {
+    return `
+      <tr>
+        <td>${escHtml(s.slot_id)}</td>
+        <td>${escHtml(s.display_name)}</td>
+        <td>${escHtml(s.target)}</td>
+        <td>${s.enabled ? "ON" : "OFF"}</td>
+        <td>${escHtml(s.priority)}</td>
+        <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(s.url)}</td>
+        <td>
+          <button onclick="editSlotFromTable('${escHtml(s.slot_id)}')" style="padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-main);">編集</button>
+          <button onclick="deleteSlotFromTable('${escHtml(s.slot_id)}')" style="padding:4px 8px; border-radius:8px; border:1px solid #e0a6a6; background:#fff1f1; color:#8b1e1e;">削除</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  area.innerHTML = `
+    <div style="margin-bottom:8px; color:var(--text-secondary);">件数: ${slots.length}</div>
+    <div style="overflow:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">slot_id</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">表示名</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">target</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">有効</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">優先</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">URL</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadSlotRegistryUi() {
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("スロット読込失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    settingsUiState.slots = normalizeSlotList((res && res.slots) || []);
+    renderSlotTableUi();
+    refreshExternalAiOptions();
+  }).withFailureHandler((err) => {
+    showGatewayStatus("スロット読込失敗: " + err, "err");
+  }).fetchGatewaySlotsForUi();
+}
+
+function resetSlotForm() {
+  document.getElementById("slot-id").value = "";
+  document.getElementById("slot-display").value = "";
+  document.getElementById("slot-target").value = "";
+  document.getElementById("slot-url").value = "";
+  document.getElementById("slot-priority").value = "";
+  document.getElementById("slot-selectors").value = "";
+  document.getElementById("slot-enabled").checked = true;
+}
+
+function editSlotFromTable(slotId) {
+  const hit = (settingsUiState.slots || []).find((s) => s.slot_id === slotId);
+  if (!hit) return;
+  document.getElementById("slot-id").value = hit.slot_id;
+  document.getElementById("slot-display").value = hit.display_name;
+  document.getElementById("slot-target").value = hit.target;
+  document.getElementById("slot-url").value = hit.url;
+  document.getElementById("slot-priority").value = String(hit.priority || 100);
+  document.getElementById("slot-selectors").value = hit.selectors_json || "";
+  document.getElementById("slot-enabled").checked = !!hit.enabled;
+}
+
+function saveSlotFromForm() {
+  const slot = {
+    slot_id: document.getElementById("slot-id").value.trim(),
+    display_name: document.getElementById("slot-display").value.trim(),
+    target: document.getElementById("slot-target").value.trim(),
+    url: document.getElementById("slot-url").value.trim(),
+    priority: Number(document.getElementById("slot-priority").value || 100),
+    selectors_json: document.getElementById("slot-selectors").value.trim(),
+    enabled: document.getElementById("slot-enabled").checked
+  };
+  if (!slot.slot_id) {
+    showGatewayStatus("slot_id は必須です", "warn");
+    return;
+  }
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("スロット保存失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    showGatewayStatus("スロット保存完了: " + slot.slot_id, "ok");
+    loadSlotRegistryUi();
+  }).withFailureHandler((err) => {
+    showGatewayStatus("スロット保存失敗: " + err, "err");
+  }).upsertGatewaySlotForUi(slot);
+}
+
+function deleteSlotFromTable(slotId) {
+  if (!slotId) return;
+  const ok = confirm("スロットを無効化しますか？\nOK=無効化 / キャンセル=中止");
+  if (!ok) return;
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("スロット削除失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    showGatewayStatus("スロット更新完了: " + slotId, "ok");
+    loadSlotRegistryUi();
+  }).withFailureHandler((err) => {
+    showGatewayStatus("スロット削除失敗: " + err, "err");
+  }).deleteGatewaySlotForUi(slotId, false);
+}
+
+function runMemorySearchUi() {
+  const query = document.getElementById("memory-query").value.trim();
+  const area = document.getElementById("memory-search-area");
+  if (!query) {
+    area.innerHTML = "検索語を入力してください。";
+    return;
+  }
+  area.innerHTML = "検索中...";
+  const opt = {
+    target: document.getElementById("memory-target").value.trim(),
+    slot_id: document.getElementById("memory-slot-id").value.trim(),
+    user: document.getElementById("memory-user").value.trim(),
+    limit: Number(document.getElementById("memory-limit").value || 8)
+  };
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      area.innerHTML = `<span style="color:#b00020;">検索失敗: ${escHtml(String((res && res.error) || status))}</span>`;
+      return;
+    }
+    const items = Array.isArray(res.items) ? res.items : [];
+    if (!items.length) {
+      area.innerHTML = "該当する記憶はありません。";
+      return;
+    }
+    const html = items.map((it) => {
+      const key = escHtml(it.key || "");
+      const source = escHtml(it.source || "");
+      const score = escHtml(it.score || "");
+      const val = escHtml(typeof it.value === "string" ? it.value : JSON.stringify(it.value || {}));
+      return `
+        <div style="padding:8px; border:1px solid var(--border); border-radius:10px; margin-bottom:8px;">
+          <div style="font-weight:600;">${key}</div>
+          <div style="font-size:11px; color:var(--text-secondary);">source=${source} / score=${score}</div>
+          <div style="margin-top:6px; white-space:pre-wrap;">${val}</div>
+        </div>
+      `;
+    }).join("");
+    area.innerHTML = `<div style="margin-bottom:8px; color:var(--text-secondary);">ヒット: ${items.length}</div>${html}`;
+  }).withFailureHandler((err) => {
+    area.innerHTML = `<span style="color:#b00020;">検索失敗: ${escHtml(err)}</span>`;
+  }).searchGatewayMemoryForUi(query, opt);
+}
+
+function loadSlotScoresUi() {
+  const target = document.getElementById("score-target").value.trim() || "all";
+  const area = document.getElementById("slot-score-area");
+  area.innerHTML = "取得中...";
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      area.innerHTML = `<span style="color:#b00020;">取得失敗: ${escHtml(String((res && res.error) || status))}</span>`;
+      return;
+    }
+    const picked = escHtml(res.picked || "");
+    const reason = escHtml(res.reason || "");
+    const scores = res.scores && typeof res.scores === "object" ? res.scores : {};
+    const lines = Object.keys(scores).sort().map((k) => {
+      return `<div>${escHtml(k)}: ${escHtml(JSON.stringify(scores[k]))}</div>`;
+    }).join("");
+    area.innerHTML = `
+      <div style="font-weight:600;">推奨: ${picked || "-"}</div>
+      <div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">理由: ${reason || "-"}</div>
+      <div style="font-family:monospace; font-size:12px; white-space:pre-wrap;">${lines || "スコアなし"}</div>
+    `;
+  }).withFailureHandler((err) => {
+    area.innerHTML = `<span style="color:#b00020;">取得失敗: ${escHtml(err)}</span>`;
+  }).fetchGatewaySlotScoresForUi(target);
+}
+
 function approveStaged(id) {
   showLoading();
   google.script.run.withSuccessHandler(() => {
@@ -1069,6 +1349,7 @@ window.addEventListener("load", () => {
   Evolution.reload();
   Evolution.loadList();
   loadStaging();
+  loadSlotRegistryUi();
 
   setInterval(autoUpdateChat, 3000);
   setInterval(loadLogs, 5000);

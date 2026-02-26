@@ -72,8 +72,12 @@ except Exception:
     pass
 ')"
   if [ -n "${probe_job_id:-}" ]; then
-    job_id="$probe_job_id"
-    echo "[route $r] chat_probe_hit mission_id=$job_id"
+    if [ -z "${job_id:-}" ]; then
+      job_id="$probe_job_id"
+      echo "[route $r] chat_probe_hit mission_id=$job_id"
+    else
+      echo "[route $r] chat_probe_seen mission_id=$probe_job_id (ignored; keeping route job_id=$job_id)"
+    fi
   fi
   if [ -n "${job_id:-}" ] && [ "${route_source:-}" = "fresh" ]; then
     break

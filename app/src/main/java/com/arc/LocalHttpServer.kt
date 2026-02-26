@@ -141,6 +141,7 @@ class LocalHttpServer(
                         val qid = obj.optString("qid")
                         val targetTag = obj.optString("target").uppercase()
                         val prompt = obj.optString("prompt")
+                        val slotId = obj.optString("slot_id", "")
 
                         if (qid.isEmpty() || targetTag.isEmpty() || prompt.isEmpty()) return errorResponse("Missing params")
                         
@@ -149,7 +150,7 @@ class LocalHttpServer(
                         } else {
                             val target = Util.parseTarget(targetTag)
                             if (target != null) {
-                                queue.enqueue(ArcTask.AI(qid, target.name, prompt))
+                                queue.enqueue(ArcTask.AI(qid, target.name, prompt, slotId = slotId))
                             } else {
                                 return errorResponse("Unknown target tag: $targetTag")
                             }

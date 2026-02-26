@@ -361,6 +361,27 @@ class GatewayClient(private val prefs: Prefs) {
         }
     }
 
+    fun fetchSlotRegistry(callback: (JSONArray) -> Unit) {
+        if (prefs.gasUrl.isBlank()) {
+            callback(JSONArray())
+            return
+        }
+        clientScope.launch {
+            val slots = try {
+                val json = JSONObject().apply {
+                    put("mode", "admin_slot_list")
+                    put("auth_key", prefs.authToken)
+                }
+                val response = Http.post(prefs.gasUrl, json.toString())
+                val parsed = JSONObject(response)
+                parsed.optJSONArray("slots") ?: JSONArray()
+            } catch (_: Exception) {
+                JSONArray()
+            }
+            withContext(Dispatchers.Main) { callback(slots) }
+        }
+    }
+
     fun sendHeartbeat(statusJson: String, onInstruction: (JSONObject) -> Unit = {}) {
         if (prefs.gasUrl.isBlank()) return
         val nextPriority = isPriorityHeartbeat(statusJson)

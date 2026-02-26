@@ -9,6 +9,7 @@ sealed class ArcTask {
         val target: String, 
         val prompt: String,
         val missionId: String = "AUTO",
+        val slotId: String = "",
         val isSelfHealing: Boolean = false,
         val forceReload: Boolean = false
     ) : ArcTask()

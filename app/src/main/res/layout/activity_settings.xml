@@ -31,6 +31,9 @@
                     <com.google.android.material.textfield.TextInputLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:hint="@string/hint_sheet_id"><com.google.android.material.textfield.TextInputEditText android:id="@+id/sheetId" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="text" android:autofillHints="none"/></com.google.android.material.textfield.TextInputLayout>
                     <Button android:id="@+id/btnAutoSetup" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:backgroundTint="#1A73E8" android:text="@string/btn_auto_setup" />
                     <Button android:id="@+id/btnLoginGuide" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/btn_login_guide" />
+                    <Button android:id="@+id/btnApplyRecommended" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/btn_apply_recommended" />
+                    <Button android:id="@+id/btnApplyClaudePreset" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/btn_apply_claude_preset" />
+                    <Button android:id="@+id/btnSyncSlotRegistry" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/btn_sync_slot_registry" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -122,13 +125,13 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- 🟣 Copilot Card -->
+            <!-- 🟣 Claude Card -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
                 app:cardCornerRadius="12dp"
-                app:strokeColor="#ff3b30"
+                app:strokeColor="#7E57C2"
                 app:strokeWidth="1dp">
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -142,7 +145,7 @@
                             android:layout_alignParentStart="true"
                             android:layout_toStartOf="@+id/lockCopilot"
                             android:text="@string/label_copilot"
-                            android:textColor="#ff3b30"
+                            android:textColor="#7E57C2"
                             android:textStyle="bold" />
                         <androidx.appcompat.widget.SwitchCompat
                             android:id="@+id/lockCopilot"

@@ -18,7 +18,7 @@
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:minHeight="300dp"
-                android:background="#FFFFFF">
+                android:background="#000000">
 
                 <ProgressBar
                     android:id="@+id/loadingBar"
@@ -32,6 +32,7 @@
             </FrameLayout>
 
             <LinearLayout
+                android:id="@+id/controlPanel"
                 android:orientation="vertical"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

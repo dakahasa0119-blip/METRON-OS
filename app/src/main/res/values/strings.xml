@@ -23,6 +23,9 @@
     <string name="btn_auto_setup">自動セットアップ実行</string>
     <string name="btn_auto_setup_running">環境構築中…</string>
     <string name="btn_login_guide">ログインガイド開始</string>
+    <string name="btn_apply_recommended">推奨設定を一括適用</string>
+    <string name="btn_apply_claude_preset">Claude設定のみ投入</string>
+    <string name="btn_sync_slot_registry">スロット移行/同期を実行</string>
     <string name="title_login_guide">AIログインガイド</string>
     <string name="msg_login_guide_start">初期構築時に各AIへ順番に遷移し、ログイン/認証を手動で完了します。完了後は次へ進んでください。</string>
     <string name="msg_login_guide_step">[%1$s]\n1) 正規ログイン状態を確認\n2) 必要なら認証チェックを完了\n3) 完了後に「このAIは完了」を押す</string>
@@ -39,7 +42,7 @@
 
     <string name="label_gemini">Google Gemini 設定</string>
     <string name="label_chatgpt">OpenAI ChatGPT 設定</string>
-    <string name="label_copilot">Anthropic Claude 設定</string>
+    <string name="label_copilot">Anthropic Claude（第3スロット）設定</string>
     <string name="hint_url">サービス URL</string>
     <string name="hint_input_sel">入力セレクタ</string>
     <string name="hint_send_sel">送信セレクタ</string>
@@ -60,6 +63,9 @@
     <string name="toast_enter_gas_url_first">先にGASのURLを入力してください</string>
     <string name="toast_setup_ok">環境構築に成功しました: %1$s</string>
     <string name="toast_setup_fail">環境構築に失敗しました: %1$s</string>
+    <string name="toast_recommended_applied">推奨設定を反映しました</string>
+    <string name="toast_claude_preset_applied">Claude設定を反映しました</string>
+    <string name="toast_slot_sync_done">スロット移行/同期を完了しました（%1$s）</string>
     <string name="toast_profile_updated">プロファイルを更新しました</string>
     <string name="toast_json_invalid">JSON形式が不正です</string>
     <string name="toast_all_settings_applied">すべての設定を適用しました</string>

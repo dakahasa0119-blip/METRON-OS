@@ -29,6 +29,7 @@ class ArcWorker(
     var currentMissionId: String? = null
     private var isAborted = false
     private var lastTarget: String = ""
+    private var currentSlotId: String = ""
     private var lastFailedSelector: String = ""
     private var lastFailedType: String = ""
     private var lastAiTask: ArcTask.AI? = null
@@ -154,7 +155,7 @@ class ArcWorker(
                 put("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
                 put("effective_keep_screen_awake", prefs.shouldKeepScreenAwakeNow())
                 put("capabilities", JSONObject().apply {
-                    put("supports_slot_mode", false)
+                    put("supports_slot_mode", true)
                     put("supports_consensus", true)
                     put("supports_runtime_mode_switch", true)
                     put("supports_compact_corner_mode", prefs.compactCornerMode)
@@ -392,6 +393,7 @@ class ArcWorker(
         when (task) {
             is ArcTask.Pipeline -> {
                 currentMissionId = task.missionId
+                currentSlotId = ""
                 emitStatus("MISSION START")
                 announceStatus("running")
                 pipelineProvider().start(task.prompt, task.missionId) {
@@ -403,6 +405,7 @@ class ArcWorker(
             is ArcTask.AI -> {
                 currentQid = task.qid
                 currentMissionId = task.missionId
+                currentSlotId = task.slotId.trim().lowercase()
                 lastAiTask = task
                 isFinalizingResult = false
                 if (!task.isSelfHealing) {
@@ -429,6 +432,8 @@ class ArcWorker(
         lastAiTask = task
         currentAttemptStartedAtMs = System.currentTimeMillis()
         val target = task.target.lowercase()
+        val slotId = task.slotId.trim().lowercase()
+        val targetUrl = prefs.resolveUrlForSlot(slotId, target)
         val parsedTarget = Util.parseTarget(target)
         val currentUrl = web.currentUrl()
         val currentPageTarget = inferTargetFromUrl(currentUrl)
@@ -440,12 +445,12 @@ class ArcWorker(
         if (shouldLoad) {
             if (targetMismatch) {
                 emitStatus("TARGET_MISMATCH:${currentPageTarget}->${target}")
-                Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target url=$currentUrl")
+                Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target slot=$slotId url=$currentUrl")
             }
-            emitStatus("LOADING $target")
+            emitStatus(if (slotId.isBlank()) "LOADING $target" else "LOADING $target[$slotId]")
             // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
             web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
-            web.webView?.post { web.webView?.loadUrl(prefs.getUrlFor(target)) }
+            web.webView?.post { web.webView?.loadUrl(targetUrl) }
             // 遷移失敗時の保険: 8秒後も別ターゲットなら再度明示遷移
             workerScope.launch {
                 delay(8000)
@@ -454,7 +459,7 @@ class ArcWorker(
                 if (nowTarget != target) {
                     Log.w("ARC_TASK", "force nav retry current=$nowTarget requested=$target")
                     emitStatus("FORCE_NAV_RETRY:$target")
-                    web.webView?.post { web.webView?.loadUrl(prefs.getUrlFor(target)) }
+                    web.webView?.post { web.webView?.loadUrl(targetUrl) }
                 }
             }
         }
@@ -484,7 +489,7 @@ class ArcWorker(
         val action = {
             if (!isAborted) {
                 emitStatus("INJECTING...")
-                val (inS, sendS) = prefs.getSelectorsFor(target)
+                val (inS, sendS) = prefs.resolveSelectorsForSlot(slotId, target)
                 web.injectPromptForcefully(inS, sendS, buildFinalPrompt(task))
             }
         }
@@ -634,6 +639,44 @@ class ArcWorker(
         }
     }
 
+    private fun sendResultWithRetry(
+        qid: String,
+        result: String,
+        missionId: String?,
+        target: String?,
+        prompt: String?,
+        attempt: Int = 1,
+        maxAttempts: Int = 2,
+        onDone: (Boolean) -> Unit
+    ) {
+        gateway.sendArcResult(
+            qid = qid,
+            result = result,
+            missionId = missionId,
+            target = target,
+            prompt = prompt
+        ) { ok ->
+            if (ok || attempt >= maxAttempts || isAborted) {
+                onDone(ok)
+                return@sendArcResult
+            }
+            emitStatus("RESULT_RETRY_$attempt")
+            workerScope.launch {
+                delay((1200L * attempt).coerceAtMost(4000L))
+                sendResultWithRetry(
+                    qid = qid,
+                    result = result,
+                    missionId = missionId,
+                    target = target,
+                    prompt = prompt,
+                    attempt = attempt + 1,
+                    maxAttempts = maxAttempts,
+                    onDone = onDone
+                )
+            }
+        }
+    }
+
     private fun handleAiResult(result: String) {
         val qid = currentQid ?: return
         if (isFinalizingResult) return
@@ -647,9 +690,9 @@ class ArcWorker(
         } else {
             stealthRetryCount = 0
             adaptiveRetryCount = 0
-            gateway.sendArcResult(
-                qid,
-                result,
+            sendResultWithRetry(
+                qid = qid,
+                result = result,
                 missionId = currentMissionId,
                 target = lastAiTask?.target,
                 prompt = lastAiTask?.prompt
@@ -1049,6 +1092,7 @@ class ArcWorker(
             put("ip", Util.getLocalIpAddress()); put("target", lastTarget); put("mission", currentMissionId ?: "NONE")
             put("mission_id", currentMissionId ?: "")
             put("qid", currentQid ?: "")
+            put("slot_id", currentSlotId)
             put("hud_seq", currentStatusSeq())
             put("current_target", inferredTarget)
             put("current_url", currentUrl)
@@ -1078,6 +1122,7 @@ class ArcWorker(
     private fun finishTask(d: (() -> Unit)?) {
         val wasQid = currentQid ?: ""
         currentQid = null
+        currentSlotId = ""
         if (!wasQid.startsWith("PIPE_")) {
             currentMissionId = null
         }

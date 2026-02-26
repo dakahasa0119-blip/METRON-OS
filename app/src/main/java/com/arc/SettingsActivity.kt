@@ -125,6 +125,84 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 .show()
         }
+
+        binding.btnApplyRecommended.setOnClickListener {
+            applyRecommendedPresetToForm()
+            saveCommonPrefs()
+            Toast.makeText(this, getString(R.string.toast_recommended_applied), Toast.LENGTH_SHORT).show()
+        }
+        binding.btnApplyClaudePreset.setOnClickListener {
+            applyClaudePresetToForm()
+            saveCommonPrefs()
+            Toast.makeText(this, getString(R.string.toast_claude_preset_applied), Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnSyncSlotRegistry.setOnClickListener {
+            saveCommonPrefs()
+            val notes = prefs.runStartupMigrations()
+            prefs.syncLegacyTargetsToSlotRegistry()
+            prefs.applySlotRegistryToLegacyTargets()
+            loadCommonPrefs()
+            val detail = if (notes.isEmpty()) "no-op" else notes.joinToString(",")
+            Toast.makeText(
+                this,
+                getString(R.string.toast_slot_sync_done, detail),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun applyRecommendedPresetToForm() {
+        with(binding) {
+            if (geminiUrl.text.isNullOrBlank()) {
+                geminiUrl.setText("https://gemini.google.com/")
+            }
+            if (chatGptUrl.text.isNullOrBlank()) {
+                chatGptUrl.setText("https://chatgpt.com/")
+            }
+            if (copilotUrl.text.isNullOrBlank()) {
+                copilotUrl.setText("https://claude.ai/")
+            }
+
+            if (geminiInput.text.isNullOrBlank()) {
+                geminiInput.setText("div[contenteditable=true][role=textbox]")
+            }
+            if (geminiSend.text.isNullOrBlank()) {
+                geminiSend.setText("button[aria-label*='送信']")
+            }
+            if (geminiResp.text.isNullOrBlank()) {
+                geminiResp.setText("div.markdown.markdown-main-panel.stronger.enable-updated-hr-color.preserve-whitespaces-in-response")
+            }
+
+            if (chatGptInput.text.isNullOrBlank()) {
+                chatGptInput.setText("#prompt-textarea")
+            }
+            if (chatGptSend.text.isNullOrBlank()) {
+                chatGptSend.setText("#composer-submit-button")
+            }
+            if (chatGptResp.text.isNullOrBlank()) {
+                chatGptResp.setText("article[data-testid=\"conversation-turn-1\"]")
+            }
+
+            applyClaudePresetToForm()
+        }
+    }
+
+    private fun applyClaudePresetToForm() {
+        with(binding) {
+            if (copilotUrl.text.isNullOrBlank()) {
+                copilotUrl.setText("https://claude.ai/new")
+            }
+            if (copilotInput.text.isNullOrBlank()) {
+                copilotInput.setText("div[contenteditable='true'][role='textbox']")
+            }
+            if (copilotSend.text.isNullOrBlank()) {
+                copilotSend.setText("button[aria-label*='Send'],button[type='submit']")
+            }
+            if (copilotResp.text.isNullOrBlank()) {
+                copilotResp.setText("div[data-is-streaming],article,.prose")
+            }
+        }
     }
 
     private fun setupPickerButtons() {
@@ -229,6 +307,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.copilotSendSelector = copilotSend.text.toString().trim()
             prefs.copilotResponseSelector = copilotResp.text.toString().trim()
         }
+        prefs.syncLegacyTargetsToSlotRegistry()
     }
 
     private fun saveSlotData(slot: Int, json: String) {

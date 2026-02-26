@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
@@ -43,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private var lastVerificationPromptAtMs: Long = 0L
     private var dynamicSetupJob: Job? = null
     private var smokeWaiter: CompletableDeferred<String?>? = null
+    private var lastSlotSyncAtMs: Long = 0L
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val screenTimeoutHandler = Handler(Looper.getMainLooper())
@@ -98,6 +100,7 @@ class MainActivity : AppCompatActivity() {
 
         prefs = Prefs(this)
         val migrationNotes = prefs.runStartupMigrations()
+        prefs.compactCornerMode = prefs.headlessMode
         if (prefs.shouldKeepScreenAwakeNow()) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
@@ -193,6 +196,10 @@ class MainActivity : AppCompatActivity() {
         heartbeatJob = mainScope.launch {
             val intervalMs = prefs.heartbeatIntervalMs.coerceIn(5000L, 120000L)
             while (isActive) {
+                val now = System.currentTimeMillis()
+                if (now - lastSlotSyncAtMs >= 120_000L) {
+                    syncSlotsFromGateway()
+                }
                 val busy = arcWorker.currentQid != null || allAiPipeline.isRunning()
                 if (!busy) {
                     arcWorker.announceStatus("heartbeat") { instruction ->
@@ -209,8 +216,30 @@ class MainActivity : AppCompatActivity() {
         val mode = instruction.optString("mode")
         if (mode.isBlank() || mode == "arc_heartbeat") return
         val jobId = instruction.optString("job_id", "")
-        Log.d("ARC_GW_INSTR", "mode=$mode job_id=$jobId")
+        val instrSlotId = instruction.optString("slot_id", "").trim()
+        Log.d("ARC_GW_INSTR", "mode=$mode job_id=$jobId slot_id=$instrSlotId")
         when (mode) {
+            "arc_set_ui_mode" -> {
+                val requested = instruction.optString("ui_mode", if (prefs.headlessMode) "ops" else "debug")
+                    .trim()
+                    .lowercase()
+                val headless = requested == "ops" || requested == "headless" || requested == "mini"
+                prefs.headlessMode = headless
+                prefs.compactCornerMode = headless
+                runOnUiThread {
+                    updateRunModeUi()
+                    if (headless) enterCornerPipIfPossible("gateway_ui_mode")
+                }
+                if (jobId.isNotBlank()) {
+                    arcGateway.sendArcResult(
+                        qid = jobId,
+                        result = "ui_mode_set:${if (headless) "ops" else "debug"}",
+                        missionId = jobId,
+                        target = instruction.optString("target", currentTarget.name)
+                    )
+                }
+                debugHud.update("GW: UI=${if (headless) "ops" else "debug"}")
+            }
             "arc_set_runtime_mode" -> {
                 val requested = instruction.optString("runtime_mode", Prefs.RUNTIME_MODE_INTERACTIVE)
                     .trim()
@@ -245,16 +274,22 @@ class MainActivity : AppCompatActivity() {
             "request_arc" -> {
                 val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
                 val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
-                val target = instruction.optString("target", currentTarget.name)
+                val slotId = instruction.optString("slot_id", "").trim()
+                val requestedTarget = instruction.optString("target", currentTarget.name)
+                val target = prefs.resolveTargetForSlot(slotId, requestedTarget)
+                if (slotId.isNotBlank()) {
+                    prefs.upsertGatewaySlotBinding(slotId, requestedTarget)
+                }
                 val prompt = instruction.optString("prompt", "")
                 if (prompt.isNotBlank()) {
                     ensureOperationalForeground("gateway_instruction_request_arc")
                     if (target.equals("ALL", ignoreCase = true)) {
                         arcQueue.enqueue(ArcTask.Pipeline(prompt, missionId = missionId))
                     } else {
-                        arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId))
+                        arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId, slotId = slotId))
                     }
-                    debugHud.update("GW: ENQUEUED")
+                    val slotNote = if (slotId.isNotBlank()) "[$slotId]" else ""
+                    debugHud.update("GW: ENQUEUED$slotNote")
                 } else if (jobId.isNotBlank()) {
                     arcGateway.sendArcError(
                         qid = jobId,
@@ -417,6 +452,7 @@ class MainActivity : AppCompatActivity() {
     private fun startArcCore() {
         arcGateway = GatewayClient(prefs)
         arcGateway.sendSetupRequest(serverPort) { _, _ -> }
+        syncSlotsFromGateway()
         
         arcWorker = ArcWorker(webViewManager, arcGateway, prefs) { allAiPipeline }
         arcWorker.onGlobalAiResult = { text ->
@@ -453,6 +489,32 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    private fun syncSlotsFromGateway() {
+        lastSlotSyncAtMs = System.currentTimeMillis()
+        arcGateway.fetchSlotRegistry { slots ->
+            for (i in 0 until slots.length()) {
+                val s = slots.optJSONObject(i) ?: continue
+                val sid = s.optString("slot_id", "")
+                val target = s.optString("target", "")
+                val enabled = if (s.has("enabled")) s.optBoolean("enabled", true) else null
+                prefs.upsertGatewaySlotBinding(
+                    slotId = sid,
+                    target = target,
+                    enabled = enabled,
+                    url = s.optString("url", ""),
+                    inputSelector = s.optString("input_selector", ""),
+                    sendSelector = s.optString("send_selector", ""),
+                    responseSelector = s.optString("response_selector", "")
+                )
+            }
+            prefs.applySlotRegistryToLegacyTargets()
+            prefs.syncLegacyTargetsToSlotRegistry()
+            if (slots.length() > 0) {
+                debugHud.update("SLOT_SYNC:${slots.length()}")
+            }
+        }
+    }
+
     private fun setupUi() {
         binding.btnGemini.setOnClickListener { switchAiTarget(AiTarget.GEMINI) }
         binding.btnGPT.setOnClickListener { switchAiTarget(AiTarget.CHATGPT) }
@@ -460,12 +522,35 @@ class MainActivity : AppCompatActivity() {
 
         binding.modeToggleButton.setOnClickListener {
             prefs.headlessMode = !prefs.headlessMode
+            prefs.compactCornerMode = prefs.headlessMode
             updateRunModeUi()
+            if (prefs.headlessMode) {
+                enterCornerPipIfPossible("mode_toggle")
+            }
             Toast.makeText(
                 this,
                 if (prefs.headlessMode) getString(R.string.toast_mode_headless) else getString(R.string.toast_mode_debug),
                 Toast.LENGTH_SHORT
             ).show()
+        }
+
+        binding.debugHudLayout.root.setOnTouchListener { _, ev ->
+            if (ev.action != MotionEvent.ACTION_UP) return@setOnTouchListener false
+
+            val nextHeadless = !prefs.headlessMode
+            prefs.headlessMode = nextHeadless
+            prefs.compactCornerMode = nextHeadless
+            updateRunModeUi()
+
+            if (nextHeadless) {
+                enterCornerPipIfPossible("hud_touch")
+                debugHud.update("MODE: OPS (hud_touch)")
+                Log.i("ARC_MODE", "switch -> OPS by hud_touch")
+            } else {
+                debugHud.update("MODE: DEBUG (hud_touch)")
+                Log.i("ARC_MODE", "switch -> DEBUG by hud_touch")
+            }
+            true
         }
 
         binding.sendButton.setOnClickListener {
@@ -854,6 +939,35 @@ class MainActivity : AppCompatActivity() {
         )
         binding.modeToggleButton.text =
             if (isHeadless) getString(R.string.btn_mode_headless) else getString(R.string.btn_mode_debug)
+        updateCompactUi()
+    }
+
+    private fun updateCompactUi() {
+        val operationalMini = prefs.headlessMode && prefs.compactCornerMode
+        applyOperationalStealthVisuals(operationalMini)
+
+        if (isInPictureInPictureMode) {
+            binding.controlPanel.visibility = View.GONE
+            return
+        }
+        binding.controlPanel.visibility = if (operationalMini) View.GONE else View.VISIBLE
+    }
+
+    private fun applyOperationalStealthVisuals(enabled: Boolean) {
+        if (enabled) {
+            binding.webViewContainer.alpha = 0f
+            binding.debugHudLayout.root.alpha = 0f
+            val stealthGray = android.graphics.Color.parseColor("#F5F6F7")
+            binding.root.setBackgroundColor(stealthGray)
+            binding.webViewContainer.setBackgroundColor(stealthGray)
+            window.decorView.setBackgroundColor(stealthGray)
+        } else {
+            binding.webViewContainer.alpha = 1f
+            binding.debugHudLayout.root.alpha = 1f
+            binding.root.setBackgroundColor(android.graphics.Color.BLACK)
+            binding.webViewContainer.setBackgroundColor(android.graphics.Color.BLACK)
+            window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
+        }
     }
 
     private fun switchAiTarget(target: AiTarget) {
@@ -887,6 +1001,24 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         pokeScreen()
         webViewManager.resumeRuntime()
+        updateCompactUi()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (prefs.compactCornerMode && prefs.headlessMode) {
+            enterCornerPipIfPossible("user_leave_hint")
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        updateCompactUi()
+    }
+
+    private fun enterCornerPipIfPossible(reason: String) {
+        // Policy: keep runtime stable by using only window positioning, not PiP transitions.
+        Log.i("ARC_UI", "PiP suppressed by policy: $reason")
     }
 
     override fun onNewIntent(intent: Intent?) {
