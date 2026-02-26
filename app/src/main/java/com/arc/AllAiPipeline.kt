@@ -212,12 +212,8 @@ class AllAiPipeline(
     
     private fun buildAdaptivePrompt(count: Int, prev: List<String>, name: String): String {
         val context = if (prev.isNotEmpty()) "\n[Prev Result: ${prev.last().take(300)}...]" else ""
-        val memory = if (isCodeTask(currentPrompt)) "" else prefs.getContextForPrompt(
-            prompt = currentPrompt,
-            includeFailures = false,
-            maxItems = 3,
-            maxChars = 800
-        )
+        // Gateway が記憶要約を付与するため、ARC パイプライン側では記憶前置きを停止する。
+        val memory = ""
         val strict = if (isCodeTask(currentPrompt)) {
             "\n[Output Rules]\n- Return only final code.\n- Do not include operational logs or memory summaries.\n- Include all requested functions and a runnable main/example.\n"
         } else ""

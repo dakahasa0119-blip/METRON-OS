@@ -1135,19 +1135,9 @@ class ArcWorker(
         web.captureBitmap { b -> visionClient.ask(bitmap = b, prompt = "Find ${t.action}") { x, y -> t.onResult(x, y); finishTask(done) } } 
     }
     private fun buildFinalPrompt(t: ArcTask.AI): String {
-        // ARC UI からの手動送信は、入力した文面をそのまま送る
-        if (t.qid == "manual") return t.prompt
-        // コード生成タスクでは過去ログ混入を避ける
-        if (looksLikeCodeTask(t.prompt)) {
-            return "依頼: ${t.prompt}"
-        }
-        val context = prefs.getContextForPrompt(
-            prompt = t.prompt,
-            includeFailures = true,
-            maxItems = 7,
-            maxChars = 1400
-        ).take(1400)
-        return "$context\n\n依頼: ${t.prompt}"
+        // Gateway 側で最終プロンプトを構築するため、ARC 側では前置き注入をしない。
+        // これにより「現場の短期記憶」等の重複混入を防ぐ。
+        return t.prompt
     }
 
     private fun looksLikeCodeTask(prompt: String): Boolean {
