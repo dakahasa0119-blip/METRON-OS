@@ -108,7 +108,11 @@ class Prefs(context: Context) {
         if (migrateCopilotSlotToClaudeIfNeeded()) {
             notes += "copilot_slot_to_claude"
         }
-        syncLegacyTargetsToSlotRegistry()
+        val rawRegistry = gatewaySlotRegistryJson.trim()
+        if (rawRegistry.isBlank() || rawRegistry == "[]") {
+            syncLegacyTargetsToSlotRegistry()
+            notes += "slot_registry_seeded_from_legacy"
+        }
         applySlotRegistryToLegacyTargets()
         return notes
     }

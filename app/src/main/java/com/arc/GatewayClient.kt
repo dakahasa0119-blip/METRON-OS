@@ -69,6 +69,13 @@ class GatewayClient(private val prefs: Prefs) {
                 put("ip", Util.getLocalIpAddress())
                 put("port", port)
                 put("auth_key", prefs.authToken)
+                put("bootstrap", JSONObject().apply {
+                    put("runtime_mode", prefs.normalizedRuntimeMode())
+                    put("ui_mode", if (prefs.headlessMode) "ops" else "debug")
+                    put("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
+                    put("keep_screen_awake", prefs.keepScreenAwake)
+                    put("heartbeat_interval_ms", prefs.heartbeatIntervalMs)
+                })
                 put(
                     "api_modes",
                     JSONArray(
@@ -103,10 +110,71 @@ class GatewayClient(private val prefs: Prefs) {
         clientScope.launch {
             try {
                 val response = Http.post(prefs.gasUrl, setupData.toString())
-                withContext(Dispatchers.Main) { callback(true, response) }
+                val applied = applySetupResponse(response)
+                val ok = applied.first
+                val msg = applied.second
+                withContext(Dispatchers.Main) { callback(ok, msg) }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { callback(false, e.message ?: "Network Error") }
             }
+        }
+    }
+
+    private fun applySetupResponse(raw: String): Pair<Boolean, String> {
+        return try {
+            val obj = JSONObject(raw)
+            if (obj.optString("status", "").lowercase() != "ok") {
+                val err = obj.optString("error", raw).ifBlank { "setup_failed" }
+                return false to err
+            }
+
+            val bootstrap = obj.optJSONObject("bootstrap")
+            if (bootstrap != null) {
+                val runtimeMode = bootstrap.optString("runtime_mode", prefs.normalizedRuntimeMode()).trim().lowercase()
+                prefs.runtimeMode = if (runtimeMode == Prefs.RUNTIME_MODE_AUTONOMOUS) {
+                    Prefs.RUNTIME_MODE_AUTONOMOUS
+                } else {
+                    Prefs.RUNTIME_MODE_INTERACTIVE
+                }
+                val uiMode = bootstrap.optString("ui_mode", if (prefs.headlessMode) "ops" else "debug").trim().lowercase()
+                val headless = uiMode == "ops" || uiMode == "headless" || uiMode == "mini"
+                prefs.headlessMode = headless
+                prefs.compactCornerMode = headless
+                if (bootstrap.has("bring_to_front_on_execution")) {
+                    prefs.bringToFrontOnExecution = bootstrap.optBoolean("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
+                }
+                if (bootstrap.has("keep_screen_awake")) {
+                    prefs.keepScreenAwake = bootstrap.optBoolean("keep_screen_awake", prefs.keepScreenAwake)
+                }
+                if (bootstrap.has("heartbeat_interval_ms")) {
+                    prefs.heartbeatIntervalMs = bootstrap.optLong("heartbeat_interval_ms", prefs.heartbeatIntervalMs)
+                }
+            }
+
+            val slots = obj.optJSONArray("slot_registry")
+            var slotCount = 0
+            if (slots != null) {
+                for (i in 0 until slots.length()) {
+                    val s = slots.optJSONObject(i) ?: continue
+                    prefs.upsertGatewaySlotBinding(
+                        slotId = s.optString("slot_id", ""),
+                        target = s.optString("target", ""),
+                        enabled = if (s.has("enabled")) s.optBoolean("enabled", true) else null,
+                        url = s.optString("url", ""),
+                        inputSelector = s.optString("input_selector", ""),
+                        sendSelector = s.optString("send_selector", ""),
+                        responseSelector = s.optString("response_selector", "")
+                    )
+                    slotCount += 1
+                }
+                prefs.applySlotRegistryToLegacyTargets()
+            }
+
+            val mode = if (prefs.headlessMode) "ops" else "debug"
+            true to "setup synced (runtime=${prefs.normalizedRuntimeMode()}, ui=$mode, slots=$slotCount)"
+        } catch (_: Exception) {
+            // 旧互換: JSONでない応答でも成功扱い
+            true to raw
         }
     }
 

@@ -224,12 +224,7 @@ class MainActivity : AppCompatActivity() {
                     .trim()
                     .lowercase()
                 val headless = requested == "ops" || requested == "headless" || requested == "mini"
-                prefs.headlessMode = headless
-                prefs.compactCornerMode = headless
-                runOnUiThread {
-                    updateRunModeUi()
-                    if (headless) enterCornerPipIfPossible("gateway_ui_mode")
-                }
+                applyHeadlessMode(headless, "gateway_ui_mode")
                 if (jobId.isNotBlank()) {
                     arcGateway.sendArcResult(
                         qid = jobId,
@@ -451,7 +446,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun startArcCore() {
         arcGateway = GatewayClient(prefs)
-        arcGateway.sendSetupRequest(serverPort) { _, _ -> }
+        arcGateway.sendSetupRequest(serverPort) { success, message ->
+            runOnUiThread {
+                updateRunModeUi()
+                if (success) {
+                    debugHud.update("SETUP_SYNCED")
+                } else {
+                    debugHud.update("SETUP_ERR")
+                    Log.w("ARC_SETUP", "setup sync failed: $message")
+                }
+            }
+        }
         syncSlotsFromGateway()
         
         arcWorker = ArcWorker(webViewManager, arcGateway, prefs) { allAiPipeline }
@@ -508,7 +513,6 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             prefs.applySlotRegistryToLegacyTargets()
-            prefs.syncLegacyTargetsToSlotRegistry()
             if (slots.length() > 0) {
                 debugHud.update("SLOT_SYNC:${slots.length()}")
             }
@@ -521,15 +525,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnCopilot.setOnClickListener { switchAiTarget(AiTarget.COPILOT) }
 
         binding.modeToggleButton.setOnClickListener {
-            prefs.headlessMode = !prefs.headlessMode
-            prefs.compactCornerMode = prefs.headlessMode
-            updateRunModeUi()
-            if (prefs.headlessMode) {
-                enterCornerPipIfPossible("mode_toggle")
-            }
+            val nextHeadless = !prefs.headlessMode
+            applyHeadlessMode(nextHeadless, "mode_toggle")
             Toast.makeText(
                 this,
-                if (prefs.headlessMode) getString(R.string.toast_mode_headless) else getString(R.string.toast_mode_debug),
+                if (nextHeadless) getString(R.string.toast_mode_headless) else getString(R.string.toast_mode_debug),
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -538,12 +538,9 @@ class MainActivity : AppCompatActivity() {
             if (ev.action != MotionEvent.ACTION_UP) return@setOnTouchListener false
 
             val nextHeadless = !prefs.headlessMode
-            prefs.headlessMode = nextHeadless
-            prefs.compactCornerMode = nextHeadless
-            updateRunModeUi()
+            applyHeadlessMode(nextHeadless, "hud_touch")
 
             if (nextHeadless) {
-                enterCornerPipIfPossible("hud_touch")
                 debugHud.update("MODE: OPS (hud_touch)")
                 Log.i("ARC_MODE", "switch -> OPS by hud_touch")
             } else {
@@ -938,8 +935,19 @@ class MainActivity : AppCompatActivity() {
             else android.graphics.Color.parseColor("#137333")
         )
         binding.modeToggleButton.text =
-            if (isHeadless) getString(R.string.btn_mode_headless) else getString(R.string.btn_mode_debug)
+            if (isHeadless) getString(R.string.btn_mode_debug) else getString(R.string.btn_mode_headless)
         updateCompactUi()
+    }
+
+    private fun applyHeadlessMode(headless: Boolean, reason: String) {
+        prefs.headlessMode = headless
+        prefs.compactCornerMode = headless
+        runOnUiThread {
+            updateRunModeUi()
+            if (headless) {
+                enterCornerPipIfPossible(reason)
+            }
+        }
     }
 
     private fun updateCompactUi() {
@@ -950,13 +958,19 @@ class MainActivity : AppCompatActivity() {
             binding.controlPanel.visibility = View.GONE
             return
         }
+        // OPS最小時はWebView領域を最大化して自動操作を優先する。
+        // モード復帰はHUDタップ経由で行う。
         binding.controlPanel.visibility = if (operationalMini) View.GONE else View.VISIBLE
+        binding.modeBanner.visibility = View.VISIBLE
+        binding.settingsButton.visibility = View.VISIBLE
+        binding.controlPanel.alpha = 1f
+        binding.controlPanel.setBackgroundColor(android.graphics.Color.WHITE)
     }
 
     private fun applyOperationalStealthVisuals(enabled: Boolean) {
         if (enabled) {
             binding.webViewContainer.alpha = 0f
-            binding.debugHudLayout.root.alpha = 0f
+            binding.debugHudLayout.root.alpha = 0.16f
             val stealthGray = android.graphics.Color.parseColor("#F5F6F7")
             binding.root.setBackgroundColor(stealthGray)
             binding.webViewContainer.setBackgroundColor(stealthGray)
