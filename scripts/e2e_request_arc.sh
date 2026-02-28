@@ -17,8 +17,12 @@ E2E_SKIP_LOGCAT="${E2E_SKIP_LOGCAT:-0}"
 TAG="E2E_REQ_$(date +%H%M%S)"
 PROMPT="@arc ${TARGET_TAG} ${TAG} 受信したら『${TAG} OK』のみ返答してください"
 
+adb_quick() {
+  timeout 8s adb "$@" >/dev/null 2>&1 || true
+}
+
 echo "TAG=$TAG"
-adb logcat -c >/dev/null 2>&1 || true
+adb_quick logcat -c
 
 curl -sS -L -m 20 -H "Content-Type: application/json" \
   -d "{\"mode\":\"submit_chat\",\"user\":\"AUTO_E2E\",\"content\":\"${PROMPT}\",\"auth_key\":\"${AUTH}\"}" \
@@ -180,11 +184,11 @@ print(f"ok\t{job_status}\t{main_status}\t{mission}\t{response}")
   fi
 done
 
-pid="$(adb shell pidof com.arc || true)"
+pid="$(timeout 8s adb shell pidof com.arc 2>/dev/null || true)"
 if [ "$E2E_SKIP_LOGCAT" != "1" ]; then
   echo "--- ARC logs ---"
   if [ -n "$pid" ]; then
-    adb logcat --pid="$pid" -d | grep -E "ARC_GW_INSTR|ARC_GW_HB|TIMEOUT_FAILOVER|RESULT_SEND_FAIL|MISSION OK|SCREEN_BLOCKED|WATCHDOG_TIMEOUT" | tail -n 120 || true
+    timeout 10s adb logcat --pid="$pid" -d 2>/dev/null | grep -E "ARC_GW_INSTR|ARC_GW_HB|TIMEOUT_FAILOVER|RESULT_SEND_FAIL|MISSION OK|SCREEN_BLOCKED|WATCHDOG_TIMEOUT" | tail -n 120 || true
   fi
 fi
 

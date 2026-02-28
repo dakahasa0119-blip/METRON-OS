@@ -163,8 +163,8 @@ class WebViewManager(
                     detectLoginBlock(view, url)
                     return
                 } else {
-                    detectAccessInterstitial(view) { blocked, detail ->
-                        if (blocked) {
+                detectAccessInterstitial(view) { blocked, detail ->
+                    if (blocked) {
                             val now = System.currentTimeMillis()
                             if (now - lastInterstitialReportMs > 15_000L) {
                                 lastInterstitialReportMs = now
@@ -174,7 +174,7 @@ class WebViewManager(
                                 lastBlockRecoverTryMs = now
                                 attemptUiUnblock()
                                 scope.launch {
-                                    delay(2200)
+                                    delay(1200)
                                     detectAccessInterstitial(view) { stillBlocked, _ ->
                                         if (!stillBlocked) {
                                             finalizePageReady(view, url)
@@ -904,7 +904,11 @@ class WebViewManager(
         heartbeatMonitorJob = scope.launch {
             while(isMonitoringActive) {
                 val u = (webView?.url ?: "").lowercase()
-                val tickMs = if (u.contains("copilot.microsoft.com") || u.contains("bing.com/chat")) 2_000L else 10_000L
+                val tickMs = if (u.contains("copilot.microsoft.com") || u.contains("bing.com/chat")) {
+                    2_000L
+                } else {
+                    prefs.heartbeatIntervalMs.coerceIn(4_000L, 9_000L)
+                }
                 delay(tickMs)
                 injectAutoDom()
                 detectAccessInterstitial(webView) { blocked, detail ->

@@ -522,9 +522,14 @@ class ArcWorker(
             // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
             web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
             web.webView?.post { web.webView?.loadUrl(targetUrl) }
-            // 遷移失敗時の保険: 8秒後も別ターゲットなら再度明示遷移
+            // 遷移失敗時の保険: 早めに再判定して明示遷移
             workerScope.launch {
-                delay(8000)
+                val navRetryDelayMs = when {
+                    targetMismatch -> 2500L
+                    task.forceReload -> 3200L
+                    else -> 4500L
+                }
+                delay(navRetryDelayMs)
                 if (isAborted || currentQid != task.qid) return@launch
                 val nowTarget = inferTargetFromUrl(web.currentUrl())
                 if (nowTarget != target) {
@@ -704,9 +709,10 @@ class ArcWorker(
     private fun startTaskHeartbeat(qid: String) {
         taskHeartbeatJob?.cancel()
         taskHeartbeatJob = workerScope.launch {
+            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(3_000L, 8_000L)
             while (isActive && !isAborted && currentQid == qid) {
                 announceStatus("running")
-                delay(10_000L)
+                delay(intervalMs)
             }
         }
     }
