@@ -420,6 +420,7 @@ class Prefs(context: Context) {
     var contextHistory: String by StringPref("context_history", "[]")
     var summarizedContext: String by StringPref("summarized_context", "")
     var timingHistory: String by StringPref("timing_history", "[]")
+    var botThresholdsJson: String by StringPref("bot_thresholds_json", "")
 
     data class TimingStats(
         val avgMs: Long,
@@ -428,6 +429,52 @@ class Prefs(context: Context) {
         val samples: Int,
         val latestTs: Long
     )
+
+    data class BotThresholds(
+        val blocked: Int = 60,
+        val interstitial: Int = 24,
+        val updatedAt: Long = 0L
+    )
+
+    fun getBotThresholds(): BotThresholds {
+        return try {
+            val raw = botThresholdsJson.trim()
+            if (raw.isBlank()) return BotThresholds()
+            val obj = JSONObject(raw)
+            val blocked = obj.optInt("blocked", 60).coerceIn(40, 90)
+            val interstitial = obj.optInt("interstitial", 24).coerceIn(10, 55)
+            val adjustedInterstitial = interstitial.coerceAtMost((blocked - 5).coerceAtLeast(10))
+            BotThresholds(
+                blocked = blocked,
+                interstitial = adjustedInterstitial,
+                updatedAt = obj.optLong("updated_at", 0L)
+            )
+        } catch (_: Exception) {
+            BotThresholds()
+        }
+    }
+
+    fun adjustBotThresholds(
+        deltaBlocked: Int = 0,
+        deltaInterstitial: Int = 0
+    ): BotThresholds {
+        val cur = getBotThresholds()
+        val blocked = (cur.blocked + deltaBlocked).coerceIn(40, 90)
+        val interstitial = (cur.interstitial + deltaInterstitial)
+            .coerceIn(10, 55)
+            .coerceAtMost((blocked - 5).coerceAtLeast(10))
+        val next = BotThresholds(
+            blocked = blocked,
+            interstitial = interstitial,
+            updatedAt = System.currentTimeMillis()
+        )
+        botThresholdsJson = JSONObject().apply {
+            put("blocked", next.blocked)
+            put("interstitial", next.interstitial)
+            put("updated_at", next.updatedAt)
+        }.toString()
+        return next
+    }
 
     fun addTimingSample(
         key: String,

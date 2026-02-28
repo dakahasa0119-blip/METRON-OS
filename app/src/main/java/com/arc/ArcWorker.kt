@@ -50,6 +50,11 @@ class ArcWorker(
     private val webDiag by lazy { WebViewDiagnosticProbe(web, gateway, prefs, workerScope) }
     private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
     private val timingModels = mutableMapOf<String, TimingModel>()
+    private data class BotEvent(
+        val confidence: Int,
+        val atMs: Long
+    )
+    private val pendingBotEvents = mutableMapOf<String, BotEvent>()
     private data class RuntimeTiming(
         val timeoutMs: Long,
         val noProgressMs: Long,
@@ -207,12 +212,19 @@ class ArcWorker(
     init {
         gateway.telemetrySupplier = {
             JSONObject().apply {
+                val botT = prefs.getBotThresholds()
                 put("hud_tail", snapshotStatusTrail())
                 put("hud_last", latestStatus())
                 put("arc_qid", currentQid ?: "")
                 put("runtime_mode", prefs.normalizedRuntimeMode())
                 put("bring_to_front_on_execution", prefs.bringToFrontOnExecution)
                 put("effective_keep_screen_awake", prefs.shouldKeepScreenAwakeNow())
+                put("bot_thresholds", JSONObject().apply {
+                    put("blocked", botT.blocked)
+                    put("interstitial", botT.interstitial)
+                    put("updated_at", botT.updatedAt)
+                })
+                put("bot_pending_events", pendingBotEvents.size)
                 put("capabilities", JSONObject().apply {
                     put("supports_slot_mode", true)
                     put("supports_consensus", true)
@@ -573,7 +585,6 @@ class ArcWorker(
             var lastSeq = currentStatusSeq()
             var lastProgressAt = startedAt
             var lastAssistantLen = 0
-            var generatingNow = false
             while (isActive) {
                 val nowBeforeWait = System.currentTimeMillis()
                 val tickMs =
@@ -605,7 +616,7 @@ class ArcWorker(
                 }
 
                 val signal = probeProgressQuick()
-                generatingNow = signal.generating
+                val generatingNow = signal.generating
                 if (target == "gemini" && elapsed >= 7_000L && signal.marker.isNotBlank()) {
                     val errType = BotDetectionEngine.classifyGeminiErrorType(signal.marker)
                     if (!errType.isNullOrBlank()) {
@@ -759,6 +770,7 @@ class ArcWorker(
                 prompt = lastAiTask?.prompt
             ) { ok ->
                 if (ok) {
+                    tuneBotThresholdOnSuccess(qid)
                     recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = true)
                     prefs.addContext(
                         q = "Task: $qid",
@@ -788,34 +800,69 @@ class ArcWorker(
     }
 
     private fun isLoginRequiredUrl(target: String, url: String): Boolean {
-        val u = url.lowercase()
-        if (u.isBlank()) return false
-        return when (target.lowercase()) {
-            "gemini" ->
-                u.contains("accounts.google.com") ||
-                    u.contains("myaccount.google.com") ||
-                    u.contains("servicelogin")
-            "chatgpt" ->
-                u.contains("auth.openai.com") ||
-                    u.contains("chatgpt.com/auth")
-            "copilot" ->
-                u.contains("claude.ai/login") && !u.contains("app-google-auth")
-            else -> false
-        }
+        return BotDetectionEngine.isLoginRequiredUrl(target, url)
     }
 
     private fun isBotBlocked(type: String, data: String?): Boolean {
-        val signal = BotDetectionEngine.fromError(
+        val raw = BotDetectionEngine.fromError(
             type = type,
             data = data,
             url = web.currentUrl()
         )
+        val t = prefs.getBotThresholds()
+        val signal = BotDetectionEngine.applyThresholds(raw, t.blocked, t.interstitial)
         return signal.decision == BotDecision.BOT_BLOCKED
+    }
+
+    private fun extractConfidence(detail: String?): Int {
+        if (detail.isNullOrBlank()) return 0
+        return Regex("""confidence=(\d+)""")
+            .find(detail)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?.coerceIn(0, 100)
+            ?: 0
+    }
+
+    private fun rememberBotEvent(qid: String?, detail: String?) {
+        if (qid.isNullOrBlank()) return
+        pendingBotEvents[qid] = BotEvent(
+            confidence = extractConfidence(detail),
+            atMs = System.currentTimeMillis()
+        )
+    }
+
+    private fun tuneBotThresholdOnSuccess(qid: String?) {
+        if (qid.isNullOrBlank()) return
+        val ev = pendingBotEvents.remove(qid) ?: return
+        val age = System.currentTimeMillis() - ev.atMs
+        if (age > 120_000L) return
+        val next = prefs.adjustBotThresholds(
+            deltaBlocked = if (ev.confidence >= 60) 1 else 0,
+            deltaInterstitial = 0
+        )
+        emitStatus("BOT_AUTOTUNE success blocked=${next.blocked} interstitial=${next.interstitial}")
+    }
+
+    private fun tuneBotThresholdOnFailure(qid: String?, type: String, data: String?) {
+        if (qid.isNullOrBlank()) return
+        val ev = pendingBotEvents.remove(qid) ?: return
+        if (!type.contains("BOT_BLOCKED", ignoreCase = true) && !isBotBlocked(type, data)) return
+        if (System.currentTimeMillis() - ev.atMs > 180_000L) return
+        val next = prefs.adjustBotThresholds(
+            deltaBlocked = -1,
+            deltaInterstitial = -1
+        )
+        emitStatus("BOT_AUTOTUNE fail blocked=${next.blocked} interstitial=${next.interstitial}")
     }
 
     private fun handleDomError(type: String, data: String?) {
         onSystemErrorRequest?.invoke(type, data)
         val qid = currentQid ?: ""
+        if (type.contains("BOT_BLOCKED", ignoreCase = true)) {
+            rememberBotEvent(currentQid, data)
+        }
         val isGeminiTransient = type == "GEMINI_FAIL_2" || type == "GEMINI_FAIL_13"
         if (
             isGeminiTransient &&
@@ -909,6 +956,7 @@ class ArcWorker(
         } else {
             val elapsedMs = (System.currentTimeMillis() - currentAttemptStartedAtMs).coerceAtLeast(0L)
             val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
+            tuneBotThresholdOnFailure(qid, type, data)
             recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false)
             prefs.addContext(
                 q = "Task: $qid",
@@ -978,32 +1026,14 @@ class ArcWorker(
     }
 
     private fun decodeDecision(advice: String): ScreenDecision {
-        if (advice.isBlank()) return ScreenDecision("RETRY", note = "empty_advice")
-        try {
-            val obj = JSONObject(advice)
-            val action = obj.optString("action", "").uppercase()
-            if (action.isNotBlank()) return ScreenDecision(action, obj.optString("note", "json"))
-        } catch (_: Exception) {}
-
-        val lower = advice.lowercase()
-        val botSignal = BotDetectionEngine.fromError(
-            type = "ARC_SCREEN_DECISION",
-            data = advice,
-            url = web.currentUrl()
+        val t = prefs.getBotThresholds()
+        val decision = BotDetectionEngine.decideRecoveryAction(
+            advice = advice,
+            url = web.currentUrl(),
+            blockedThreshold = t.blocked,
+            interstitialThreshold = t.interstitial
         )
-        if (botSignal.decision == BotDecision.BOT_BLOCKED) {
-            return ScreenDecision("ESCALATE", note = "blocked:${botSignal.mark.take(36)}")
-        }
-        return when {
-            lower.contains("cookie") || lower.contains("consent") || lower.contains("同意") -> ScreenDecision("CLICK_UNBLOCK", note = "consent")
-            lower.contains("refresh") || lower.contains("reload") || lower.contains("再読み込み") -> ScreenDecision("REFRESH", note = "refresh")
-            lower.contains("switch") && lower.contains("gemini") -> ScreenDecision("RETRY", note = "target_switch_blocked")
-            lower.contains("switch") && lower.contains("chatgpt") -> ScreenDecision("RETRY", note = "target_switch_blocked")
-            lower.contains("switch") && lower.contains("copilot") -> ScreenDecision("RETRY", note = "target_switch_blocked")
-            lower.contains("login") || lower.contains("認証") -> ScreenDecision("ESCALATE", note = "blocked")
-            lower.contains("wait") || lower.contains("待機") -> ScreenDecision("WAIT", note = "wait")
-            else -> ScreenDecision("RETRY", note = "fallback")
-        }
+        return ScreenDecision(action = decision.action.name, note = decision.note)
     }
 
     private fun executeDecision(decision: ScreenDecision, task: ArcTask.AI, onDone: (Boolean) -> Unit) {
@@ -1142,6 +1172,7 @@ class ArcWorker(
         val currentHost = web.currentHost()
         val inferredTarget = inferTargetFromUrl(currentUrl).ifBlank { lastTarget }
         val instructionHandler = onInstruction ?: onGatewayInstruction
+        val botT = prefs.getBotThresholds()
         val json = JSONObject().apply {
             put("mode", "arc_heartbeat"); put("status", status)
             put("ip", Util.getLocalIpAddress()); put("target", lastTarget); put("mission", currentMissionId ?: "NONE")
@@ -1156,6 +1187,9 @@ class ArcWorker(
             put("port", MainActivity.serverPort); put("version", ArcCore.VERSION)
             put("worker_id", prefs.workerId)
             put("executor", "ARC")
+            put("bot_threshold_blocked", botT.blocked)
+            put("bot_threshold_interstitial", botT.interstitial)
+            put("bot_threshold_updated_at", botT.updatedAt)
         }
         workerScope.launch {
             gateway.sendHeartbeat(json.toString()) { instruction ->

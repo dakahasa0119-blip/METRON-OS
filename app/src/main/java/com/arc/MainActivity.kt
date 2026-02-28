@@ -654,7 +654,7 @@ class MainActivity : AppCompatActivity() {
                 val loginReady = isSignedInForSetup(target, p)
                 if (p.challenge || !p.inputReady || !loginReady) {
                     val reason = when {
-                        p.challenge -> "認証/ボット検知画面"
+                        p.challenge -> "認証/ボット検知画面(${p.challengeMark.ifBlank { "unknown" }})"
                         !p.inputReady -> "入力欄未検出"
                         else -> "ログイン未完了"
                     }
@@ -713,6 +713,7 @@ class MainActivity : AppCompatActivity() {
         val inputReady: Boolean,
         val sendReady: Boolean,
         val challenge: Boolean,
+        val challengeMark: String,
         val loginPrompt: Boolean,
         val accountMenu: Boolean,
         val title: String
@@ -733,19 +734,24 @@ class MainActivity : AppCompatActivity() {
               const hasLoginButton = !!q("button[data-testid*='login' i], button[aria-label*='log in' i], button[aria-label*='sign in' i]");
               const loginPrompt = hasLoginAnchor || hasLoginButton || text.includes('log in') || text.includes('sign in') || text.includes('ログイン') || text.includes('サインイン');
               const accountMenu = !!q("button[data-testid='profile-button'], [aria-label*='profile' i], [aria-label*='account' i], a[href*='settings' i], img[alt*='profile' i]");
-              const challengeStrong = text.includes('i am not a robot') ||
-                text.includes('verify you are human') ||
-                text.includes('captcha') ||
-                text.includes('challenge.cloudflare.com') ||
-                text.includes('私はロボットではありません') ||
-                !!q("iframe[src*='challenge' i],iframe[src*='captcha' i]");
+              const hasIframe = !!q("iframe[src*='challenge.cloudflare.com' i],iframe[src*='recaptcha' i],iframe[title*='captcha' i],iframe[title*='challenge' i]");
+              const hasWidget = !!q("[class*='captcha' i],[id*='captcha' i],[class*='turnstile' i],[id*='turnstile' i],[data-sitekey]");
+              const hasRobotCheckbox = Array.from(document.querySelectorAll("input[type='checkbox'],[role='checkbox']")).some((cb) => {
+                const host = cb.closest && cb.closest('label,div,section,form');
+                const cbAria = ((cb.getAttribute && (cb.getAttribute('aria-label') || cb.getAttribute('title'))) || '').toLowerCase();
+                const near = ((host && (host.innerText || host.textContent)) ? (host.innerText || host.textContent) : '').toLowerCase();
+                return cbAria.includes('robot') || cbAria.includes('captcha') || cbAria.includes('human') ||
+                  near.includes('ロボット') || near.includes('i am not a robot') || near.includes('verify you are human') || near.includes('captcha');
+              });
+              const challengeMark = hasIframe ? 'iframe_challenge' : (hasWidget ? 'captcha_widget' : (hasRobotCheckbox ? 'robot_checkbox' : ''));
               const input = q("textarea, div[contenteditable='true'][role='textbox'], [contenteditable='true']");
               const send = q("button[data-testid*='send' i], button[aria-label*='送信' i], button[aria-label*='send' i], button[type='submit'], [data-testid='fruitjuice-send-button'], #send-button");
-              const challenge = !!challengeStrong && !input;
+              const challenge = !!challengeMark && !input;
               return JSON.stringify({
                 inputReady: !!input,
                 sendReady: !!send || !!input,
                 challenge: !!challenge,
+                challengeMark: challengeMark,
                 loginPrompt: !!loginPrompt,
                 accountMenu: !!accountMenu,
                 title: document.title || ''
@@ -762,16 +768,17 @@ class MainActivity : AppCompatActivity() {
                             inputReady = obj.optBoolean("inputReady", false),
                             sendReady = obj.optBoolean("sendReady", false),
                             challenge = obj.optBoolean("challenge", false),
+                            challengeMark = obj.optString("challengeMark", ""),
                             loginPrompt = obj.optBoolean("loginPrompt", false),
                             accountMenu = obj.optBoolean("accountMenu", false),
                             title = obj.optString("title", "")
                         )
                     )
                 } catch (_: Exception) {
-                    cont.resume(PageProbe(false, false, true, true, false, ""))
+                    cont.resume(PageProbe(false, false, true, "probe_error", true, false, ""))
                 }
             }
-        } ?: cont.resume(PageProbe(false, false, true, true, false, ""))
+        } ?: cont.resume(PageProbe(false, false, true, "probe_null_webview", true, false, ""))
     }
 
     private fun isSignedInForSetup(target: AiTarget, p: PageProbe): Boolean {
@@ -779,18 +786,16 @@ class MainActivity : AppCompatActivity() {
         if (p.loginPrompt) return false
         return when (target) {
             AiTarget.GEMINI -> {
-                !url.contains("accounts.google.com") &&
-                    !url.contains("servicelogin") &&
+                !BotDetectionEngine.isLoginRequiredUrl("gemini", url) &&
                     p.inputReady
             }
             AiTarget.CHATGPT -> {
-                !url.contains("auth.openai.com") &&
-                    !url.contains("chatgpt.com/auth") &&
+                !BotDetectionEngine.isLoginRequiredUrl("chatgpt", url) &&
                     p.inputReady &&
                     (p.accountMenu || !p.loginPrompt)
             }
             AiTarget.COPILOT -> {
-                (!url.contains("claude.ai/login") || url.contains("app-google-auth")) &&
+                !BotDetectionEngine.isLoginRequiredUrl("copilot", url) &&
                     p.inputReady &&
                     (p.accountMenu || !p.loginPrompt)
             }
@@ -810,16 +815,14 @@ class MainActivity : AppCompatActivity() {
         smokeWaiter = null
         val lower = result.lowercase()
         val normalized = lower.trim()
-        val hardBlockMarks = listOf(
-            "cloudflare",
-            "challenge.cloudflare.com",
-            "captcha",
-            "recaptcha",
-            "verify you are human",
-            "i am not a robot",
-            "私はロボットではありません"
+        val rawSignal = BotDetectionEngine.fromError(
+            type = "SMOKE_RESULT",
+            data = result,
+            url = webViewManager.currentUrl()
         )
-        if (hardBlockMarks.any { lower.contains(it) }) return false
+        val t = prefs.getBotThresholds()
+        val signal = BotDetectionEngine.applyThresholds(rawSignal, t.blocked, t.interstitial)
+        if (signal.decision == BotDecision.BOT_BLOCKED) return false
         if (normalized == "ok" || normalized == "ok." || normalized == "okay") return true
         if (result.contains(token)) return true
         return result.isNotBlank() && result.length >= 6
@@ -895,11 +898,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun requiresManualVerification(type: String, data: String?): Boolean {
         val s = (type + " " + (data ?: "")).lowercase()
-        val botSignal = BotDetectionEngine.fromError(
+        val rawSignal = BotDetectionEngine.fromError(
             type = type,
             data = data,
             url = webViewManager.currentUrl()
         )
+        val t = prefs.getBotThresholds()
+        val botSignal = BotDetectionEngine.applyThresholds(rawSignal, t.blocked, t.interstitial)
         val hasExplicitLogin = s.contains("login_required") && (
             s.contains("accounts.google.com") ||
                 s.contains("auth.openai.com") ||

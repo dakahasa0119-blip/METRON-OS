@@ -323,12 +323,13 @@ class WebViewManager(
 
     fun detectBotWall(callback: (BotSignal) -> Unit) {
         detectAccessInterstitial(webView) { blocked, detail ->
-            val signal = BotDetectionEngine.fromDomScan(
+            val raw = BotDetectionEngine.fromDomScan(
                 blocked = blocked,
                 mark = detail,
                 url = currentUrl()
             )
-            callback(signal)
+            val t = prefs.getBotThresholds()
+            callback(BotDetectionEngine.applyThresholds(raw, t.blocked, t.interstitial))
         }
     }
 
@@ -405,7 +406,7 @@ class WebViewManager(
             val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
             val blocked = parsed.contains("\"blocked\":true")
             val mark = Regex("\"mark\":\"([^\"]*)\"").find(parsed)?.groupValues?.getOrNull(1) ?: ""
-            val signal = if (blocked) {
+            val baseSignal = if (blocked) {
                 BotDetectionEngine.fromError(
                     type = "GEMINI_MARKER",
                     data = mark,
@@ -419,7 +420,8 @@ class WebViewManager(
                     source = "gemini_scan"
                 )
             }
-            callback(signal)
+            val t = prefs.getBotThresholds()
+            callback(BotDetectionEngine.applyThresholds(baseSignal, t.blocked, t.interstitial))
         } ?: callback(
             BotSignal(
                 decision = BotDecision.CLEAR,
@@ -907,11 +909,13 @@ class WebViewManager(
                 injectAutoDom()
                 detectAccessInterstitial(webView) { blocked, detail ->
                     if (blocked) {
-                        val signal = BotDetectionEngine.fromDomScan(
+                        val raw = BotDetectionEngine.fromDomScan(
                             blocked = blocked,
                             mark = detail,
                             url = currentUrl()
                         )
+                        val t = prefs.getBotThresholds()
+                        val signal = BotDetectionEngine.applyThresholds(raw, t.blocked, t.interstitial)
                         if (signal.decision == BotDecision.BOT_BLOCKED) {
                             onDomErrorCallback("BOT_BLOCKED", signal.detailString())
                         } else if (signal.decision == BotDecision.INTERSTITIAL) {

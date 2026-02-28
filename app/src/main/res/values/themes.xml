@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ARC" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/arc_primary</item>
+        <item name="colorPrimaryVariant">@color/arc_primary_dark</item>
+        <item name="colorSecondary">@color/arc_accent</item>
+        <item name="colorSecondaryVariant">@color/arc_accent</item>
+        <item name="colorSurface">@color/arc_surface</item>
+        <item name="colorOnSurface">@color/arc_on_surface</item>
+        <item name="android:statusBarColor">@color/arc_primary_dark</item>
+        <item name="android:navigationBarColor">@color/arc_primary_dark</item>
+    </style>
+</resources>
