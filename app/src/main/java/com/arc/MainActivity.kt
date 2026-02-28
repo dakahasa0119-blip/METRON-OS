@@ -737,8 +737,6 @@ class MainActivity : AppCompatActivity() {
                 text.includes('verify you are human') ||
                 text.includes('captcha') ||
                 text.includes('challenge.cloudflare.com') ||
-                text.includes('checking your browser') ||
-                text.includes('security check to access') ||
                 text.includes('私はロボットではありません') ||
                 !!q("iframe[src*='challenge' i],iframe[src*='captcha' i]");
               const input = q("textarea, div[contenteditable='true'][role='textbox'], [contenteditable='true']");
@@ -812,7 +810,16 @@ class MainActivity : AppCompatActivity() {
         smokeWaiter = null
         val lower = result.lowercase()
         val normalized = lower.trim()
-        if (lower.contains("cloudflare") || lower.contains("captcha") || lower.contains("robot")) return false
+        val hardBlockMarks = listOf(
+            "cloudflare",
+            "challenge.cloudflare.com",
+            "captcha",
+            "recaptcha",
+            "verify you are human",
+            "i am not a robot",
+            "私はロボットではありません"
+        )
+        if (hardBlockMarks.any { lower.contains(it) }) return false
         if (normalized == "ok" || normalized == "ok." || normalized == "okay") return true
         if (result.contains(token)) return true
         return result.isNotBlank() && result.length >= 6
@@ -888,15 +895,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun requiresManualVerification(type: String, data: String?): Boolean {
         val s = (type + " " + (data ?: "")).lowercase()
-        val marks = listOf(
-            "copilot_bot_blocked",
-            "challenge.cloudflare.com",
-            "checking your browser",
-            "captcha",
-            "recaptcha",
-            "robot",
-            "verify you are human",
-            "私はロボットではありません"
+        val botSignal = BotDetectionEngine.fromError(
+            type = type,
+            data = data,
+            url = webViewManager.currentUrl()
         )
         val hasExplicitLogin = s.contains("login_required") && (
             s.contains("accounts.google.com") ||
@@ -904,7 +906,7 @@ class MainActivity : AppCompatActivity() {
                 s.contains("chatgpt.com/auth") ||
                 s.contains("claude.ai/login")
             )
-        return hasExplicitLogin || marks.any { s.contains(it) }
+        return hasExplicitLogin || botSignal.decision == BotDecision.BOT_BLOCKED
     }
 
     private fun openExternalBrowser(url: String) {

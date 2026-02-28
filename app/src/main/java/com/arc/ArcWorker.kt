@@ -50,6 +50,13 @@ class ArcWorker(
     private val webDiag by lazy { WebViewDiagnosticProbe(web, gateway, prefs, workerScope) }
     private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
     private val timingModels = mutableMapOf<String, TimingModel>()
+    private data class RuntimeTiming(
+        val timeoutMs: Long,
+        val noProgressMs: Long,
+        val sampleCount: Int = 0,
+        val avgMs: Long = 0L,
+        val p90Ms: Long = 0L
+    )
 
     // 🚀 [統合信号系]
     var onGlobalAiResult: ((String) -> Unit)? = null
@@ -75,28 +82,24 @@ class ArcWorker(
         return marks.any { p.contains(it) }
     }
 
-    private fun perAttemptTimeoutMsFor(target: String, prompt: String): Long {
+    private fun baseTimeoutMsFor(target: String, prompt: String): Long {
         if (isDriveReferencePrompt(prompt)) {
             return when (target.lowercase()) {
                 "gemini" -> 150_000L
                 else -> 120_000L
             }
         }
-        return when (target.lowercase()) {
-            else -> 45_000L
-        }
+        return 45_000L
     }
 
-    private fun noProgressLimitMsFor(target: String, prompt: String): Long {
+    private fun baseNoProgressMsFor(target: String, prompt: String): Long {
         if (isDriveReferencePrompt(prompt)) {
             return when (target.lowercase()) {
                 "gemini" -> 95_000L
                 else -> 70_000L
             }
         }
-        return when (target.lowercase()) {
-            else -> 28_000L
-        }
+        return 28_000L
     }
 
     private fun timingKey(target: String, prompt: String): String {
@@ -117,6 +120,62 @@ class ArcWorker(
         val alpha = if (success) 0.25 else 0.12
         m.emaMs = m.emaMs * (1.0 - alpha) + x * alpha
         m.samples += 1
+        prefs.addTimingSample(
+            key = key,
+            elapsedMs = elapsedMs,
+            success = success
+        )
+    }
+
+    private fun runtimeTimingFor(target: String, prompt: String): RuntimeTiming {
+        val key = timingKey(target, prompt)
+        val baseTimeout = baseTimeoutMsFor(target, prompt)
+        val baseNoProgress = baseNoProgressMsFor(target, prompt)
+        var timeout = baseTimeout
+        var noProgress = baseNoProgress
+
+        val hist = prefs.getTimingStats(
+            key = key,
+            lookbackMs = 12 * 60 * 60_000L,
+            minSamples = 3,
+            successOnly = true
+        )
+        var sampleCount = 0
+        var avgMs = 0L
+        var p90Ms = 0L
+        if (hist != null) {
+            sampleCount = hist.samples
+            avgMs = hist.avgMs
+            p90Ms = hist.p90Ms
+            val histTimeout = (hist.p90Ms + (hist.stdMs * 2).coerceAtLeast(5_000L))
+                .coerceIn(35_000L, 240_000L)
+            val histNoProgress = ((hist.avgMs * 0.58) + hist.stdMs)
+                .toLong()
+                .coerceIn(15_000L, (histTimeout - 5_000L).coerceAtLeast(15_000L))
+            timeout = maxOf(timeout, histTimeout)
+            noProgress = maxOf(noProgress, histNoProgress)
+        }
+
+        val model = timingModels[key]
+        if (model != null && model.samples >= 2) {
+            val emaTimeout = (model.emaMs * 1.85).toLong().coerceIn(35_000L, 240_000L)
+            val emaNoProgress = (model.emaMs * 0.62).toLong().coerceIn(15_000L, (emaTimeout - 5_000L).coerceAtLeast(15_000L))
+            timeout = maxOf(timeout, emaTimeout)
+            noProgress = maxOf(noProgress, emaNoProgress)
+        }
+
+        if (isDriveReferencePrompt(prompt)) {
+            timeout = timeout.coerceAtLeast(90_000L)
+            noProgress = noProgress.coerceAtLeast(45_000L)
+        }
+        noProgress = noProgress.coerceAtMost((timeout - 5_000L).coerceAtLeast(15_000L))
+        return RuntimeTiming(
+            timeoutMs = timeout,
+            noProgressMs = noProgress,
+            sampleCount = sampleCount,
+            avgMs = avgMs,
+            p90Ms = p90Ms
+        )
     }
 
     private fun dynamicNoProgressLimitMs(
@@ -504,7 +563,11 @@ class ArcWorker(
         if (isDriveReferencePrompt(task.prompt)) {
             emitStatus("LONG_WAIT_MODE:DRIVE_REF")
         }
-        val timeoutMs = perAttemptTimeoutMsFor(target, task.prompt)
+        val runtimeTiming = runtimeTimingFor(target, task.prompt)
+        val timeoutMs = runtimeTiming.timeoutMs
+        emitStatus(
+            "TIMING_MODEL target=$target timeout_ms=$timeoutMs no_progress_ms=${runtimeTiming.noProgressMs} samples=${runtimeTiming.sampleCount} avg_ms=${runtimeTiming.avgMs} p90_ms=${runtimeTiming.p90Ms}"
+        )
         timeoutJob = workerScope.launch {
             val startedAt = System.currentTimeMillis()
             var lastSeq = currentStatusSeq()
@@ -535,8 +598,8 @@ class ArcWorker(
 
                 if (elapsed >= 12_000L) {
                     val bot = detectBotWallQuick()
-                    if (bot.first) {
-                        handleDomError("BOT_BLOCKED", bot.second)
+                    if (bot.decision == BotDecision.BOT_BLOCKED) {
+                        handleDomError("BOT_BLOCKED", bot.detailString())
                         return@launch
                     }
                 }
@@ -544,14 +607,11 @@ class ArcWorker(
                 val signal = probeProgressQuick()
                 generatingNow = signal.generating
                 if (target == "gemini" && elapsed >= 7_000L && signal.marker.isNotBlank()) {
-                    val code = Regex("""code[:_](\d+)""", RegexOption.IGNORE_CASE)
-                        .find(signal.marker)
-                        ?.groupValues
-                        ?.getOrNull(1)
-                        ?.trim()
-                    val errType = if (!code.isNullOrBlank()) "GEMINI_FAIL_$code" else "GEMINI_FAIL_GENERIC"
-                    handleDomError(errType, signal.marker)
-                    return@launch
+                    val errType = BotDetectionEngine.classifyGeminiErrorType(signal.marker)
+                    if (!errType.isNullOrBlank()) {
+                        handleDomError(errType, signal.marker)
+                        return@launch
+                    }
                 }
                 if (signal.generating) {
                     lastProgressAt = now
@@ -582,7 +642,7 @@ class ArcWorker(
                 val dynamicNoProgressMs = dynamicNoProgressLimitMs(
                     target = target,
                     prompt = task.prompt,
-                    baseMs = noProgressLimitMsFor(target, task.prompt),
+                    baseMs = runtimeTiming.noProgressMs,
                     elapsedMs = elapsed,
                     generating = generatingNow,
                     assistantLen = lastAssistantLen,
@@ -590,8 +650,8 @@ class ArcWorker(
                 )
                 if (noProgressMs >= dynamicNoProgressMs) {
                     val bot = detectBotWallQuick()
-                    if (bot.first) {
-                        handleDomError("BOT_BLOCKED", bot.second)
+                    if (bot.decision == BotDecision.BOT_BLOCKED) {
+                        handleDomError("BOT_BLOCKED", bot.detailString())
                         return@launch
                     }
                     handleDomError("STALL_NO_PROGRESS", "no_status_change_ms=$noProgressMs")
@@ -601,12 +661,13 @@ class ArcWorker(
         }
     }
 
-    private suspend fun detectBotWallQuick(): Pair<Boolean, String> {
-        val d = CompletableDeferred<Pair<Boolean, String>>()
-        web.detectBotWall { blocked, mark ->
-            if (!d.isCompleted) d.complete(blocked to mark)
+    private suspend fun detectBotWallQuick(): BotSignal {
+        val d = CompletableDeferred<BotSignal>()
+        web.detectBotWall { signal ->
+            if (!d.isCompleted) d.complete(signal)
         }
-        return withTimeoutOrNull(1500) { d.await() } ?: (false to "")
+        return withTimeoutOrNull(1500) { d.await() }
+            ?: BotSignal(decision = BotDecision.CLEAR, confidence = 0, mark = "timeout", source = "arc_timeout")
     }
 
     private data class ProgressSignal(
@@ -744,26 +805,12 @@ class ArcWorker(
     }
 
     private fun isBotBlocked(type: String, data: String?): Boolean {
-        val text = (type + " " + (data ?: "")).lowercase()
-        val marks = listOf(
-            "captcha",
-            "recaptcha",
-            "verify you are human",
-            "checking your browser",
-            "just a moment",
-            "turnstile",
-            "このページにアクセスしています",
-            "unusual traffic",
-            "access denied",
-            "forbidden",
-            "cloudflare",
-            "bot detected",
-            "security check",
-            "human verification",
-            "verify you are not a robot",
-            "bot check"
+        val signal = BotDetectionEngine.fromError(
+            type = type,
+            data = data,
+            url = web.currentUrl()
         )
-        return marks.any { text.contains(it) }
+        return signal.decision == BotDecision.BOT_BLOCKED
     }
 
     private fun handleDomError(type: String, data: String?) {
@@ -939,13 +986,21 @@ class ArcWorker(
         } catch (_: Exception) {}
 
         val lower = advice.lowercase()
+        val botSignal = BotDetectionEngine.fromError(
+            type = "ARC_SCREEN_DECISION",
+            data = advice,
+            url = web.currentUrl()
+        )
+        if (botSignal.decision == BotDecision.BOT_BLOCKED) {
+            return ScreenDecision("ESCALATE", note = "blocked:${botSignal.mark.take(36)}")
+        }
         return when {
             lower.contains("cookie") || lower.contains("consent") || lower.contains("同意") -> ScreenDecision("CLICK_UNBLOCK", note = "consent")
             lower.contains("refresh") || lower.contains("reload") || lower.contains("再読み込み") -> ScreenDecision("REFRESH", note = "refresh")
             lower.contains("switch") && lower.contains("gemini") -> ScreenDecision("RETRY", note = "target_switch_blocked")
             lower.contains("switch") && lower.contains("chatgpt") -> ScreenDecision("RETRY", note = "target_switch_blocked")
             lower.contains("switch") && lower.contains("copilot") -> ScreenDecision("RETRY", note = "target_switch_blocked")
-            lower.contains("captcha") || lower.contains("login") || lower.contains("認証") -> ScreenDecision("ESCALATE", note = "blocked")
+            lower.contains("login") || lower.contains("認証") -> ScreenDecision("ESCALATE", note = "blocked")
             lower.contains("wait") || lower.contains("待機") -> ScreenDecision("WAIT", note = "wait")
             else -> ScreenDecision("RETRY", note = "fallback")
         }

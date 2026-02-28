@@ -419,6 +419,86 @@ class Prefs(context: Context) {
     // --- 🧠 現場記憶 ---
     var contextHistory: String by StringPref("context_history", "[]")
     var summarizedContext: String by StringPref("summarized_context", "")
+    var timingHistory: String by StringPref("timing_history", "[]")
+
+    data class TimingStats(
+        val avgMs: Long,
+        val p90Ms: Long,
+        val stdMs: Long,
+        val samples: Int,
+        val latestTs: Long
+    )
+
+    fun addTimingSample(
+        key: String,
+        elapsedMs: Long,
+        success: Boolean,
+        errorType: String = "",
+        maxItems: Int = 320
+    ) {
+        if (key.isBlank() || elapsedMs <= 0L) return
+        try {
+            val list = JSONArray(timingHistory)
+            val now = System.currentTimeMillis()
+            val item = JSONObject().apply {
+                put("k", key.take(80))
+                put("elapsed_ms", elapsedMs.coerceIn(200L, 600_000L))
+                put("success", success)
+                put("ts", now)
+                if (errorType.isNotBlank()) put("error_type", errorType.take(80))
+            }
+            list.put(item)
+            val start = (list.length() - maxItems.coerceAtLeast(80)).coerceAtLeast(0)
+            val trimmed = JSONArray()
+            for (i in start until list.length()) trimmed.put(list.get(i))
+            timingHistory = trimmed.toString()
+        } catch (_: Exception) { }
+    }
+
+    fun getTimingStats(
+        key: String,
+        lookbackMs: Long = 24 * 60 * 60_000L,
+        minSamples: Int = 3,
+        successOnly: Boolean = true
+    ): TimingStats? {
+        if (key.isBlank()) return null
+        return try {
+            val list = JSONArray(timingHistory)
+            if (list.length() == 0) return null
+            val now = System.currentTimeMillis()
+            val samples = mutableListOf<Long>()
+            var latestTs = 0L
+            for (i in 0 until list.length()) {
+                val it = list.optJSONObject(i) ?: continue
+                if (it.optString("k", "") != key) continue
+                if (successOnly && !it.optBoolean("success", false)) continue
+                val ts = it.optLong("ts", 0L)
+                if (ts <= 0L || now - ts > lookbackMs) continue
+                val elapsed = it.optLong("elapsed_ms", 0L)
+                if (elapsed <= 0L) continue
+                samples += elapsed
+                if (ts > latestTs) latestTs = ts
+            }
+            if (samples.size < minSamples) return null
+            samples.sort()
+            val avg = samples.sum().toDouble() / samples.size.toDouble()
+            val p90Index = ((samples.size - 1) * 0.90).toInt().coerceIn(0, samples.lastIndex)
+            val p90 = samples[p90Index].toDouble()
+            val variance = samples
+                .map { (it.toDouble() - avg) * (it.toDouble() - avg) }
+                .sum() / samples.size.toDouble()
+            val std = kotlin.math.sqrt(variance)
+            TimingStats(
+                avgMs = avg.toLong().coerceAtLeast(1L),
+                p90Ms = p90.toLong().coerceAtLeast(1L),
+                stdMs = std.toLong().coerceAtLeast(0L),
+                samples = samples.size,
+                latestTs = latestTs
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun addContext(
         q: String,

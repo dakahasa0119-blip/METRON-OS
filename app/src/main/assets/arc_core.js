@@ -313,7 +313,6 @@ try {
     const genericMarks = [
       "something went wrong",
       "problem generating response",
-      "try again",
       "temporarily unavailable",
       "network error"
     ];

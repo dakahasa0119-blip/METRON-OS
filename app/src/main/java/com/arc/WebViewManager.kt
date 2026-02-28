@@ -208,14 +208,6 @@ class WebViewManager(
     private fun detectAccessInterstitial(view: WebView?, callback: (Boolean, String) -> Unit) {
         val js = """
             (function() {
-              try {
-                const cachedMark = window.__arcLastBotWallMark ? String(window.__arcLastBotWallMark) : '';
-                const cachedAt = window.__arcLastBotWallAt ? Number(window.__arcLastBotWallAt) : 0;
-                const ageMs = Date.now() - cachedAt;
-                if (cachedMark && cachedAt > 0 && ageMs >= 0 && ageMs <= 60000) {
-                  return JSON.stringify({ blocked: true, mark: cachedMark, source: 'cache' });
-                }
-              } catch (_) {}
               const remember = (mark) => {
                 try {
                   window.__arcLastBotWallMark = String(mark || 'unknown');
@@ -246,34 +238,23 @@ class WebViewManager(
               }
               const text = mergedText;
               const lower = mergedText.toLowerCase();
-              const marks = [
-                'このページにアクセスしています',
-                '検証に失敗しました',
-                'トラブルシューティング',
-                '私はロボットではありません',
-                '私はロボットではありません。',
-                'checking your browser',
-                'just a moment',
+              const robotTextMarks = [
+                'i am not a robot',
                 'verify you are human',
                 'verify you are not a robot',
                 'human verification',
                 'prove you are human',
                 '私はロボットではありません',
-                'security check',
-                'turnstile',
-                'captcha',
-                'i am not a robot',
                 'ロボットではありません',
-                '人間であることを確認',
-                'cloudflare',
+                '人間であることを確認'
+              ];
+              const challengeTextMarks = [
+                'captcha',
+                'recaptcha',
+                'turnstile',
+                'cloudflare challenge',
                 'challenge.cloudflare.com'
               ];
-              for (let i = 0; i < marks.length; i++) {
-                if (lower.indexOf(marks[i].toLowerCase()) >= 0 || text.indexOf(marks[i]) >= 0) {
-                  remember(marks[i]);
-                  return JSON.stringify({ blocked: true, mark: marks[i], source: 'scan' });
-                }
-              }
               try {
                 for (const r of roots) {
                   const iframe = r.querySelector(
@@ -300,7 +281,6 @@ class WebViewManager(
                       near.indexOf('私はロボットではありません') >= 0 ||
                       near.indexOf('i am not a robot') >= 0 ||
                       near.indexOf('verify you are human') >= 0 ||
-                      near.indexOf('security check') >= 0 ||
                       near.indexOf('captcha') >= 0
                     ) {
                       remember("robot_checkbox");
@@ -309,6 +289,27 @@ class WebViewManager(
                   }
                 }
               } catch (_) {}
+              try {
+                for (const r of roots) {
+                  const widget = r.querySelector(
+                    '[class*="captcha" i],[id*="captcha" i],[class*="turnstile" i],[id*="turnstile" i],[data-sitekey]'
+                  );
+                  if (widget) {
+                    remember("captcha_widget");
+                    return JSON.stringify({ blocked: true, mark: 'captcha_widget', source: 'scan' });
+                  }
+                }
+              } catch (_) {}
+              const hasRobotText = robotTextMarks.some((mark) =>
+                lower.indexOf(mark.toLowerCase()) >= 0 || text.indexOf(mark) >= 0
+              );
+              const hasChallengeText = challengeTextMarks.some((mark) =>
+                lower.indexOf(mark.toLowerCase()) >= 0 || text.indexOf(mark) >= 0
+              );
+              if (hasRobotText && hasChallengeText) {
+                remember("text_challenge");
+                return JSON.stringify({ blocked: true, mark: 'text_challenge', source: 'scan' });
+              }
               return JSON.stringify({ blocked: false, mark: '' });
             })();
         """.trimIndent()
@@ -320,11 +321,18 @@ class WebViewManager(
         } ?: callback(false, "")
     }
 
-    fun detectBotWall(callback: (Boolean, String) -> Unit) {
-        detectAccessInterstitial(webView, callback)
+    fun detectBotWall(callback: (BotSignal) -> Unit) {
+        detectAccessInterstitial(webView) { blocked, detail ->
+            val signal = BotDetectionEngine.fromDomScan(
+                blocked = blocked,
+                mark = detail,
+                url = currentUrl()
+            )
+            callback(signal)
+        }
     }
 
-    fun detectGeminiError(callback: (Boolean, String) -> Unit) {
+    fun detectGeminiError(callback: (BotSignal) -> Unit) {
         val js = """
             (function() {
               try {
@@ -378,7 +386,6 @@ class WebViewManager(
                 const marks = [
                   'something went wrong',
                   'problem generating response',
-                  'try again',
                   'temporarily unavailable',
                   'network error'
                 ];
@@ -398,8 +405,29 @@ class WebViewManager(
             val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
             val blocked = parsed.contains("\"blocked\":true")
             val mark = Regex("\"mark\":\"([^\"]*)\"").find(parsed)?.groupValues?.getOrNull(1) ?: ""
-            callback(blocked, mark)
-        } ?: callback(false, "")
+            val signal = if (blocked) {
+                BotDetectionEngine.fromError(
+                    type = "GEMINI_MARKER",
+                    data = mark,
+                    url = currentUrl()
+                )
+            } else {
+                BotSignal(
+                    decision = BotDecision.CLEAR,
+                    confidence = 0,
+                    mark = "",
+                    source = "gemini_scan"
+                )
+            }
+            callback(signal)
+        } ?: callback(
+            BotSignal(
+                decision = BotDecision.CLEAR,
+                confidence = 0,
+                mark = "",
+                source = "gemini_scan"
+            )
+        )
     }
 
     fun detectProgressSignal(callback: (Boolean, Int, String) -> Unit) {
@@ -684,21 +712,31 @@ class WebViewManager(
                 (function(){
                   try{
                     const t=((document.body&&document.body.innerText)||'').toLowerCase();
-                    const blocked =
-                      t.includes('私はロボットではありません') ||
-                      t.includes('i am not a robot') ||
-                      t.includes('verify you are human') ||
-                      t.includes('security check') ||
-                      t.includes('challenge.cloudflare.com');
-                    return blocked ? 'blocked' : 'ok';
+                    const hasIframe = !!document.querySelector(
+                      'iframe[src*="challenge.cloudflare.com" i],iframe[src*="recaptcha" i],iframe[title*="captcha" i],iframe[title*="challenge" i]'
+                    );
+                    const hasWidget = !!document.querySelector(
+                      '[class*="captcha" i],[id*="captcha" i],[class*="turnstile" i],[id*="turnstile" i],[data-sitekey]'
+                    );
+                    const hasRobotCheckbox = Array.from(document.querySelectorAll('input[type="checkbox"],[role="checkbox"]')).some((cb) => {
+                      const host = cb.closest && cb.closest('label,div,section,form');
+                      const cbAria = ((cb.getAttribute && (cb.getAttribute('aria-label') || cb.getAttribute('title'))) || '').toLowerCase();
+                      const near = ((host && (host.innerText || host.textContent)) ? (host.innerText || host.textContent) : '').toLowerCase();
+                      return cbAria.includes('robot') || cbAria.includes('captcha') || cbAria.includes('human') ||
+                        near.includes('ロボット') || near.includes('i am not a robot') || near.includes('verify you are human') || near.includes('captcha');
+                    });
+                    if (hasIframe) return 'iframe_challenge';
+                    if (hasWidget) return 'captcha_widget';
+                    if (hasRobotCheckbox) return 'robot_checkbox';
+                    return 'ok';
                   }catch(_){ return 'ok'; }
                 })();
                 """.trimIndent()
             ) { raw ->
                 val v = (raw ?: "").trim().trim('"').lowercase()
-                if (v == "blocked") {
+                if (v != "ok") {
                     attemptUiUnblock()
-                    onDomErrorCallback("BOT_BLOCKED", "robot_checkbox_visible")
+                    onDomErrorCallback("BOT_BLOCKED", v)
                     return@evaluateJavascript
                 }
                 continueInjection()
@@ -869,14 +907,15 @@ class WebViewManager(
                 injectAutoDom()
                 detectAccessInterstitial(webView) { blocked, detail ->
                     if (blocked) {
-                        if (detail.contains("robot", ignoreCase = true) ||
-                            detail.contains("captcha", ignoreCase = true) ||
-                            detail.contains("cloudflare", ignoreCase = true) ||
-                            detail.contains("ロボット")
-                        ) {
-                            onDomErrorCallback("BOT_BLOCKED", detail)
-                        } else {
-                            onDomErrorCallback("PAGE_INTERSTITIAL_BLOCK", detail)
+                        val signal = BotDetectionEngine.fromDomScan(
+                            blocked = blocked,
+                            mark = detail,
+                            url = currentUrl()
+                        )
+                        if (signal.decision == BotDecision.BOT_BLOCKED) {
+                            onDomErrorCallback("BOT_BLOCKED", signal.detailString())
+                        } else if (signal.decision == BotDecision.INTERSTITIAL) {
+                            onDomErrorCallback("PAGE_INTERSTITIAL_BLOCK", signal.detailString())
                         }
                     }
                 }
