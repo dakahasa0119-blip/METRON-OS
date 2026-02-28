@@ -127,7 +127,7 @@ while [ "$elapsed_sec" -le "$E2E_MAX_WAIT_SEC" ]; do
     break
   fi
 
-  parsed="$(printf '%s' "$probe" | python3 -c '
+parsed="$(printf '%s' "$probe" | python3 -c '
 import json, sys
 raw = sys.stdin.read()
 try:
@@ -138,7 +138,7 @@ except Exception:
 job = j.get("job") or {}
 main = j.get("main_chat") or {}
 job_status = str(job.get("status_value",""))
-main_status = str(main.get("status",""))
+main_status = str(main.get("status","") or main.get("status_value","") or j.get("status",""))
 mission = str(main.get("mission_id","") or job.get("job_id",""))
 response = str(main.get("response","")).replace("\n", " ")[:180]
 print(f"ok\t{job_status}\t{main_status}\t{mission}\t{response}")
