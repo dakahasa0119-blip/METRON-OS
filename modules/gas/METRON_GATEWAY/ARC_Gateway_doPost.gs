@@ -3581,5 +3581,27 @@ function doPost(e) {
     return jsonOut({ status: "ok", job_id: enq.jobId, trace_id: enq.traceId });
   }
 
+  // --- Phase 4: METRON OS Enqueue Endpoint ---
+  if (mode === "metron_enqueue_arc") {
+    const prompt = norm(data.prompt);
+    if (!prompt) return jsonOut({ status: "error", error: "prompt_required" });
+    const jobId = norm(data.job_id) || ("METRON_" + Utilities.getUuid().slice(0, 8));
+    const enq = enqueueArcJob({
+      jobId: jobId,
+      qid: jobId,
+      target: resolveOperationalTarget(norm(data.target) || defaultTarget, { fallback: defaultTarget }),
+      prompt: prompt,
+      script: norm(data.script),
+      mode: norm(data.arc_mode) || "request_arc",
+      executor: "ARC",
+      user: norm(data.user) || "metron_os_core",
+      workerId: "",
+      traceId: norm(data.trace_id),
+      retryCount: 0
+    });
+    addAudit(enq.traceId, "METRON_ENQUEUE_ARC", enq.jobId, "", "pending", enq.payload.target);
+    return jsonOut({ status: "ok", job_id: enq.jobId, trace_id: enq.traceId });
+  }
+
   return jsonOut({ status: "ok" });
 }

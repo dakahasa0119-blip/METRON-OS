@@ -510,29 +510,41 @@ function requestAppForge(requestText) {
 
   const appName = deriveAppNameFromRequest_(requestText);
 
-  // ここではまだ「設計ドキュメント」を出すだけ。
-  // 実際のシート構造・Webアプリ生成は次のステップで詳細化する。
+  // 1. 企画書（設計ドキュメント）のひな形を作成
   const docName = `AppForge_設計_${appName}_${formatDateForFileName_(new Date())}`;
   const doc = getOrCreateForgeDoc_(forgeFolder, docName);
-  doc.getBody().appendParagraph(
-    Utilities.formatString(
-      "[%s] AppForge 要求\n\n【リクエスト】\n%s\n\n【プロファイル文脈】\n%s\n\n【タスク】\n- 必要なデータ構造（シート構成）を設計\n- 必要な画面（UI）と Webアプリ機能を設計\n- 利用者の文脈（個人 / 業務 / 業種）に合わせて最適化\n",
-      new Date(),
-      requestText,
-      profileContext
-    )
+
+  const promptText = Utilities.formatString(
+    "[%s] AppForge 要求\n\n【リクエスト】\n%s\n\n【プロファイル文脈】\n%s\n\n【タスク】\n%s",
+    new Date(),
+    requestText,
+    profileContext,
+    "- 必要なデータ構造（シート構成）を設計\n- 必要な画面（UI）と Webアプリ機能を設計\n- 利用者の文脈（個人 / 業務 / 業種）に合わせて最適化\n- 完全な GAS (Google Apps Script) のコード一式を出力せよ。"
   );
 
+  doc.getBody().setText(promptText);
+
+  // 2. 進化履歴にログを残す
   logEvolutionEvent({
     type: "APP",
     summary: `AppForgeリクエスト: ${appName}`,
     target: "AppForge",
     fileUrl: doc.getUrl(),
-    status: "NEW",
+    status: "DISPATCHED",
     note: requestText
   });
 
-  announce(`AppForge リクエストを受理し、設計ドキュメントを生成しました。（${appName}）`, "SYSTEM");
+  // 3. Gateway 経由で ARC にアプリ構築ジョブを投下 (Phase 4 連携)
+  try {
+    if (typeof METRON_GATEWAY_BRIDGE !== 'undefined') {
+      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", promptText, "", "request_arc");
+      announce(`AppForge リクエストを受理し、ARCへ開発ジョブを投下しました。（${appName}）`, "SYSTEM");
+    } else {
+      announce(`AppForge リクエストを受理しましたが、ARCブリッジが見つかりません。（${appName}）`, "WARNING");
+    }
+  } catch (e) {
+    announce(`AppForge リクエストの投下に失敗しました: ${e.message}`, "ERROR");
+  }
 }
 
 function deriveAppNameFromRequest_(text) {
