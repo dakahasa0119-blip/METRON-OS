@@ -232,8 +232,8 @@ function doPost(e) {
     return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "BAKU";
   })();
   const defaultRoute = (() => {
-    const v = upper(norm(props.getProperty("ARC_DEFAULT_ROUTE") || "MOTHERSHIP"));
-    return v === "ARC" ? "ARC" : "MOTHERSHIP";
+    const v = upper(norm(props.getProperty("ARC_DEFAULT_ROUTE") || "METRON"));
+    return v === "ARC" ? "ARC" : "METRON";
   })();
   const defaultExecutor = (() => {
     const v = upper(norm(props.getProperty("ARC_DEFAULT_EXECUTOR") || "AUTO"));
@@ -296,7 +296,7 @@ function doPost(e) {
     }
   };
   const workerAuthMap = parseKeyMap(props.getProperty("ARC_WORKER_AUTH_MAP"));
-  const mothershipAuthMap = parseKeyMap(props.getProperty("MOTHERSHIP_WORKER_AUTH_MAP"));
+  const metronAuthMap = parseKeyMap(props.getProperty("METRON_WORKER_AUTH_MAP"));
 
   const parseAllowlist = (raw) => {
     const txt = norm(raw);
@@ -304,7 +304,7 @@ function doPost(e) {
     return txt.split(",").map((x) => norm(x)).filter((x) => x);
   };
   const arcWorkerAllowlist = parseAllowlist(props.getProperty("ARC_WORKER_ALLOWLIST"));
-  const mothershipWorkerAllowlist = parseAllowlist(props.getProperty("MOTHERSHIP_WORKER_ALLOWLIST"));
+  const metronWorkerAllowlist = parseAllowlist(props.getProperty("METRON_WORKER_ALLOWLIST"));
 
   const ensureRecommendedDefaults = () => {
     const defaults = {
@@ -349,7 +349,7 @@ function doPost(e) {
     "arc_learning",
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
-    "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
+    "metron_submit", "metron_heartbeat", "metron_pull", "metron_result", "metron_error",
     "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts", "admin_target_scores", "admin_slot_scores", "admin_slot_list", "admin_slot_upsert", "admin_slot_delete",
     "admin_diag_latest",
     "gateway_memory_put", "gateway_memory_get", "gateway_memory_search", "memory_put", "memory_get", "memory_search",
@@ -378,14 +378,14 @@ function doPost(e) {
   };
   const resolveSigningKey = (modeName, workerId) => {
     const w = norm(workerId);
-    if (modeName.indexOf("mothership_") === 0) return norm(mothershipAuthMap[w] || expectedAuth);
+    if (modeName.indexOf("metron_") === 0) return norm(metronAuthMap[w] || expectedAuth);
     return norm(workerAuthMap[w] || expectedAuth);
   };
   const validateWorkerAllowlist = (modeName, workerId) => {
     const wid = norm(workerId);
     if (!wid) return { ok: true };
-    if (modeName.indexOf("mothership_") === 0) {
-      if (mothershipWorkerAllowlist.length > 0 && mothershipWorkerAllowlist.indexOf(wid) < 0) {
+    if (modeName.indexOf("metron_") === 0) {
+      if (metronWorkerAllowlist.length > 0 && metronWorkerAllowlist.indexOf(wid) < 0) {
         return { ok: false, error: "worker_not_allowed" };
       }
       return { ok: true };
@@ -444,8 +444,8 @@ function doPost(e) {
     results: ensureSheet("ARC_RESULTS", ["Timestamp", "MissionID", "Target", "Prompt", "Result", "ImageURL"]),
     errors: ensureSheet("ARC_ERRORS", ["Timestamp", "QID", "Type", "Data"]),
     learning: ensureSheet("ARC_LEARNING", ["Timestamp", "Target", "Learned"]),
-    mothership: ensureSheet("MOTHERSHIP_QUEUE", ["Timestamp", "MessageID", "User", "Content", "Status"]),
-    mothershipNodes: ensureSheet("MOTHERSHIP_NODES", ["LastSeen", "WorkerID", "Status", "Version"]),
+    metronQueue: ensureSheet("METRON_QUEUE", ["Timestamp", "MessageID", "TargetID", "Mode", "Content", "Status"]),
+    metronNodes: ensureSheet("METRON_NODES", ["LastSeen", "NodeID", "Status", "Version"]),
     audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     dead: ensureSheet("ARC_DEAD_JOBS", ["Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload"]),
     auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
@@ -1286,7 +1286,7 @@ function doPost(e) {
 
     let route = defaultRoute;
     if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy") || has("#baku") || has("@baku")) route = "ARC";
-    if (has("#mother") || has("@mother") || has("#metron") || has("#osb")) route = "MOTHERSHIP";
+    if (has("#mother") || has("@mother") || has("#metron") || has("@metron") || has("#osb")) route = "METRON";
 
     let executor = defaultExecutor;
     if (has("#baku") || has("@baku")) executor = "BAKU";
@@ -1423,21 +1423,26 @@ function doPost(e) {
     else sheets.mothershipNodes.appendRow(row);
   };
 
-  const claimMothershipMessage = (workerId) => {
+  const claimMetronMessage = (workerId) => {
     if (autonomyPaused) return null;
     const lock = LockService.getScriptLock();
-    if (!lock.tryLock(5000)) return null;
     try {
-      const rows = sheets.mothership.getDataRange().getValues();
+      lock.waitLock(maxWaitTimeMs);
+    } catch (_) {
+      return null;
+    }
+    try {
+      const rows = sheets.metronQueue.getDataRange().getValues();
       for (let i = 1; i < rows.length; i++) {
-        const status = lower(rows[i][4]);
+        const status = lower(rows[i][5]);
         if (status !== "pending") continue;
         const msgId = norm(rows[i][1]);
-        const user = norm(rows[i][2]);
-        const content = norm(rows[i][3]);
-        sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
-        addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
-        return { message_id: msgId, user: user, content: content };
+        const targetId = norm(rows[i][2]);
+        const mode = norm(rows[i][3]);
+        const content = norm(rows[i][4]);
+        sheets.metronQueue.getRange(i + 1, 6).setValue("leased:" + norm(workerId));
+        addAudit("", "METRON_LEASED", msgId, norm(workerId), "leased", targetId);
+        return { message_id: msgId, target_id: targetId, mode: mode, content: content };
       }
       return null;
     } finally {
@@ -1445,14 +1450,14 @@ function doPost(e) {
     }
   };
 
-  const completeMothershipMessage = (messageId, isError, workerId) => {
+  const completeMetronMessage = (messageId, isError, workerId) => {
     const mid = norm(messageId);
     if (!mid) return false;
-    const rows = sheets.mothership.getDataRange().getValues();
+    const rows = sheets.metronQueue.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
       if (norm(rows[i][1]) !== mid) continue;
-      sheets.mothership.getRange(i + 1, 5).setValue(isError ? "error" : "done");
-      addAudit("", "MOTHERSHIP_DONE", mid, norm(workerId), isError ? "error" : "done", "");
+      sheets.metronQueue.getRange(i + 1, 6).setValue(isError ? "error" : "done");
+      addAudit("", "METRON_DONE", mid, norm(workerId), isError ? "error" : "done", "");
       return true;
     }
     return false;
@@ -1565,10 +1570,10 @@ function doPost(e) {
     return n;
   };
 
-  const countActiveMothershipNodes = (activeSec) => {
+  const countActiveMetronNodes = (activeSec) => {
     const limitSec = Number.isFinite(activeSec) ? activeSec : 240;
     const now = Date.now();
-    const rows = sheets.mothershipNodes.getDataRange().getValues();
+    const rows = sheets.metronNodes.getDataRange().getValues();
     let n = 0;
     for (let i = 1; i < rows.length; i++) {
       const ts = new Date(rows[i][0]).getTime();
@@ -1583,20 +1588,20 @@ function doPost(e) {
 
   const resolveRetryExecutor = () => {
     const arcActive = countActiveArcNodes(240);
-    const mothershipActive = countActiveMothershipNodes(240);
+    const metronActive = countActiveMetronNodes(240);
 
     if (repairExecutor === "BAKU") {
-      if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_baku_available" };
+      if (metronActive > 0) return { executor: "BAKU", reason: "repair_baku_available" };
       if (arcActive > 0) return { executor: "ARC", reason: "repair_baku_unavailable_fallback_arc" };
       return { executor: "AUTO", reason: "no_active_worker_auto" };
     }
     if (repairExecutor === "ARC") {
       if (arcActive > 0) return { executor: "ARC", reason: "repair_arc_available" };
-      if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_arc_unavailable_fallback_baku" };
+      if (metronActive > 0) return { executor: "BAKU", reason: "repair_arc_unavailable_fallback_baku" };
       return { executor: "AUTO", reason: "no_active_worker_auto" };
     }
     if (arcActive > 0) return { executor: "ARC", reason: "repair_auto_pick_arc" };
-    if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_auto_pick_baku" };
+    if (metronActive > 0) return { executor: "BAKU", reason: "repair_auto_pick_baku" };
     return { executor: "AUTO", reason: "no_active_worker_auto" };
   };
 
@@ -1727,13 +1732,13 @@ function doPost(e) {
       return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode, traceId: jobRes.traceId, slotId: jobRes.payload.slot_id || "" };
     }
 
-    const msgId = missionId || ("MS_" + rowIndex + "_" + Date.now());
-    sheets.mothership.appendRow([new Date(), msgId, user, content, "pending"]);
-    sheets.main.getRange(rowIndex, 4).setValue("ROUTED_MOTHERSHIP");
-    sheets.main.getRange(rowIndex, 5).setValue("Forwarded to MOTHERSHIP / " + traceId);
+    const msgId = missionId || ("MT_" + rowIndex + "_" + Date.now());
+    sheets.metronQueue.appendRow([new Date(), msgId, "METRON_OS", "request_metron", content, "pending"]);
+    sheets.main.getRange(rowIndex, 4).setValue("ROUTED_METRON");
+    sheets.main.getRange(rowIndex, 5).setValue("Forwarded to METRON / " + traceId);
     sheets.main.getRange(rowIndex, 6).setValue(msgId);
-    addAudit(traceId, "MOTHERSHIP_ROUTED", msgId, "", "pending", user);
-    return { routed: "MOTHERSHIP", jobId: msgId, mode: "mothership_queue", traceId: traceId };
+    addAudit(traceId, "METRON_ROUTED", msgId, "", "pending", user);
+    return { routed: "METRON", jobId: msgId, mode: "metron_queue", traceId: traceId };
   };
 
   const routePendingChatCommands = (enableBackfillRaw) => {
@@ -1788,12 +1793,12 @@ function doPost(e) {
       const ts = toMs(row[0]);
       if (Number.isFinite(ts) && nowMs - ts > windowSec * 1000) break;
       const st = lower(row[3]);
-      if (st !== "queued_arc" && st !== "routed_mothership") continue;
+      if (st !== "queued_arc" && st !== "routed_metron") continue;
       const missionId = norm(row[5]);
       if (!missionId) continue;
       const response = norm(row[4]);
-      const routed = st === "queued_arc" ? "ARC" : "MOTHERSHIP";
-      let modeName = st === "queued_arc" ? "request_arc" : "mothership_queue";
+      const routed = st === "queued_arc" ? "ARC" : "METRON";
+      let modeName = st === "queued_arc" ? "request_arc" : "metron_queue";
       if (st === "queued_arc" && response.indexOf("ARC queued:") === 0) {
         const parts = response.split(" / ");
         if (parts.length >= 2) modeName = norm(parts[1]) || modeName;
@@ -2344,6 +2349,56 @@ function doPost(e) {
     return jsonOut({ status: "ok" });
   }
 
+  const triggerNextAction = (missionId, traceId) => {
+    // ARC_DONE または METRON_DONE になった直後に連鎖判定を行う
+    const mainRows = sheets.main.getDataRange().getValues();
+    let targetRow = null;
+    let targetRowIndex = -1;
+    for (let i = mainRows.length - 1; i >= 1; i--) {
+      if (norm(mainRows[i][5]) === missionId) {
+        targetRow = mainRows[i];
+        targetRowIndex = i + 1;
+        break;
+      }
+    }
+    if (!targetRow) return false;
+
+    const status = upper(norm(targetRow[3]));
+    const responseText = norm(targetRow[4]);
+
+    // ARCが完了し、次がMETRON連携の場合の判定
+    if (status === "ARC_DONE" || status === "ARC_ERROR") {
+      // ユーザー入力・またはメタデータに特定宛先の指示（例: [@metron:OS_A]）が含まれているか判定
+      const prompt = norm(targetRow[2]);
+      const match = prompt.match(/\[@metron(?::([a-zA-Z0-9_-]+))?\]/i);
+      if (match) {
+        const targetId = match[1] || "METRON_OS"; // 未指定ならデフォルトOS宛て
+        const msgId = "MT_" + targetRowIndex + "_" + Date.now();
+        const contentContext = `Action: ${status}\nMission: ${missionId}\nResult: ${responseText.slice(0, 1000)}`;
+        sheets.metronQueue.appendRow([new Date(), msgId, targetId, "gateway_chained", contentContext, "pending"]);
+        sheets.main.getRange(targetRowIndex, 4).setValue("ROUTED_METRON");
+        sheets.main.getRange(targetRowIndex, 5).setValue(`Chained to ${targetId} / ` + msgId);
+        addAudit(traceId, "CHAIN_TO_METRON", msgId, "", "pending", missionId);
+        return true;
+      }
+    }
+
+    // METRON_OS が完了し、次がARC実行の場合
+    if (status === "DONE" && targetRow[1] === "METRON_OS") {
+      // METRON_OS の応答が "[@arc]" などのコマンドを含んでいればARCへ即時ルート
+      if (responseText.indexOf("[@arc]") >= 0 || responseText.indexOf("#arc") >= 0) {
+        // METRON_OSの応答を新たな要求としてルート
+        const chainedRow = [new Date(), "METRON_OS", responseText, "NEW", "", missionId];
+        const res = routeOneChatRow(targetRowIndex, chainedRow);
+        if (res) {
+          addAudit(traceId, "CHAIN_TO_ARC", res.jobId, "", "pending", missionId);
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   if (mode === "route_chat") {
     if (autonomyPaused) return jsonOut({ status: "paused", routed: 0 });
     const lock = LockService.getScriptLock();
@@ -2371,44 +2426,81 @@ function doPost(e) {
     }
   }
 
-  if (mode === "mothership_submit") {
-    const user = norm(data.user || "mothership");
+  if (mode === "metron_submit") {
+    const user = norm(data.user || "metron");
     const content = norm(data.content);
     if (!content) return jsonOut({ status: "error", error: "content_required" });
-    const msgId = norm(data.message_id) || ("MS_" + Utilities.getUuid().slice(0, 8));
-    sheets.mothership.appendRow([new Date(), msgId, user, content, "pending"]);
-    addAudit(norm(data.trace_id), "MOTHERSHIP_SUBMIT", msgId, "", "pending", user);
+    const msgId = norm(data.message_id) || ("MT_" + Utilities.getUuid().slice(0, 8));
+    sheets.metronQueue.appendRow([new Date(), msgId, "METRON_OS", "request_metron", content, "pending"]);
+    addAudit(norm(data.trace_id), "METRON_SUBMIT", msgId, "", "pending", user);
     return jsonOut({ status: "ok", message_id: msgId });
   }
 
-  if (mode === "mothership_heartbeat") {
+  if (mode === "metron_heartbeat") {
     const workerId = norm(data.worker_id);
-    upsertMothershipNode(workerId, data.status || "online", data.version || "");
-    const instruction = claimMothershipMessage(workerId);
+    upsertMetronNode(workerId, data.status || "online", data.version || "");
+    const instruction = claimMetronMessage(workerId);
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
   }
 
-  if (mode === "mothership_pull") {
+  if (mode === "metron_pull") {
     const workerId = norm(data.worker_id);
-    const instruction = claimMothershipMessage(workerId);
-    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "empty" });
+    const consumer = upper(data.executor || "METRON_OS");
+    
+    // metronNodes に死活報告
+    const ip = norm(data.ip) || "";
+    const port = norm(data.port) || "";
+    const nodeRows = sheets.metronNodes.getDataRange().getValues();
+    let foundNode = -1;
+    for (let i = 1; i < nodeRows.length; i++) {
+        if (norm(nodeRows[i][1]) === workerId) {
+            foundNode = i + 1;
+            break;
+        }
+    }
+    const nodePayload = [new Date(), workerId, "online", data.version || ""];
+    if (foundNode > 0) sheets.metronNodes.getRange(foundNode, 1, 1, nodePayload.length).setValues([nodePayload]);
+    else sheets.metronNodes.appendRow(nodePayload);
+
+    // キューから取得
+    const rows = sheets.metronQueue.getDataRange().getValues();
+    const pending = [];
+    for (let i = 1; i < rows.length; i++) {
+      if (lower(norm(rows[i][5])) === "pending") {
+        pending.push({
+          row: i + 1,
+          message_id: norm(rows[i][1]),
+          target_id: norm(rows[i][2]),
+          mode: norm(rows[i][3]),
+          content: norm(rows[i][4])
+        });
+      }
+    }
+    if (pending.length === 0) return jsonOut({ status: "ok", instruction: null });
+    const job = pending[0];
+    sheets.metronQueue.getRange(job.row, 6).setValue("leased");
+    return jsonOut({ status: "ok", instruction: job });
   }
 
-  if (mode === "mothership_result") {
+  if (mode === "metron_result") {
     const messageId = norm(data.message_id);
     const output = norm(data.result);
     if (!messageId) return jsonOut({ status: "error", error: "message_id_required" });
-    const ok = completeMothershipMessage(messageId, false, norm(data.worker_id));
-    if (output) sheets.main.appendRow([new Date(), "MOTHERSHIP", output, "DONE", "", messageId]);
+    const ok = completeMetronMessage(messageId, false, norm(data.worker_id));
+    if (output) {
+      sheets.main.appendRow([new Date(), "METRON_OS", output, "DONE", "", messageId]);
+      triggerNextAction(messageId, norm(data.trace_id));
+    }
     return jsonOut({ status: ok ? "ok" : "not_found" });
   }
 
-  if (mode === "mothership_error") {
+  if (mode === "metron_error") {
     const messageId = norm(data.message_id);
-    const output = norm(data.error || data.data || "mothership_error");
+    const output = norm(data.result);
     if (!messageId) return jsonOut({ status: "error", error: "message_id_required" });
-    const ok = completeMothershipMessage(messageId, true, norm(data.worker_id));
-    sheets.main.appendRow([new Date(), "MOTHERSHIP", "[ERR] " + output, "ERROR", "", messageId]);
+    const ok = completeMetronMessage(messageId, true, norm(data.worker_id));
+    sheets.main.appendRow([new Date(), "METRON_OS", "[ERR] " + output, "ERROR", "", messageId]);
+    triggerNextAction(messageId, norm(data.trace_id));
     return jsonOut({ status: ok ? "ok" : "not_found" });
   }
 
@@ -3147,6 +3239,7 @@ function doPost(e) {
       }
     }
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
+    triggerNextAction(missionId, traceId);
     return jsonOut({ status: "ok", trace_id: traceId });
   }
 
@@ -3235,6 +3328,7 @@ function doPost(e) {
       );
     }
     addAudit(traceId, "ARC_ERROR", missionId, workerId, "error", err + " / " + retry.reason);
+    triggerNextAction(missionId, traceId);
     return jsonOut({ status: "ok", trace_id: traceId, retry: retry });
   }
 
