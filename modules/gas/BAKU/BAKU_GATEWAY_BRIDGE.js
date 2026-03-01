@@ -207,6 +207,37 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     });
   },
 
+  fetchDeadJobs_: function (limit) {
+    return this.postGateway_("baku_salvage_dead_jobs", {
+      limit: limit || 10
+    });
+  },
+
+  archiveDeadJobs_: function (jobIds) {
+    return this.postGateway_("baku_archive_dead_jobs", {
+      job_ids: jobIds
+    });
+  },
+
+  enqueueArcJob_: function (params) {
+    return this.postGateway_("baku_enqueue_arc", {
+      prompt: String(params.prompt || ""),
+      target: String(params.target || ""),
+      script: String(params.script || ""),
+      arc_mode: String(params.mode || ""),
+      user: String(params.user || "")
+    });
+  },
+
+  putMemory_: function (key, value, tags, source) {
+    return this.postGateway_("gateway_memory_put", {
+      key: String(key || ""),
+      value: String(value || ""),
+      tags: tags ? JSON.stringify(tags) : "",
+      source: String(source || "baku_salvage")
+    });
+  },
+
   ensurePlaybookSheet_: function () {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName("BAKU_PLAYBOOK") || ss.insertSheet("BAKU_PLAYBOOK");

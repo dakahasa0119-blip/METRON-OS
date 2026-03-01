@@ -3513,5 +3513,73 @@ function doPost(e) {
     return jsonOut({ advice: "", skipped: "empty_policy" });
   }
 
+  // --- BAKU Phase 3: Salvage & Repair endpoints ---
+  if (mode === "baku_salvage_dead_jobs") {
+    const limit = parseInt(norm(data.limit), 10) || 50;
+    const rows = sheets.dead.getDataRange().getValues();
+    const deadJobs = [];
+    // Start from oldest (row 1 is header)
+    for (let i = 1; i < rows.length && deadJobs.length < limit; i++) {
+        const row = rows[i];
+        if (!row[1]) continue;
+        const payloadStr = norm(row[11]);
+        const payloadObj = parseJsonSafe(payloadStr);
+        deadJobs.push({
+            row_index: i + 1,
+            ts: norm(row[0]),
+            job_id: norm(row[1]),
+            trace_id: norm(row[2]),
+            executor: norm(row[3]),
+            target: norm(row[4]),
+            prompt: norm(row[5]),
+            retry_count: norm(row[6]),
+            error_type: norm(row[7]),
+            error_data: norm(row[8]),
+            failed_worker: norm(row[9]),
+            reason: norm(row[10]),
+            payload: payloadObj
+        });
+    }
+    return jsonOut({ status: "ok", count: deadJobs.length, jobs: deadJobs });
+  }
+
+  if (mode === "baku_archive_dead_jobs") {
+    const jobIds = Array.isArray(data.job_ids) ? data.job_ids : [norm(data.job_ids)];
+    if (!jobIds || jobIds.length === 0 || !jobIds[0]) return jsonOut({ status: "error", error: "job_ids_required" });
+    const rows = sheets.dead.getDataRange().getValues();
+    let deletedCount = 0;
+    // Iterate backwards when deleting rows
+    for (let i = rows.length - 1; i >= 1; i--) {
+        const jId = norm(rows[i][1]);
+        if (jobIds.includes(jId)) {
+            sheets.dead.deleteRow(i + 1);
+            deletedCount++;
+        }
+    }
+    addAudit(norm(data.trace_id), "BAKU_ARCHIVE_DEAD", "", "", "ok", `archived=${deletedCount}`);
+    return jsonOut({ status: "ok", archived: deletedCount });
+  }
+
+  if (mode === "baku_enqueue_arc") {
+    const prompt = norm(data.prompt);
+    if (!prompt) return jsonOut({ status: "error", error: "prompt_required" });
+    const jobId = norm(data.job_id) || ("BAKU_" + Utilities.getUuid().slice(0, 8));
+    const enq = enqueueArcJob({
+      jobId: jobId,
+      qid: jobId,
+      target: resolveOperationalTarget(norm(data.target) || defaultTarget, { fallback: defaultTarget }),
+      prompt: prompt,
+      script: norm(data.script),
+      mode: norm(data.arc_mode) || "request_arc",
+      executor: "ARC",
+      user: norm(data.user) || "baku_repair",
+      workerId: "",
+      traceId: norm(data.trace_id),
+      retryCount: 0
+    });
+    addAudit(enq.traceId, "BAKU_ENQUEUE_ARC", enq.jobId, "", "pending", enq.payload.target);
+    return jsonOut({ status: "ok", job_id: enq.jobId, trace_id: enq.traceId });
+  }
+
   return jsonOut({ status: "ok" });
 }

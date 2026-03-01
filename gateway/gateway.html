@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    :root {
+      --bg-main: #f2f2f7;
+      --bg-card: #ffffff;
+      --text-main: #1c1c1e;
+      --text-secondary: #8e8e93;
+      --accent-blue: #007aff;
+      --accent-green: #34c759;
+      --accent-purple: #af52de;
+      --border: #d1d1d6;
+      --radius: 14px;
+    }
+    :root[data-theme="dark"] {
+      --bg-main: #000000;
+      --bg-card: #1c1c1e;
+      --text-main: #f2f2f7;
+      --text-secondary: #8e8e93;
+      --accent-blue: #0a84ff;
+      --accent-green: #30d158;
+      --accent-purple: #bf5af2;
+      --border: #3a3a3c;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg-main);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui;
+      color: var(--text-main);
+    }
+
+    h2 {
+      margin: 0;
+      padding: 14px 18px;
+      font-size: 20px;
+      font-weight: 700;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    #theme-toggle {
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .page { display: none; padding: 15px; }
+    .page.active { display: block; }
+
+    .ios-card {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .bubble-user {
+      background: var(--accent-blue);
+      color: white;
+      padding: 10px 14px;
+      border-radius: 18px;
+      max-width: 75%;
+      margin-left: auto;
+      display: inline-block;
+      white-space: pre-wrap;
+    }
+
+    .bubble-ai {
+      background: #e5e5ea;
+      color: black;
+      padding: 10px 14px;
+      border-radius: 18px;
+      max-width: 75%;
+      margin-right: auto;
+      display: inline-block;
+      white-space: pre-wrap;
+    }
+
+    :root[data-theme="dark"] .bubble-ai {
+      background: #2c2c2e;
+      color: #f2f2f7;
+    }
+
+    @keyframes typingDots {
+      0% { opacity: 0.2; }
+      20% { opacity: 1; }
+      100% { opacity: 0.2; }
+    }
+    .typing-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-left: 4px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      animation: typingDots 1.4s infinite;
+    }
+
+    #bottom-tabs {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-around;
+      padding: 6px 0;
+      z-index: 20;
+    }
+
+    .tab-btn {
+      flex: 1;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-secondary);
+      padding: 6px 0;
+      border: none;
+      background: transparent;
+    }
+    .tab-btn.active {
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>
+  🤖 METRON Gateway v10
+  <button id="theme-toggle" onclick="toggleTheme()">☀️</button>
+</h2>
+
+<!-- ===========================
+     MainChat（内部＋外部AI統合）
+=========================== -->
+<div id="page-chat" class="page active">
+
+  <!-- 外部AI選択 -->
+  <div class="ios-card">
+    <label style="font-size:14px; font-weight:600;">外部AI</label>
+    <select id="external-ai"
+            style="width:100%; margin-top:8px; padding:10px; border-radius:var(--radius);
+                   border:1px solid var(--border); font-size:14px;">
+      <option value="auto">自動選択（推奨）</option>
+      <option value="all_slots">全スロット（有効）</option>
+    </select>
+  </div>
+
+  <!-- Chat Log -->
+  <div class="ios-card" style="padding:0;">
+      <div id="chat-log"
+         style="padding:16px; height:420px; overflow-y:auto;
+                display:flex; flex-direction:column; gap:10px;">
+      読み込み中...
+    </div>
+
+    <div id="ai-typing" style="display:none; padding:10px 16px; color:var(--text-secondary); font-size:13px;">
+      外部AIが応答を生成中
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+
+    <div id="external-loading" style="display:none; padding:10px 16px; color:var(--text-secondary); font-size:13px;">
+      外部AIへ送信中…
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="ios-card" style="padding:14px;">
+    <textarea id="chat-input"
+              placeholder="メッセージを入力..."
+              style="width:100%; height:80px; padding:12px;
+                     border-radius:var(--radius); border:1px solid var(--border);
+                     font-size:14px;"></textarea>
+
+    <button onclick="sendChat()"
+            style="margin-top:10px; width:100%; padding:14px;
+                   border-radius:var(--radius); background:var(--accent-blue);
+                   color:white; border:none; font-weight:600; font-size:15px;">
+      MainChatへ送信
+    </button>
+
+    <button onclick="sendToExternalAI()"
+            style="margin-top:10px; width:100%; padding:14px;
+                   border-radius:var(--radius); background:var(--accent-green);
+                   color:white; border:none; font-weight:600; font-size:15px;">
+      外部AIに相談
+    </button>
+    <div id="gateway-status"
+         style="display:none; margin-top:10px; padding:10px 12px; border-radius:12px; font-size:13px;">
+    </div>
+  </div>
+
+</div>
+
+<!-- ===========================
+     Logs
+=========================== -->
+<div id="page-logs" class="page">
+  <div class="ios-card">
+    <h3>システムログ</h3>
+    <div id="logs-area">読み込み中...</div>
+  </div>
+</div>
+
+<!-- ===========================
+     Evolution
+=========================== -->
+<div id="page-evolution" class="page">
+  <div class="ios-card">
+    <h3>進化エンジン</h3>
+    <div id="evolution-list">読み込み中...</div>
+  </div>
+</div>
+
+<!-- ===========================
+     Staging
+=========================== -->
+<div id="page-staging" class="page">
+  <div class="ios-card">
+    <h3>ステージング</h3>
+    <div id="staging-area">読み込み中...</div>
+  </div>
+</div>
+
+<!-- ===========================
+     Settings
+=========================== -->
+<div id="page-settings" class="page">
+  <div class="ios-card">
+    <h3>スロット管理</h3>
+    <div style="display:grid; gap:8px;">
+      <input id="slot-id" placeholder="slot_id 例: claude" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-display" placeholder="表示名 例: Claude" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-target" placeholder="target 例: claude" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-url" placeholder="URL 例: https://claude.ai/new" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <input id="slot-priority" type="number" placeholder="priority 例: 25" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <textarea id="slot-selectors" placeholder='selectors_json 例: {"input":"textarea","send":"button[type=submit]"}' style="height:72px; padding:10px; border-radius:12px; border:1px solid var(--border);"></textarea>
+      <label style="font-size:13px; color:var(--text-secondary);">
+        <input id="slot-enabled" type="checkbox" checked> 有効
+      </label>
+      <div style="display:flex; gap:8px;">
+        <button onclick="saveSlotFromForm()" style="flex:1; padding:10px; border-radius:12px; border:none; background:var(--accent-blue); color:#fff;">保存</button>
+        <button onclick="resetSlotForm()" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border); background:var(--bg-main); color:var(--text-main);">クリア</button>
+        <button onclick="loadSlotRegistryUi()" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border); background:var(--bg-main); color:var(--text-main);">再読込</button>
+      </div>
+    </div>
+    <div id="slot-table-area" style="margin-top:10px; font-size:12px; color:var(--text-secondary);">読み込み中...</div>
+  </div>
+
+  <div class="ios-card">
+    <h3>記憶検索</h3>
+    <div style="display:grid; gap:8px;">
+      <input id="memory-query" placeholder="検索語 例: timeout arc_done retry" style="padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <div style="display:flex; gap:8px;">
+        <input id="memory-target" placeholder="target (任意)" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+        <input id="memory-slot-id" placeholder="slot_id (任意)" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+      </div>
+      <div style="display:flex; gap:8px;">
+        <input id="memory-user" placeholder="user (任意)" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+        <input id="memory-limit" type="number" value="8" min="1" max="30" style="width:92px; padding:10px; border-radius:12px; border:1px solid var(--border);">
+        <button onclick="runMemorySearchUi()" style="padding:10px 16px; border-radius:12px; border:none; background:var(--accent-green); color:#fff;">検索</button>
+      </div>
+    </div>
+    <div id="memory-search-area" style="margin-top:10px; font-size:12px; color:var(--text-secondary);">クエリを入力して検索してください。</div>
+  </div>
+
+  <div class="ios-card">
+    <h3>スロット評価</h3>
+    <div style="display:flex; gap:8px;">
+      <input id="score-target" placeholder="target 例: chatgpt / all" style="flex:1; padding:10px; border-radius:12px; border:1px solid var(--border);">
+      <button onclick="loadSlotScoresUi()" style="padding:10px 16px; border-radius:12px; border:none; background:var(--accent-purple); color:#fff;">評価取得</button>
+    </div>
+    <div id="slot-score-area" style="margin-top:10px; font-size:12px; color:var(--text-secondary);">評価はまだありません。</div>
+  </div>
+</div>
+
+<!-- Bottom Tabs -->
+<div id="bottom-tabs">
+  <button class="tab-btn active" data-tab="chat" onclick="switchTab('chat')">チャット</button>
+  <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">ログ</button>
+  <button class="tab-btn" data-tab="evolution" onclick="switchTab('evolution')">進化</button>
+  <button class="tab-btn" data-tab="staging" onclick="switchTab('staging')">ステージ</button>
+  <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">設定</button>
+</div>
+
+<script>
+const chatUiState = {
+  lastFingerprint: "",
+  pending: []
+};
+const logsUiState = {
+  aiCopyText: "",
+  autoRecoverRunning: false,
+  autoRecoverLastAtMs: 0
+};
+const settingsUiState = {
+  slots: []
+};
+
+/* ============================================================
+   Theme
+============================================================ */
+function toggleTheme() {
+  const root = document.documentElement;
+  const current = root.getAttribute("data-theme");
+  root.setAttribute("data-theme", current === "dark" ? "light" : "dark");
+  localStorage.setItem("metron-theme", current === "dark" ? "light" : "dark");
+}
+
+function applyThemeFromStorage() {
+  const saved = localStorage.getItem("metron-theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+}
+
+/* ============================================================
+   Tab Switching
+============================================================ */
+function switchTab(name) {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+
+  document.getElementById("page-" + name).classList.add("active");
+
+  document.querySelectorAll(".tab-btn").forEach(b => {
+    if ((b.dataset.tab || "") === name) b.classList.add("active");
+  });
+  if (name === "settings") {
+    loadSlotRegistryUi();
+  }
+}
+
+/* ============================================================
+   Utility: AI 判定・アイコン・色付け
+============================================================ */
+function detectAIFromSource(source) {
+  const src = String(source || "").trim();
+  const slot = (settingsUiState.slots || []).find((s) => {
+    const sid = String(s.slot_id || "");
+    const target = String(s.target || "");
+    return (sid && src.toLowerCase().includes(sid.toLowerCase())) ||
+      (target && src.toLowerCase().includes(target.toLowerCase()));
+  });
+  if (slot) return String(slot.display_name || slot.slot_id || "AI");
+  if (!src) return "AI";
+  if (src.toUpperCase().includes("ARC")) return "ARC";
+  return src;
+}
+
+function getAIIcon(ai) {
+  return `🤖 ${escHtml(String(ai || "AI"))}`;
+}
+
+function applyAIColor(bubble, ai) {
+  const key = String(ai || "").toLowerCase();
+  if (key.includes("chatgpt")) {
+    bubble.style.background = "var(--accent-blue)";
+    bubble.style.color = "white";
+    return;
+  }
+  if (key.includes("gemini")) {
+    bubble.style.background = "var(--accent-green)";
+    bubble.style.color = "white";
+    return;
+  }
+  if (key.includes("copilot") || key.includes("claude")) {
+    bubble.style.background = "var(--accent-purple)";
+    bubble.style.color = "white";
+    return;
+  }
+}
+
+/* ============================================================
+   折りたたみ（長文のみ）
+============================================================ */
+function makeCollapsible(text) {
+  const limit = 180;
+
+  if (text.length <= limit) {
+    return `<div>${text}</div>`;
+  }
+
+  const short = text.slice(0, limit) + "…";
+  const id = "col_" + Math.random().toString(36).slice(2);
+
+  return `
+    <div id="${id}_short">${short}</div>
+    <div id="${id}_full" style="display:none;">${text}</div>
+    <button onclick="toggleCollapse('${id}')"
+            style="margin-top:6px; background:none; border:none; color:var(--accent-blue); font-size:13px;">
+      続きを読む
+    </button>
+  `;
+}
+
+function toggleCollapse(id) {
+  const short = document.getElementById(id + "_short");
+  const full = document.getElementById(id + "_full");
+
+  if (full.style.display === "none") {
+    full.style.display = "block";
+    short.style.display = "none";
+  } else {
+    full.style.display = "none";
+    short.style.display = "block";
+  }
+}
+
+/* ============================================================
+   Chat Auto Scroll
+============================================================ */
+function scrollChatToBottom() {
+  const log = document.getElementById("chat-log");
+  log.scrollTop = log.scrollHeight;
+}
+
+function showGatewayStatus(message, kind) {
+  const el = document.getElementById("gateway-status");
+  if (!el) return;
+  const palette = {
+    info: { bg: "#e8f2ff", text: "#0b3d91" },
+    ok: { bg: "#eaf8ef", text: "#1b5e20" },
+    warn: { bg: "#fff6e6", text: "#8a4b00" },
+    err: { bg: "#ffebee", text: "#8b1e1e" }
+  };
+  const color = palette[kind] || palette.info;
+  el.style.display = "block";
+  el.style.background = color.bg;
+  el.style.color = color.text;
+  el.textContent = message;
+}
+
+function queuePendingMessage(label, text) {
+  const id = "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+  chatUiState.pending.push({
+    id: id,
+    ts: new Date().toISOString(),
+    source: label,
+    message: text
+  });
+  chatUiState.lastFingerprint = "";
+  return id;
+}
+
+function resolvePendingMessage(id) {
+  chatUiState.pending = chatUiState.pending.filter(p => p.id !== id);
+  chatUiState.lastFingerprint = "";
+}
+
+function reconcilePendingByServerRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) return;
+  chatUiState.pending = chatUiState.pending.filter((p) => {
+    const matched = rows.some((r) => {
+      const source = String((r && r[1]) || "");
+      const msg = String((r && r[2]) || "");
+      if (!source.includes("USER")) return false;
+      return msg === p.message;
+    });
+    return !matched;
+  });
+}
+
+function normalizeChatRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => {
+    const ts = (r && r[0] != null) ? String(r[0]) : "";
+    const source = (r && r[1] != null) ? String(r[1]) : "";
+    const message = (r && r[2] != null) ? String(r[2]) : "";
+    return [ts, source, message];
+  }).filter((r) => r[1] || r[2]);
+}
+
+function buildFingerprint(rows) {
+  if (!rows.length) return "empty";
+  const last = rows[rows.length - 1];
+  return rows.length + "|" + last.join("|");
+}
+
+function formatChatTime(ts) {
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString("ja-JP", { hour12: false });
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildAIDebugCopyPayload(snap) {
+  const packet = (snap && snap.ai_packet) ? snap.ai_packet : {};
+  return {
+    version: packet.version || "gw-debug-ai-v1",
+    generated_at: packet.generated_at || "",
+    hypothesis: packet.hypothesis || "n/a",
+    metrics: packet.metrics || {},
+    anomalies: packet.anomalies || {},
+    candidates: packet.candidates || {},
+    next_actions: packet.next_actions || []
+  };
+}
+
+async function copyAIDebugPacket() {
+  const text = logsUiState.aiCopyText || "";
+  if (!text) {
+    alert("コピー対象がありません。ログを再読み込みしてください。");
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    alert("AI向けデバッグ要約をコピーしました。");
+  } catch (e) {
+    alert("コピーに失敗しました: " + e);
+  }
+}
+
+function recoverStaleLeasedJobs() {
+  runManualQueueRecovery("leased");
+}
+
+function recoverStalePendingJobs() {
+  runManualQueueRecovery("pending");
+}
+
+function runManualQueueRecovery(scope) {
+  showLoading();
+  const isLeased = scope === "leased";
+  const label = isLeased ? "滞留実行中ジョブ" : "滞留待機ジョブ";
+  showGatewayStatus(label + "を救済中...", "info");
+  const runner = isLeased ? "recoverStaleLeasedJobsFromUi" : "recoverStalePendingJobsFromUi";
+  const arg = isLeased ? 180 : 120;
+  const req = google.script.run.withSuccessHandler((res) => {
+    hideLoading();
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("救済失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    const recovered = Number((res && res.recovered) || 0);
+    const switched = Number((res && res.switched_target) || 0);
+    const routed = res && res.routed && typeof res.routed.routed !== "undefined"
+      ? Number(res.routed.routed)
+      : null;
+    if (recovered > 0) {
+      showSuccess(`救済完了: ${recovered}件`);
+      if (isLeased) {
+        const routedTxt = routed != null ? ` / 再振り分け=${routed}` : "";
+        showGatewayStatus(`滞留実行中ジョブ救済: ${recovered}件${routedTxt}`, "ok");
+      } else {
+        showGatewayStatus(`滞留待機ジョブ救済: ${recovered}件 / ターゲット切替=${switched}`, "ok");
+      }
+    } else {
+      showGatewayStatus("救済対象はありませんでした", "info");
+    }
+    loadLogs();
+    autoUpdateChat();
+  }).withFailureHandler((err) => {
+    hideLoading();
+    showGatewayStatus("救済失敗: " + err, "err");
+  });
+  if (runner === "recoverStaleLeasedJobsFromUi") {
+    req.recoverStaleLeasedJobsFromUi(arg);
+  } else {
+    req.recoverStalePendingJobsFromUi(arg);
+  }
+}
+
+function tryAutoRecoverQueues(snap) {
+  const anomalies = (snap && snap.ai_packet && snap.ai_packet.anomalies) ? snap.ai_packet.anomalies : {};
+  const stalePending = Number(anomalies.stale_pending_count || 0);
+  const staleLeased = Number(anomalies.stale_leased_count || 0);
+  if (stalePending <= 0 && staleLeased <= 0) return;
+  if (logsUiState.autoRecoverRunning) return;
+
+  const now = Date.now();
+  const cooldownMs = 90000;
+  if (now - logsUiState.autoRecoverLastAtMs < cooldownMs) return;
+
+  logsUiState.autoRecoverRunning = true;
+  logsUiState.autoRecoverLastAtMs = now;
+  showGatewayStatus(`自動救済を実行中... 待機=${stalePending}, 実行中=${staleLeased}`, "info");
+  google.script.run.withSuccessHandler((res) => {
+    logsUiState.autoRecoverRunning = false;
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") return;
+    const total = Number((res && res.recovered_total) || 0);
+    const leased = Number((res && res.leased && res.leased.recovered) || 0);
+    const pending = Number((res && res.pending && res.pending.recovered) || 0);
+    if (total > 0) {
+      showGatewayStatus(`自動救済完了: 合計${total}件（実行中=${leased}, 待機=${pending}）`, "ok");
+      setTimeout(loadLogs, 1200);
+    }
+  }).withFailureHandler((err) => {
+    logsUiState.autoRecoverRunning = false;
+    showGatewayStatus("自動救済失敗: " + err, "warn");
+  }).recoverGatewayQueuesFromUi({ leased_min_sec: 180, pending_min_sec: 120 });
+}
+
+function toJpHypothesis(h) {
+  const map = {
+    auth_mismatch_or_signature: "認証不一致または署名不整合",
+    arc_result_delivery_unstable: "結果返却経路が不安定",
+    job_lifecycle_stuck: "ジョブ状態遷移の停滞",
+    no_critical_anomaly_detected: "重大な異常は未検出",
+    snapshot_error: "診断スナップショット取得エラー"
+  };
+  const key = String(h || "");
+  return map[key] || (key || "不明");
+}
+
+function toJpStatusKey(s) {
+  const map = {
+    pending: "待機",
+    leased: "実行中",
+    done: "完了",
+    dead: "失効",
+    error: "エラー",
+    empty: "空"
+  };
+  const key = String(s || "").toLowerCase();
+  return map[key] || (key || "不明");
+}
+
+/* ============================================================
+   Load Chat（スロット統合版）
+============================================================ */
+function autoUpdateChat() {
+  google.script.run.withSuccessHandler((rows) => {
+    const normalized = normalizeChatRows(rows);
+    if (normalized.length === 0) return;
+    reconcilePendingByServerRows(normalized);
+
+    const fingerprint = buildFingerprint(normalized);
+    if (fingerprint === chatUiState.lastFingerprint && chatUiState.pending.length === 0) return;
+    chatUiState.lastFingerprint = fingerprint;
+
+    const log = document.getElementById("chat-log");
+    log.innerHTML = "";
+
+    const groupedReplies = {
+      map: {},
+      ts: ""
+    };
+
+    function parseBracketReply(message) {
+      const msg = String(message || "");
+      const m = msg.match(/^\[([^\]]{1,40})\]\s*([\s\S]*)$/);
+      if (!m) return null;
+      const label = String(m[1] || "").trim();
+      const body = String(m[2] || "").trim();
+      if (!label || !body) return null;
+      return { label: label, body: body };
+    }
+
+    function flushGroupedReplies() {
+      const labels = Object.keys(groupedReplies.map || {});
+      if (!labels.length) return;
+
+      const card = document.createElement("div");
+      card.style = `
+        background: var(--bg-card);
+        border-radius: var(--radius);
+        padding: 12px;
+        border: 2px solid;
+        border-image: linear-gradient(45deg, #007aff, #34c759, #af52de) 1;
+        margin-bottom: 12px;
+      `;
+
+      const stamp = formatChatTime(groupedReplies.ts || "");
+      card.innerHTML = `<div style="font-weight:600; margin-bottom:8px;">
+        🌈 複数スロット応答
+        ${stamp ? `<span style="margin-left:8px; font-size:12px; color:var(--text-secondary);">${stamp}</span>` : ""}
+      </div>`;
+
+      labels.sort().forEach((label) => {
+        const section = document.createElement("div");
+        section.style = "margin-bottom:10px;";
+        section.innerHTML = `
+          <div style="display:flex; align-items:center; gap:6px; font-weight:600;">
+            ${getAIIcon(label)}
+          </div>
+          ${makeCollapsible(groupedReplies.map[label])}
+        `;
+        card.appendChild(section);
+      });
+
+      log.appendChild(card);
+
+      groupedReplies.map = {};
+      groupedReplies.ts = "";
+    }
+
+    normalized.forEach(r => {
+      const source = r[1] || "";
+      const msg = r[2] || "";
+
+      const grouped = parseBracketReply(msg);
+      if (grouped) {
+        groupedReplies.map[grouped.label] = grouped.body;
+        groupedReplies.ts = groupedReplies.ts || r[0];
+        return;
+      }
+
+      flushGroupedReplies();
+
+      // 通常のメッセージ
+      const bubble = document.createElement("div");
+      const stamp = formatChatTime(r[0]);
+
+      if (source.includes("USER")) {
+        bubble.className = "bubble-user";
+        bubble.innerHTML = `
+          ${stamp ? `<div style="font-size:11px; opacity:0.85; margin-bottom:4px;">${stamp}</div>` : ""}
+          <div>${msg}</div>
+        `;
+      } else {
+        bubble.className = "bubble-ai";
+
+        const ai = detectAIFromSource(source);
+        const icon = getAIIcon(ai);
+
+        bubble.innerHTML = `
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            ${icon}
+            ${stamp ? `<span style="font-size:11px; color:var(--text-secondary);">${stamp}</span>` : ""}
+          </div>
+          ${makeCollapsible(msg)}
+        `;
+
+        applyAIColor(bubble, ai);
+      }
+
+      log.appendChild(bubble);
+    });
+
+    // サーバー反映待ちのローカル表示を末尾に表示
+    chatUiState.pending.forEach((p) => {
+      const bubble = document.createElement("div");
+      bubble.className = "bubble-user";
+      bubble.style.opacity = "0.75";
+      const stamp = formatChatTime(p.ts);
+      bubble.innerHTML = `
+        ${stamp ? `<div style="font-size:11px; opacity:0.85; margin-bottom:4px;">${stamp}</div>` : ""}
+        <div>${p.message}（送信中）</div>
+      `;
+      log.appendChild(bubble);
+    });
+
+    flushGroupedReplies();
+
+    scrollChatToBottom();
+  }).withFailureHandler((err) => {
+    console.warn("autoUpdateChat failed:", err);
+    showGatewayStatus("チャット更新エラー: " + err, "err");
+  }).fetchMainChat();
+}
+
+/* ============================================================
+   Send to MainChat
+============================================================ */
+function extractRoutedCount(res) {
+  if (!res || !res.routed || typeof res.routed.routed === "undefined") return null;
+  return Number(res.routed.routed);
+}
+
+function resolvePendingMessages(ids) {
+  (ids || []).forEach((id) => resolvePendingMessage(id));
+}
+
+function handleSendSuccess(res, opts) {
+  resolvePendingMessages(opts.pendingIds || []);
+  if (opts.hideGlobalLoading) hideLoading();
+  if (opts.hideExternalLoading) document.getElementById("external-loading").style.display = "none";
+  if (opts.clearInput) document.getElementById("chat-input").value = "";
+  autoUpdateChat();
+
+  const routed = extractRoutedCount(res);
+  if (routed != null) {
+    showSuccess(`${opts.successLabel}（振り分け=${routed}）`);
+    showGatewayStatus(`${opts.statusLabel}: 振り分け=${routed}`, "ok");
+    return;
+  }
+  showSuccess(opts.successLabel + "しました");
+  showGatewayStatus(`${opts.statusLabel}`, "ok");
+}
+
+function handleSendFailure(err, opts) {
+  resolvePendingMessages(opts.pendingIds || []);
+  if (opts.hideGlobalLoading) hideLoading();
+  if (opts.hideExternalLoading) document.getElementById("external-loading").style.display = "none";
+  showGatewayStatus(opts.failLabel + ": " + err, "err");
+}
+
+function sendChat() {
+  const text = document.getElementById("chat-input").value.trim();
+  if (!text) return;
+  const pendingId = queuePendingMessage("USER (GW)", text);
+  showGatewayStatus("MainChatへ送信中...", "info");
+  autoUpdateChat();
+
+  showLoading();
+  google.script.run.withSuccessHandler((res) => {
+    handleSendSuccess(res, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: true,
+      hideExternalLoading: false,
+      clearInput: true,
+      successLabel: "送信",
+      statusLabel: "送信完了"
+    });
+  }).withFailureHandler((err) => {
+    handleSendFailure(err, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: true,
+      hideExternalLoading: false,
+      failLabel: "送信失敗"
+    });
+  }).submitGatewayChat(text);
+}
+
+/* ============================================================
+   Send to External AI（スロット対応）
+============================================================ */
+function sendToExternalAI() {
+  const text = document.getElementById("chat-input").value.trim();
+  if (!text) return;
+
+  const selected = document.getElementById("external-ai").value;
+  showGatewayStatus("外部AIへ送信中: " + selected, "info");
+
+  document.getElementById("external-loading").style.display = "block";
+
+  if (selected === "all_slots") {
+    const slots = (settingsUiState.slots || []).filter((s) => s.enabled).slice(0, 6);
+    if (!slots.length) {
+      document.getElementById("external-loading").style.display = "none";
+      showGatewayStatus("有効スロットがありません", "warn");
+      return;
+    }
+    const messages = slots.map((s) => `#slot:${s.slot_id} ${text}`);
+    const pendingIds = messages.map((m) => queuePendingMessage("USER (GW)", m));
+    autoUpdateChat();
+    google.script.run.withSuccessHandler((res) => {
+      handleSendSuccess(res, {
+        pendingIds: pendingIds,
+        hideGlobalLoading: false,
+        hideExternalLoading: true,
+        clearInput: true,
+        successLabel: "全スロットへ送信",
+        statusLabel: "全スロットへ送信完了"
+      });
+    }).withFailureHandler((err) => {
+      handleSendFailure(err, {
+        pendingIds: pendingIds,
+        hideGlobalLoading: false,
+        hideExternalLoading: true,
+        failLabel: "全スロット送信失敗"
+      });
+    }).submitGatewayChatBatch(messages);
+    return;
+  }
+
+  const message = selected.startsWith("slot:")
+    ? `#slot:${selected.slice(5)} ${text}`
+    : text;
+  const pendingId = queuePendingMessage("USER (GW)", message);
+  autoUpdateChat();
+  google.script.run.withSuccessHandler((res) => {
+    handleSendSuccess(res, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: false,
+      hideExternalLoading: true,
+      clearInput: true,
+      successLabel: "送信",
+      statusLabel: "送信完了"
+    });
+  }).withFailureHandler((err) => {
+    handleSendFailure(err, {
+      pendingIds: [pendingId],
+      hideGlobalLoading: false,
+      hideExternalLoading: true,
+      failLabel: "外部AI送信失敗"
+    });
+  }).submitGatewayChat(message);
+}
+
+/* ============================================================
+   Logs
+============================================================ */
+function loadLogs() {
+  const esc = (v) => String(v == null ? "" : v)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  const compactCell = (v, max = 120) => {
+    const s = String(v == null ? "" : v);
+    if (s.length <= max) return s;
+    return s.slice(0, max) + `...(全${s.length}文字)`;
+  };
+  const rowText = (r, take = 6) =>
+    esc((r || []).slice(0, take).map((c) => compactCell(c)).join(" | "));
+
+  google.script.run.withSuccessHandler((snap) => {
+    const area = document.getElementById("logs-area");
+    if (!snap || snap.error) {
+      area.innerHTML = `<div style="color:#b00020;">デバッグ取得失敗: ${esc(snap && snap.error ? snap.error : "不明")}</div>`;
+      return;
+    }
+
+    const by = snap.jobs && snap.jobs.by_status ? snap.jobs.by_status : {};
+    const aiPacket = snap.ai_packet || {};
+    const aiCopyPayload = buildAIDebugCopyPayload(snap);
+    logsUiState.aiCopyText = JSON.stringify(aiCopyPayload, null, 2);
+    const aiJsonRaw = JSON.stringify(aiPacket, null, 2);
+    const aiJson = esc(aiJsonRaw.length > 12000 ? aiJsonRaw.slice(0, 12000) + `\n...(表示省略: 全${aiJsonRaw.length}文字)` : aiJsonRaw);
+    const badges = Object.keys(by).map((k) =>
+      `<span style="display:inline-block; margin-right:8px; padding:3px 8px; border-radius:999px; background:#eef3ff; font-size:12px;">${esc(toJpStatusKey(k))}: ${esc(by[k])}</span>`
+    ).join("");
+    const hudTail = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_node_hud_tail || "") : "";
+    const evalSummary = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_eval_summary || "") : "";
+    const evalAt = aiPacket && aiPacket.candidates ? (aiPacket.candidates.latest_eval_at || "") : "";
+    const metrics = aiPacket && aiPacket.metrics ? aiPacket.metrics : {};
+    const doneRateTxt = metrics.done_rate_recent == null ? "n/a" : (Math.round(Number(metrics.done_rate_recent) * 1000) / 10) + "%";
+    const timeoutRateTxt = metrics.timeout_rate_recent == null ? "n/a" : (Math.round(Number(metrics.timeout_rate_recent) * 1000) / 10) + "%";
+    const compactSavedTxt = Number(metrics.compact_saved_rows_recent || 0);
+
+    const block = (title, rows, take) => `
+      <div style="margin-top:12px; padding:10px; border:1px solid var(--border); border-radius:10px;">
+        <div style="font-weight:600; margin-bottom:6px;">${title}</div>
+        <div style="font-family:monospace; font-size:12px; white-space:pre-wrap;">
+          ${(rows && rows.length ? rows.slice(-10).map((r) => rowText(r, take)).join("<br>") : "（データなし）")}
+        </div>
+      </div>
+    `;
+
+    area.innerHTML = `
+      <div style="padding:4px 0 8px;">
+        <div style="font-weight:700;">統合デバッグ</div>
+        <div style="font-size:12px; color:var(--text-secondary);">ジョブ=${esc(snap.jobs.total)} / 監査=${esc(snap.audit.total)} / エラー=${esc(snap.errors.total)} / 結果=${esc(snap.results.total)} / チャット=${esc(snap.main_chat.total)}</div>
+      </div>
+      <div style="margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+          <div style="font-weight:600;">AIデバッグ要約</div>
+          <div style="display:flex; gap:6px;">
+            <button onclick="recoverStalePendingJobs()" style="padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:#e8f5e9; color:#1b5e20; font-size:12px; cursor:pointer;">滞留待機ジョブ救済</button>
+            <button onclick="recoverStaleLeasedJobs()" style="padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:#fff4e5; color:#8a4b00; font-size:12px; cursor:pointer;">滞留実行中ジョブ救済</button>
+            <button onclick="copyAIDebugPacket()" style="padding:6px 10px; border-radius:10px; border:1px solid var(--border); background:var(--bg-main); color:var(--text-main); font-size:12px; cursor:pointer;">AI向けコピー</button>
+          </div>
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          推定原因=${esc(toJpHypothesis(aiPacket.hypothesis))}
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          ARC最終HUD=${esc(hudTail || "（未取得）")}
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          ALLAI最終評価=${esc(evalSummary || "（未取得）")}
+          ${evalAt ? `<span style="margin-left:8px;">@ ${esc(evalAt)}</span>` : ""}
+        </div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+          運用KPI: DONE率=${esc(doneRateTxt)} / Timeout率=${esc(timeoutRateTxt)} / compact削減=${esc(compactSavedTxt)}行
+        </div>
+        <pre style="margin:0; max-height:260px; overflow:auto; font-size:12px; white-space:pre;">${aiJson}</pre>
+      </div>
+      <div style="margin-bottom:8px;">${badges || "状態なし"}</div>
+      ${block("ARC_AUDIT（最新）", snap.audit.recent, 7)}
+      ${block("ARC_JOBS（最新）", snap.jobs.recent, 7)}
+      ${block("ARC_ERRORS（最新）", snap.errors.recent, 4)}
+      ${block("ARC_RESULTS（最新）", snap.results.recent, 6)}
+      ${block("ARC_NODES（最新）", snap.nodes.recent, 12)}
+      ${block("MAIN_CHAT（最新）", snap.main_chat.recent, 6)}
+    `;
+    tryAutoRecoverQueues(snap);
+  }).withFailureHandler((err) => {
+    const area = document.getElementById("logs-area");
+    area.innerHTML = `<div style="color:#b00020;">デバッグ取得失敗: ${esc(err || "不明なエラー")}</div>`;
+  }).fetchDebugSnapshot();
+}
+
+/* ============================================================
+   Evolution
+============================================================ */
+const Evolution = {
+  reload() {
+    google.script.run.withSuccessHandler((rows) => {
+      const area = document.getElementById("evolution-list");
+      area.innerHTML = rows.map(r => `<div>${r.join(" | ")}</div>`).join("");
+    }).fetchEvolution();
+  },
+
+  loadList() {
+    google.script.run.withSuccessHandler((rows) => {
+      const area = document.getElementById("evolution-list");
+      area.innerHTML = rows.map(r => `<div>${r.join(" | ")}</div>`).join("");
+    }).fetchEvolutionList();
+  }
+};
+
+/* ============================================================
+   Staging
+============================================================ */
+function loadStaging() {
+  google.script.run.withSuccessHandler((rows) => {
+    const area = document.getElementById("staging-area");
+    let html = "";
+
+    rows.forEach(p => {
+      html += `
+      <div style="padding:12px; border-bottom:1px solid var(--border);">
+        <div style="font-weight:600;">${p.filename}</div>
+        <div style="font-size:13px; color:#8e8e93;">${p.timestamp}</div>
+        <div style="margin-top:6px; font-size:13px;">${p.description}</div>
+
+        <pre style="background:#f2f2f7; padding:10px; border-radius:var(--radius);
+                    font-family:monospace; white-space:pre-wrap; max-height:150px; overflow-y:auto;">
+${p.code}
+        </pre>
+
+        <button onclick="approveStaged(${p.id})"
+                style="margin-top:10px; width:100%; padding:10px; border-radius:var(--radius);
+                       background:var(--accent-green); color:white; border:none;">
+          PatchSlotsへ反映
+        </button>
+      </div>`;
+    });
+
+    area.innerHTML = html;
+  }).fetchStaging();
+}
+
+function escHtml(v) {
+  return String(v == null ? "" : v)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function normalizeSlotList(slots) {
+  if (!Array.isArray(slots)) return [];
+  return slots.map((s) => ({
+    slot_id: String((s && s.slot_id) || ""),
+    display_name: String((s && s.display_name) || ""),
+    target: String((s && s.target) || ""),
+    url: String((s && s.url) || ""),
+    enabled: !!(s && s.enabled),
+    priority: Number((s && s.priority) || 100),
+    selectors_json: String((s && s.selectors_json) || "")
+  }));
+}
+
+function refreshExternalAiOptions() {
+  const sel = document.getElementById("external-ai");
+  if (!sel) return;
+  const current = sel.value || "auto";
+  const enabledSlots = (settingsUiState.slots || []).filter((s) => s.enabled);
+  const base = [
+    `<option value="auto">自動選択（推奨）</option>`,
+    `<option value="all_slots">全スロット（有効）</option>`
+  ];
+  const slotOptions = enabledSlots.map((s) => {
+    const label = `${s.display_name || s.slot_id} [${s.slot_id}]`;
+    return `<option value="slot:${escHtml(s.slot_id)}">${escHtml(label)}</option>`;
+  });
+  sel.innerHTML = base.concat(slotOptions).join("");
+  const stillExists = Array.from(sel.options).some((o) => o.value === current);
+  sel.value = stillExists ? current : "auto";
+}
+
+function renderSlotTableUi() {
+  const area = document.getElementById("slot-table-area");
+  const slots = settingsUiState.slots || [];
+  if (!slots.length) {
+    area.innerHTML = "スロットが未登録です。";
+    return;
+  }
+  const rows = slots.map((s) => {
+    return `
+      <tr>
+        <td>${escHtml(s.slot_id)}</td>
+        <td>${escHtml(s.display_name)}</td>
+        <td>${escHtml(s.target)}</td>
+        <td>${s.enabled ? "ON" : "OFF"}</td>
+        <td>${escHtml(s.priority)}</td>
+        <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(s.url)}</td>
+        <td>
+          <button onclick="editSlotFromTable('${escHtml(s.slot_id)}')" style="padding:4px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg-main);">編集</button>
+          <button onclick="deleteSlotFromTable('${escHtml(s.slot_id)}')" style="padding:4px 8px; border-radius:8px; border:1px solid #e0a6a6; background:#fff1f1; color:#8b1e1e;">削除</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  area.innerHTML = `
+    <div style="margin-bottom:8px; color:var(--text-secondary);">件数: ${slots.length}</div>
+    <div style="overflow:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">slot_id</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">表示名</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">target</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">有効</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">優先</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">URL</th>
+            <th style="text-align:left; border-bottom:1px solid var(--border); padding:6px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadSlotRegistryUi() {
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("スロット読込失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    settingsUiState.slots = normalizeSlotList((res && res.slots) || []);
+    renderSlotTableUi();
+    refreshExternalAiOptions();
+  }).withFailureHandler((err) => {
+    showGatewayStatus("スロット読込失敗: " + err, "err");
+  }).fetchGatewaySlotsForUi();
+}
+
+function resetSlotForm() {
+  document.getElementById("slot-id").value = "";
+  document.getElementById("slot-display").value = "";
+  document.getElementById("slot-target").value = "";
+  document.getElementById("slot-url").value = "";
+  document.getElementById("slot-priority").value = "";
+  document.getElementById("slot-selectors").value = "";
+  document.getElementById("slot-enabled").checked = true;
+}
+
+function editSlotFromTable(slotId) {
+  const hit = (settingsUiState.slots || []).find((s) => s.slot_id === slotId);
+  if (!hit) return;
+  document.getElementById("slot-id").value = hit.slot_id;
+  document.getElementById("slot-display").value = hit.display_name;
+  document.getElementById("slot-target").value = hit.target;
+  document.getElementById("slot-url").value = hit.url;
+  document.getElementById("slot-priority").value = String(hit.priority || 100);
+  document.getElementById("slot-selectors").value = hit.selectors_json || "";
+  document.getElementById("slot-enabled").checked = !!hit.enabled;
+}
+
+function saveSlotFromForm() {
+  const slot = {
+    slot_id: document.getElementById("slot-id").value.trim(),
+    display_name: document.getElementById("slot-display").value.trim(),
+    target: document.getElementById("slot-target").value.trim(),
+    url: document.getElementById("slot-url").value.trim(),
+    priority: Number(document.getElementById("slot-priority").value || 100),
+    selectors_json: document.getElementById("slot-selectors").value.trim(),
+    enabled: document.getElementById("slot-enabled").checked
+  };
+  if (!slot.slot_id) {
+    showGatewayStatus("slot_id は必須です", "warn");
+    return;
+  }
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("スロット保存失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    showGatewayStatus("スロット保存完了: " + slot.slot_id, "ok");
+    loadSlotRegistryUi();
+  }).withFailureHandler((err) => {
+    showGatewayStatus("スロット保存失敗: " + err, "err");
+  }).upsertGatewaySlotForUi(slot);
+}
+
+function deleteSlotFromTable(slotId) {
+  if (!slotId) return;
+  const ok = confirm("スロットを無効化しますか？\nOK=無効化 / キャンセル=中止");
+  if (!ok) return;
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      showGatewayStatus("スロット削除失敗: " + String((res && res.error) || status), "err");
+      return;
+    }
+    showGatewayStatus("スロット更新完了: " + slotId, "ok");
+    loadSlotRegistryUi();
+  }).withFailureHandler((err) => {
+    showGatewayStatus("スロット削除失敗: " + err, "err");
+  }).deleteGatewaySlotForUi(slotId, false);
+}
+
+function runMemorySearchUi() {
+  const query = document.getElementById("memory-query").value.trim();
+  const area = document.getElementById("memory-search-area");
+  if (!query) {
+    area.innerHTML = "検索語を入力してください。";
+    return;
+  }
+  area.innerHTML = "検索中...";
+  const opt = {
+    target: document.getElementById("memory-target").value.trim(),
+    slot_id: document.getElementById("memory-slot-id").value.trim(),
+    user: document.getElementById("memory-user").value.trim(),
+    limit: Number(document.getElementById("memory-limit").value || 8)
+  };
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      area.innerHTML = `<span style="color:#b00020;">検索失敗: ${escHtml(String((res && res.error) || status))}</span>`;
+      return;
+    }
+    const items = Array.isArray(res.items) ? res.items : [];
+    if (!items.length) {
+      area.innerHTML = "該当する記憶はありません。";
+      return;
+    }
+    const html = items.map((it) => {
+      const key = escHtml(it.key || "");
+      const source = escHtml(it.source || "");
+      const score = escHtml(it.score || "");
+      const val = escHtml(typeof it.value === "string" ? it.value : JSON.stringify(it.value || {}));
+      return `
+        <div style="padding:8px; border:1px solid var(--border); border-radius:10px; margin-bottom:8px;">
+          <div style="font-weight:600;">${key}</div>
+          <div style="font-size:11px; color:var(--text-secondary);">source=${source} / score=${score}</div>
+          <div style="margin-top:6px; white-space:pre-wrap;">${val}</div>
+        </div>
+      `;
+    }).join("");
+    area.innerHTML = `<div style="margin-bottom:8px; color:var(--text-secondary);">ヒット: ${items.length}</div>${html}`;
+  }).withFailureHandler((err) => {
+    area.innerHTML = `<span style="color:#b00020;">検索失敗: ${escHtml(err)}</span>`;
+  }).searchGatewayMemoryForUi(query, opt);
+}
+
+function loadSlotScoresUi() {
+  const target = document.getElementById("score-target").value.trim() || "all";
+  const area = document.getElementById("slot-score-area");
+  area.innerHTML = "取得中...";
+  google.script.run.withSuccessHandler((res) => {
+    const status = String((res && res.status) || "ok");
+    if (status !== "ok") {
+      area.innerHTML = `<span style="color:#b00020;">取得失敗: ${escHtml(String((res && res.error) || status))}</span>`;
+      return;
+    }
+    const picked = escHtml(res.picked || "");
+    const reason = escHtml(res.reason || "");
+    const scores = res.scores && typeof res.scores === "object" ? res.scores : {};
+    const lines = Object.keys(scores).sort().map((k) => {
+      return `<div>${escHtml(k)}: ${escHtml(JSON.stringify(scores[k]))}</div>`;
+    }).join("");
+    area.innerHTML = `
+      <div style="font-weight:600;">推奨: ${picked || "-"}</div>
+      <div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">理由: ${reason || "-"}</div>
+      <div style="font-family:monospace; font-size:12px; white-space:pre-wrap;">${lines || "スコアなし"}</div>
+    `;
+  }).withFailureHandler((err) => {
+    area.innerHTML = `<span style="color:#b00020;">取得失敗: ${escHtml(err)}</span>`;
+  }).fetchGatewaySlotScoresForUi(target);
+}
+
+function approveStaged(id) {
+  showLoading();
+  google.script.run.withSuccessHandler(() => {
+    hideLoading();
+    showSuccess("反映しました");
+    loadStaging();
+    Evolution.reload();
+    Evolution.loadList();
+  }).approveStagedProposal(id);
+}
+
+/* ============================================================
+   Loading & Success UI
+============================================================ */
+function showLoading() {
+  let el = document.getElementById("global-loading");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "global-loading";
+    el.style = `
+      position:fixed; inset:0; background:rgba(255,255,255,0.6);
+      display:flex; align-items:center; justify-content:center; z-index:99999;
+    `;
+    el.innerHTML = `<div class="loader"></div>`;
+    document.body.appendChild(el);
+  }
+  el.style.display = "flex";
+}
+
+function hideLoading() {
+  const el = document.getElementById("global-loading");
+  if (el) el.style.display = "none";
+}
+
+function showSuccess(msg) {
+  const el = document.createElement("div");
+  el.style = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    background:var(--accent-green); color:white; padding:10px 20px;
+    border-radius:var(--radius); font-weight:600; z-index:99999;
+  `;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1500);
+}
+
+/* ============================================================
+   Auto Sync
+============================================================ */
+window.addEventListener("load", () => {
+  applyThemeFromStorage();
+
+  autoUpdateChat();
+  loadLogs();
+  Evolution.reload();
+  Evolution.loadList();
+  loadStaging();
+  loadSlotRegistryUi();
+
+  setInterval(autoUpdateChat, 3000);
+  setInterval(loadLogs, 5000);
+  setInterval(Evolution.reload, 15000);
+  setInterval(Evolution.loadList, 20000);
+  setInterval(loadStaging, 30000);
+});
+</script>
+</html>
