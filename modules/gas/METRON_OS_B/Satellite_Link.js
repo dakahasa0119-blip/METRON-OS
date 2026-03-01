@@ -19,7 +19,7 @@ function deployToSatellite(targetSsId, appName) {
   const props = PropertiesService.getScriptProperties();
   const apiKey = props.getProperty('API_KEY_COMMANDER') || props.getProperty('AI_API_KEY');
   const dynamicModels = AIEngineCore.getRankedModels(apiKey);
-  
+
   // 遺伝子継承：母艦のモデルランク情報を同梱
   const geneticHeader = `/* 【母艦継承データ】利用可能なモデルリスト */\nconst SYSTEM_MODELS = ${JSON.stringify(dynamicModels)};\n\n`;
 
@@ -27,10 +27,10 @@ function deployToSatellite(targetSsId, appName) {
     const deliveryDoc = DocumentApp.create(`【配備パッケージ】${appName}`);
     deliveryDoc.getBody().setText(geneticHeader + staged.code);
     const deliveryDocUrl = deliveryDoc.getUrl();
-    
+
     announce(`サテライト配備用パッケージの生成に成功。`, "INFO");
     saveToMainChat("システム", `【射出準備完了】サテライト「${appName}」の配備用ドキュメントを作成しました。反映をお願いします。\nURL: ${deliveryDocUrl}`);
-    
+
     return { status: "success", docUrl: deliveryDocUrl };
   } catch (e) {
     announce(`射出プロセス中にエラーが発生しました: ${e.message}`, "ERROR");
@@ -48,7 +48,7 @@ function generateWebGeminiHandoff() {
   try {
     // 1. 直近の記憶を取得（UI_Manager.gs の関数を利用）
     const logs = fetchRecentLogsForMainDeck();
-    
+
     // 2. 文脈を圧縮（監査役による緊急要約）
     const summaryPrompt = "これまでの対話の要点、現在の未完了タスク、およびユーザーの意図をWeb版Geminiに正確に引き継ぐために、日本語で1つのプロンプトとしてまとめなさい。";
     const contextSummary = AIEngineCore.generate(summaryPrompt, 'Auditor');
@@ -81,7 +81,7 @@ ${contextSummary}
 function runAbsoluteSync() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Code_Registry") || ss.insertSheet("Code_Registry");
-  
+
   sheet.clear();
   sheet.appendRow(["ModuleName", "Code", "SyncedAt"]);
 
@@ -91,7 +91,7 @@ function runAbsoluteSync() {
 
     const doc = DocumentApp.openById(docFiles.next().getId());
     const content = doc.getBody().getText();
-    
+
     // ドキュメントの区切り線を元にファイルを分割抽出
     const sections = content.split("----------------------------------------");
     let fileCount = 0;
@@ -119,9 +119,35 @@ function runAbsoluteSync() {
 function setupFullAutomation() {
   const handler = 'runAbsoluteSync';
   const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(t => { if(t.getHandlerFunction() === handler) ScriptApp.deleteTrigger(t); });
-  
+  triggers.forEach(t => { if (t.getHandlerFunction() === handler) ScriptApp.deleteTrigger(t); });
+
   ScriptApp.newTrigger(handler).timeBased().everyHours(1).create();
-  runAbsoluteSync(); 
+  runAbsoluteSync();
   return "🚀 自動同期デーモンが起動しました。物理バックアップを継続します。";
+}
+
+/**
+ * [内部ユーティリティ]
+ * SystemLog および App_Logs から直近のログを取得して文字列に圧縮
+ */
+function fetchRecentLogsForMainDeck() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let txt = "";
+    const sysLogSheet = ss.getSheetByName("SystemLog");
+    if (sysLogSheet) {
+      const vals = sysLogSheet.getDataRange().getValues();
+      const recent = vals.slice(-20); // 直近20件
+      txt += "【SystemLog】\\n" + recent.map(r => r.join("\\t")).join("\\n") + "\\n\\n";
+    }
+    const appLogSheet = ss.getSheetByName("App_Logs");
+    if (appLogSheet) {
+      const vals = appLogSheet.getDataRange().getValues();
+      const recent = vals.slice(-20);
+      txt += "【App_Logs】\\n" + recent.map(r => r.join("\\t")).join("\\n");
+    }
+    return txt || "記録なし";
+  } catch (e) {
+    return "ログ取得不能: " + e.message;
+  }
 }

@@ -102,15 +102,15 @@ function runAutonomousCycle() {
 
   try {
     // ★ どこまで進んだか必ず見える
-    const promoted  = EV_promoteProposalsToStaged_();  
+    const promoted = EV_promoteProposalsToStaged_();
     console.log("promoted:", promoted);
     EV_log_("INFO", "'promoted: " + promoted);
 
-    const applied   = EV_applyStagedPatches_();        
+    const applied = EV_applyStagedPatches_();
     console.log("applied:", applied);
     EV_log_("INFO", "'applied: " + applied);
 
-    const finalized = EV_processInjectionSlot_();      
+    const finalized = EV_processInjectionSlot_();
     console.log("finalized:", finalized);
     EV_log_("INFO", "'finalized: " + finalized);
 
@@ -382,16 +382,28 @@ function EV_applyStagedPatches_() {
 
 /**
  * 実際に「母艦のコード」を書き換える処理
- * - 今は「シート名 = ファイル名」としてシートにコードを置く簡易版
- * - Apps Script ファイル本体を書き換える構成なら、ここを差し替える
+ * - Phase 4: ARC（PROXY-HAND）へ実体化を委譲する
  */
 function EV_applyPatchToMotherShip_(filename, newCode) {
-  // スプレッドシートは一切触らない
   const purified = extractPureCode(newCode);
+  const motherShipId = SpreadsheetApp.getActive().getId();
 
-  const ok = rewritePhysicalFile(filename, purified);
-  if (!ok) {
-    throw new Error("rewritePhysicalFile failed for " + filename);
+  const arcPrompt = `
+スプレッドシート [ ${motherShipId} ] にバインドされた Apps Script プロジェクトのファイル「${filename}」を以下のコードで上書きせよ：
+\`\`\`javascript
+${purified}
+\`\`\`
+`;
+
+  try {
+    if (typeof METRON_GATEWAY_BRIDGE !== 'undefined') {
+      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_arc");
+      EV_log_("INFO", `[${filename}] のパッチ適用ジョブをARCに委譲しました。`);
+    } else {
+      throw new Error("METRON_GATEWAY_BRIDGE is missing.");
+    }
+  } catch (e) {
+    throw new Error("ARC委譲 failed for " + filename + ": " + e.message);
   }
 }
 

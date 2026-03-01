@@ -16,45 +16,44 @@ function generateApp(appName, templateLevel, mode) {
   const ssId = ss.getId();
 
   // 2. テンプレートを読み込む（TemplateLibrary から）
-  const TEMPLATE_CORE         = getTemplate("TEMPLATE_CORE");
-  const TEMPLATE_DATA         = getTemplate("TEMPLATE_DATA");
-  const TEMPLATE_CSS          = getTemplate("TEMPLATE_CSS");
-  const TEMPLATE_INTEGRATION  = getTemplate("TEMPLATE_INTEGRATION");
-  const TEMPLATE_STANDALONE   = getTemplate("TEMPLATE_STANDALONE");
+  const TEMPLATE_CORE = getTemplate("TEMPLATE_CORE");
+  const TEMPLATE_DATA = getTemplate("TEMPLATE_DATA");
+  const TEMPLATE_CSS = getTemplate("TEMPLATE_CSS");
+  const TEMPLATE_INTEGRATION = getTemplate("TEMPLATE_INTEGRATION");
+  const TEMPLATE_STANDALONE = getTemplate("TEMPLATE_STANDALONE");
 
   // ★ UI はテンプレートではなく「母艦の UI_Fields から自動生成」
   const GENERATED_UI = buildUI();
+  const configContent = buildConfig(appName, templateLevel, mode);
 
-  // 3. 排出APPにファイルを書き込む
-  writeTemplateFile(ss, "App_Config.gs", buildConfig(appName, templateLevel, mode));
-  writeTemplateFile(ss, "App_Core.gs", TEMPLATE_CORE);
-  writeTemplateFile(ss, "App_Data.gs", TEMPLATE_DATA);
-  writeTemplateFile(ss, "App_Integration.gs", TEMPLATE_INTEGRATION);
-  writeTemplateFile(ss, "App_Standalone.gs", TEMPLATE_STANDALONE);
-
-  // ★ 自動生成された UI を書き込む
-  writeTemplateFile(ss, "App_UI.html", GENERATED_UI);
-
-  writeTemplateFile(ss, "App_Styles.css", TEMPLATE_CSS);
-
-  // 4. Connected Mode の場合は母艦の App_Registry に登録
+  // 3. Connected Mode の場合は母艦の App_Registry に登録
   if (mode === "CONNECTED") {
     registerAppToMotherShip(appName, ssId, templateLevel, mode);
   }
 
+  // 4. ARC (手足) に実体化を依頼するプロンプトを構築
+  const arcPrompt = `
+スプレッドシート [ ${ssId} ] にバインドされた Apps Script プロジェクトを作成し、以下のファイルをデプロイせよ：
+1. App_Config.gs
+2. App_Core.gs
+3. App_Data.gs
+4. App_Integration.gs
+5. App_Standalone.gs
+6. App_UI.html
+7. App_Styles.css
+`;
+
+  try {
+    if (typeof METRON_GATEWAY_BRIDGE !== 'undefined') {
+      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_arc");
+      announce(`AppForge: [${appName}] の生成ジョブをARCに委譲しました。SSID: ${ssId}`, "SYSTEM");
+    }
+  } catch (e) {
+    announce(`AppForge: ARC委譲に失敗: ${e.message}`, "ERROR");
+  }
+
   // 5. 生成したアプリのURLを返す
   return ss.getUrl();
-}
-
-
-
-/**
- * スクリプトファイルを排出APPに書き込む
- * （Apps Script の Drive API を使わず、プロジェクトAPIで直接作成）
- */
-function writeTemplateFile(ss, name, content) {
-  const project = AppsScriptProject.open(ss);
-  project.createFile(name, content);
 }
 
 
@@ -98,42 +97,20 @@ function buildConfig(appName, templateLevel, mode) {
   ].join("\n");
 }
 /**
- * UI_Fields から UI を自動生成する
+ * 母艦のロゴ（Base64）を取得する
  */
-function buildUI() {
-  const fields = getUIFields(); // 母艦から UI 定義を取得
+function getMotherShipLogo() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName("Settings");
+  if (!sheet) return "";
+  return sheet.getRange("B6").getValue() || ""; // Assuming logo might be in Settings B6
+}
 
-  let html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <base target="_top">
-  <link rel="stylesheet" href="App_Styles.css">
-</head>
-<body>
-  <div id="app-container">
-    <h2>${"<?= APP_NAME ?>"}</h2>
-    <form id="dynamic-form">
-  `;
-
-  fields.forEach(f => {
-    html += generateFieldHTML(f);
-  });
-
-  html += `
-      <button type="button" onclick="saveData()">保存</button>
-    </form>
-  </div>
-
-  <script src="App_Core.js"></script>
-  <script src="App_Data.js"></script>
-  <script src="App_Integration.js"></script>
-  <script src="App_Standalone.js"></script>
-</body>
-</html>
-  `;
-
-  return html;
+/**
+ * UI_Fields をローカル（GAS内）で取得するラッパー
+ */
+function getUIFieldsLocal() {
+  return getUIFields();
 }
 /**
  * フィールド定義から HTML を生成

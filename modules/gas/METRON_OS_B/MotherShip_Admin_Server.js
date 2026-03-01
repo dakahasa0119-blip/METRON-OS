@@ -35,35 +35,36 @@ function updateAppFromRegistry(rowIndex) {
   const row = sheet.getRange(rowIndex, 1, 1, 8).getValues()[0];
 
   const appName = row[1];       // B列: アプリ名
-  const appId   = row[2];       // C列: スプレッドシートID
-  const level   = row[3];       // D列: テンプレートレベル
-  const mode    = row[4];       // E列: モード
+  const appId = row[2];       // C列: スプレッドシートID
+  const level = row[3];       // D列: テンプレートレベル
+  const mode = row[4];       // E列: モード
 
-  const child = SpreadsheetApp.openById(appId);
+  // ARC (手足) に実体化を依頼するプロンプトを構築
+  const arcPrompt = `
+スプレッドシート [ ${appId} ] にバインドされた Apps Script プロジェクトを最新テンプレートで上書き更新せよ：
+1. App_Config.gs
+2. App_Core.gs
+3. App_Data.gs
+4. App_Integration.gs
+5. App_Standalone.gs
+6. App_UI.html
+7. App_Styles.css
+`;
 
-  // 最新テンプレートを取得
-  const TEMPLATE_CORE         = getTemplate("TEMPLATE_CORE");
-  const TEMPLATE_DATA         = getTemplate("TEMPLATE_DATA");
-  const TEMPLATE_UI           = getTemplate("TEMPLATE_UI");
-  const TEMPLATE_CSS          = getTemplate("TEMPLATE_CSS");
-  const TEMPLATE_INTEGRATION  = getTemplate("TEMPLATE_INTEGRATION");
-  const TEMPLATE_STANDALONE   = getTemplate("TEMPLATE_STANDALONE");
+  try {
+    if (typeof METRON_GATEWAY_BRIDGE !== 'undefined') {
+      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_arc");
+      announce(`MotherShip: [${appName}] のアップデートジョブをARCに委譲しました。SSID: ${appId}`, "SYSTEM");
 
-  // スクリプトプロジェクトにアクセス
-  const project = AppsScriptProject.open(child);
-
-  // ファイルを上書き
-  project.overwriteFile("App_Config.gs", buildConfig(appName, level, mode));
-  project.overwriteFile("App_Core.gs", TEMPLATE_CORE);
-  project.overwriteFile("App_Data.gs", TEMPLATE_DATA);
-  project.overwriteFile("App_Integration.gs", TEMPLATE_INTEGRATION);
-  project.overwriteFile("App_Standalone.gs", TEMPLATE_STANDALONE);
-  project.overwriteFile("App_UI.html", TEMPLATE_UI);
-  project.overwriteFile("App_Styles.css", TEMPLATE_CSS);
-
-  // App_Registry のバージョンとフラグを更新
-  sheet.getRange(rowIndex, 6).setValue(getTemplateVersion()); // F列: VERSION
-  sheet.getRange(rowIndex, 8).setValue("");                   // H列: UPDATE_FLAG クリア
+      // ジョブ投下成功時にフラグを暫定クリアする
+      sheet.getRange(rowIndex, 6).setValue(getTemplateVersion()); // F列: VERSION
+      sheet.getRange(rowIndex, 8).setValue("");                   // H列: UPDATE_FLAG クリア
+    } else {
+      announce(`MotherShip: ARCへの委譲に失敗。ブリッジが存在しません。`, "ERROR");
+    }
+  } catch (e) {
+    announce(`MotherShip: ARC委譲エラー: ${e.message}`, "ERROR");
+  }
 }
 function updateAllApps() {
   const ss = SpreadsheetApp.getActive();

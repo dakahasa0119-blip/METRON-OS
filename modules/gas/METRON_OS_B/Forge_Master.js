@@ -12,16 +12,16 @@ function processIncomingSignal(slotRowIndex) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const slotSheet = ss.getSheetByName("Injection_Slot");
   const row = slotSheet.getRange(slotRowIndex, 1, 1, 5).getValues()[0];
-  
+
   const filename = row[2];
   const rawCode = row[3];
-  
+
   // 1. 【自律洗浄】
   const purifiedCode = extractPureCode(rawCode);
-  
+
   // 2. 【自律検証】構文チェックを実行
   const validation = _runSandboxValidation(purifiedCode);
-  
+
   if (!validation.success) {
     slotSheet.getRange(slotRowIndex, 5).setValue("QUARANTINED: " + validation.error);
     slotSheet.getRange(slotRowIndex, 1, 1, 5).setBackground("#f4cccc");
@@ -32,19 +32,19 @@ function processIncomingSignal(slotRowIndex) {
   // 3. AIによる要約（ログ用）
   const briefPrompt = `以下のコードの機能を解析し、報告用に1行で要約せよ。内容のみを出力すること。\n${purifiedCode.substring(0, 2000)}`;
   const briefSummary = typeof AIEngineCore !== 'undefined' ? AIEngineCore.generate(briefPrompt, 'Auditor') : "自動解析完了";
-  
+
   // 4. 【自律受肉】検証成功につき、即座に物理層へ書き込み
   const deploySuccess = deployPhysicalCode(filename, purifiedCode);
-  
+
   if (deploySuccess) {
     // 5. 鍛冶場への正式記録（ACTIVEとして登録）
     const stageResult = stageGeneratedCode(filename, purifiedCode, briefSummary);
     markAsActive(stageResult.docUrl); // 状態を即時 ACTIVE に
-    
+
     EV33_recordTimeline("EVOLVED", filename, briefSummary, "Forge", stageResult.docUrl);
     slotSheet.getRange(slotRowIndex, 5).setValue("EVOLVED: " + briefSummary);
     slotSheet.getRange(slotRowIndex, 1, 1, 5).setBackground("#b7e1cd");
-    
+
     return { status: "success", summary: briefSummary, docUrl: stageResult.docUrl };
   } else {
     // 物理統合に失敗した場合は Staging 止まりにする
@@ -71,7 +71,7 @@ function extractPureCode(text) {
  */
 function _runSandboxValidation(code) {
   try {
-    new Function(code); 
+    new Function(code);
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -86,7 +86,7 @@ function stageGeneratedCode(appName, codeContent, description) {
   let forgeSheet = ss.getSheetByName("Forge_Staging") || ss.insertSheet("Forge_Staging");
   const now = new Date();
   const dateStr = Utilities.formatDate(now, "JST", "yyyy/MM/dd HH:mm");
-  
+
   let docUrl = "URL生成失敗";
   try {
     const doc = DocumentApp.create(`【進化記録】${dateStr}_${appName}`);
@@ -216,10 +216,14 @@ function forceProcessInjection() {
  * [自律進化：物理統合] (維持)
  */
 function deployPhysicalCode(filename, code) {
-  if (typeof rewritePhysicalFile === 'function') {
-    rewritePhysicalFile(filename, extractPureCode(code));
-    if (typeof announce === 'function') announce(`[物理層] 自律受肉完了: ${filename}`, "SYSTEM");
-    return true;
+  try {
+    if (typeof EV_applyPatchToMotherShip_ === 'function') {
+      EV_applyPatchToMotherShip_(filename, extractPureCode(code));
+      if (typeof announce === 'function') announce(`[物理層] 自律受肉委譲完了: ${filename}`, "SYSTEM");
+      return true;
+    }
+  } catch (e) {
+    if (typeof announce === 'function') announce(`[物理層] 受肉委譲失敗: ${e.message}`, "ERROR");
   }
   return false;
 }

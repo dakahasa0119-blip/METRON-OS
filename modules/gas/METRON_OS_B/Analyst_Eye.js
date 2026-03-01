@@ -34,7 +34,7 @@ function analyzeMotherShipDependencies(context, logs, chatLog) {
       affected.add("Gateway");
       reasons.push(`Gateway 通信に物理的障害またはモデル不整合を検知 (${commErrors.length}件)。`);
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // --- 2. Forge_Staging の滞留解析 ---
   try {
@@ -44,7 +44,7 @@ function analyzeMotherShipDependencies(context, logs, chatLog) {
       affected.add("UI_Manager");
       reasons.push(`Forge_Staging に PENDING が ${pending.length} 件滞留。承認フロー停止の疑い。`);
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // --- 3. トリガー異常 ---
   try {
@@ -54,7 +54,7 @@ function analyzeMotherShipDependencies(context, logs, chatLog) {
       affected.add("System_Evolver");
       reasons.push(`SystemLog にトリガー関連エラーが検出されました。`);
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // --- 4. 司令官の意図（MainChat） ---
   try {
@@ -71,7 +71,7 @@ function analyzeMotherShipDependencies(context, logs, chatLog) {
       affected.add("System_Evolver");
       reasons.push("進化プロセスの高度化要求を検知。");
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // --- 5. 進化状態 ---
   try {
@@ -79,15 +79,15 @@ function analyzeMotherShipDependencies(context, logs, chatLog) {
       affected.add("System_Evolver");
       reasons.push("未処理の進化コードが存在します。");
     }
-  } catch (e) {}
+  } catch (e) { }
 
   return {
     affectedModules: Array.from(affected),
     reasonSummary: reasons.join("\n") || "特筆すべき依存関係は検出されませんでした。",
     riskLevel:
       affected.size >= 3 ? "HIGH" :
-      affected.size === 2 ? "MEDIUM" :
-      affected.size === 1 ? "LOW" : "NONE"
+        affected.size === 2 ? "MEDIUM" :
+          affected.size === 1 ? "LOW" : "NONE"
   };
 }
 
@@ -138,7 +138,7 @@ function smartAutoDigest() {
           isolateFileToFolder(file.getId(), FOLDER_MAP.INPUT);
           if (processAndSaveMemory(text)) file.setTrashed(true);
         }
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 }
@@ -153,7 +153,7 @@ function scanAndProcessFiles(folder) {
       if (text.includes(SYNC_PROT.PASS_PHRASE)) {
         if (processAndSaveMemory(text)) file.setTrashed(true);
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 }
 
@@ -161,7 +161,7 @@ function processAndSaveMemory(text) {
   const prompt = `以下の会話ログを解析し、JSON配列 [ [日時, 役割, 内容, ID], ... ] のみを出力せよ。余計なテキストは一切含めるな。\n\n${text}`;
   try {
     // AIEngineCore.generate(prompt) を呼び出し（Core_AI側の最新版に準拠）
-    const response = AIEngineCore.generate(prompt); 
+    const response = AIEngineCore.generate(prompt);
     const match = response.match(/\[\s*\[.*\]\s*\]/s);
     if (!match) return false;
     const memories = JSON.parse(match[0]);
@@ -188,8 +188,8 @@ function runProactiveAnalysis() {
   // context構築（未定義なら最小構成）
   const ctx = (typeof buildMotherShipContext === 'function') ? buildMotherShipContext() : { evolution: {}, latestProposals: [] };
   const chatSheet = ss.getSheetByName("MainChat");
-  const chatLog = chatSheet ? chatSheet.getRange(Math.max(1, chatSheet.getLastRow()-20), 1, 20, 4).getValues().map(r => ({text: r[2]})) : [];
-  
+  const chatLog = chatSheet ? chatSheet.getRange(Math.max(1, chatSheet.getLastRow() - 20), 1, 20, 4).getValues().map(r => ({ text: r[2] })) : [];
+
   const dep = analyzeMotherShipDependencies(ctx, logs, chatLog);
 
   const analysisPrompt = `あなたは yumeSystem 戦略参謀です。
@@ -211,7 +211,7 @@ function processProactiveProposal(proposalSummary, dep) {
   if (typeof announce === 'function') announce("自律的な修復パッチを設計中...", "ANALYST");
   const dateStr = Utilities.formatDate(new Date(), "JST", "MMdd_HHmm");
   const appName = "社会性修復_" + dateStr;
-  
+
   // エンジニアリングプロンプト
   const toolCode = AIEngineCore.generate(`以下の分析に基づき、通信エラーを解消する GAS コードを出力せよ。\n\n${proposalSummary}`);
 
@@ -245,11 +245,14 @@ function processProactiveProposal(proposalSummary, dep) {
 }
 
 function deployAutonomousPatch(filename, code) {
-  // Core_AI (Vessel 01) の物理書換関数があれば実行
-  if (typeof rewritePhysicalFile === 'function') {
-    announce(`自律デプロイ開始: ${filename}`, "SYSTEM");
-    rewritePhysicalFile(filename, code);
-    return true;
+  try {
+    if (typeof EV_applyPatchToMotherShip_ === 'function') {
+      announce(`自律デプロイ開始: ${filename}`, "SYSTEM");
+      EV_applyPatchToMotherShip_(filename, code);
+      return true;
+    }
+  } catch (e) {
+    announce(`自律デプロイ失敗: ${e.message}`, "ERROR");
   }
   return false;
 }
