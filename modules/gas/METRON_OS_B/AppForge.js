@@ -33,14 +33,44 @@ function generateApp(appName, templateLevel, mode) {
 
   // 4. ARC (手足) に実体化を依頼するプロンプトを構築
   const arcPrompt = `
-スプレッドシート [ ${ssId} ] にバインドされた Apps Script プロジェクトを作成し、以下のファイルをデプロイせよ：
-1. App_Config.gs
-2. App_Core.gs
-3. App_Data.gs
-4. App_Integration.gs
-5. App_Standalone.gs
-6. App_UI.html
-7. App_Styles.css
+スプレッドシート [ ${ssId} ] にバインドされた Apps Script プロジェクトを作成し、以下のファイル名と内容でデプロイせよ。
+コードの内容は必ず下記で指定された内容をそのまま一言一句変えずに使用すること。
+
+【ファイル仕様】
+--- FILE: App_Config.gs ---
+\`\`\`javascript
+${configContent}
+\`\`\`
+
+--- FILE: App_Core.gs ---
+\`\`\`javascript
+${TEMPLATE_CORE}
+\`\`\`
+
+--- FILE: App_Data.gs ---
+\`\`\`javascript
+${TEMPLATE_DATA}
+\`\`\`
+
+--- FILE: App_Integration.gs ---
+\`\`\`javascript
+${TEMPLATE_INTEGRATION}
+\`\`\`
+
+--- FILE: App_Standalone.gs ---
+\`\`\`javascript
+${TEMPLATE_STANDALONE}
+\`\`\`
+
+--- FILE: App_UI.html ---
+\`\`\`html
+${GENERATED_UI}
+\`\`\`
+
+--- FILE: App_Styles.css ---
+\`\`\`css
+${TEMPLATE_CSS}
+\`\`\`
 `;
 
   try {

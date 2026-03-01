@@ -39,16 +39,55 @@ function updateAppFromRegistry(rowIndex) {
   const level = row[3];       // D列: テンプレートレベル
   const mode = row[4];       // E列: モード
 
+  // 最新テンプレートを取得
+  const TEMPLATE_CORE = getTemplate("TEMPLATE_CORE");
+  const TEMPLATE_DATA = getTemplate("TEMPLATE_DATA");
+  const TEMPLATE_UI = getTemplate("TEMPLATE_UI");
+  const TEMPLATE_CSS = getTemplate("TEMPLATE_CSS");
+  const TEMPLATE_INTEGRATION = getTemplate("TEMPLATE_INTEGRATION");
+  const TEMPLATE_STANDALONE = getTemplate("TEMPLATE_STANDALONE");
+  const configContent = buildConfig(appName, level, mode); // AppForgeから流用
+
   // ARC (手足) に実体化を依頼するプロンプトを構築
   const arcPrompt = `
-スプレッドシート [ ${appId} ] にバインドされた Apps Script プロジェクトを最新テンプレートで上書き更新せよ：
-1. App_Config.gs
-2. App_Core.gs
-3. App_Data.gs
-4. App_Integration.gs
-5. App_Standalone.gs
-6. App_UI.html
-7. App_Styles.css
+スプレッドシート [ ${appId} ] にバインドされた Apps Script プロジェクトを最新テンプレートで上書き更新せよ。
+コードの内容は必ず下記で指定された内容をそのまま一言一句変えずに使用すること。
+
+【ファイル仕様】
+--- FILE: App_Config.gs ---
+\`\`\`javascript
+${configContent}
+\`\`\`
+
+--- FILE: App_Core.gs ---
+\`\`\`javascript
+${TEMPLATE_CORE}
+\`\`\`
+
+--- FILE: App_Data.gs ---
+\`\`\`javascript
+${TEMPLATE_DATA}
+\`\`\`
+
+--- FILE: App_Integration.gs ---
+\`\`\`javascript
+${TEMPLATE_INTEGRATION}
+\`\`\`
+
+--- FILE: App_Standalone.gs ---
+\`\`\`javascript
+${TEMPLATE_STANDALONE}
+\`\`\`
+
+--- FILE: App_UI.html ---
+\`\`\`html
+${TEMPLATE_UI}
+\`\`\`
+
+--- FILE: App_Styles.css ---
+\`\`\`css
+${TEMPLATE_CSS}
+\`\`\`
 `;
 
   try {
