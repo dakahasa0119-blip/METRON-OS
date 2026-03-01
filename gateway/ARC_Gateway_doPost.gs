@@ -667,24 +667,18 @@ function doPost(e) {
 
   const claimMothershipMessage = (workerId) => {
     if (autonomyPaused) return null;
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(5000)) return null;
-    try {
-      const rows = sheets.mothership.getDataRange().getValues();
-      for (let i = 1; i < rows.length; i++) {
-        const status = lower(rows[i][4]);
-        if (status !== "pending") continue;
-        const msgId = norm(rows[i][1]);
-        const user = norm(rows[i][2]);
-        const content = norm(rows[i][3]);
-        sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
-        addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
-        return { message_id: msgId, user: user, content: content };
-      }
-      return null;
-    } finally {
-      lock.releaseLock();
+    const rows = sheets.mothership.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      const status = lower(rows[i][4]);
+      if (status !== "pending") continue;
+      const msgId = norm(rows[i][1]);
+      const user = norm(rows[i][2]);
+      const content = norm(rows[i][3]);
+      sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
+      addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
+      return { message_id: msgId, user: user, content: content };
     }
+    return null;
   };
 
   const completeMothershipMessage = (messageId, isError, workerId) => {
@@ -1162,64 +1156,52 @@ function doPost(e) {
 
   const claimNextInstruction = (workerId, consumer) => {
     if (autonomyPaused) return null;
-    const lock = LockService.getScriptLock();
-    const locked = lock.tryLock(5000);
-    if (!locked) {
-      addAudit("", "LEASE_LOCK_TIMEOUT", "", workerId, "busy", consumer);
-      return null;
-    }
+    
+    // In METRON architecture, heavy maintenance is moved out of the heartbeat loop
+    // to prevent LockService contention. We simply scan for pending jobs.
+    const rows = sheets.jobs.getDataRange().getValues();
+    // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
+    for (let i = rows.length - 1; i >= 1; i--) {
+      const row = rows[i];
+      const rowWorker = norm(row[2]);
+      const rowMode = norm(row[3]) || "request_arc";
+      const payloadRaw = norm(row[4]);
+      const status = lower(row[5]);
+      if (status !== "pending") continue;
 
-    try {
-      recoverStalePendingJobs();
-      requeueExpiredLeases();
-      routePendingChatCommands(false);
+      if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
 
-      const rows = sheets.jobs.getDataRange().getValues();
-      // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
-      for (let i = rows.length - 1; i >= 1; i--) {
-        const row = rows[i];
-        const rowWorker = norm(row[2]);
-        const rowMode = norm(row[3]) || "request_arc";
-        const payloadRaw = norm(row[4]);
-        const status = lower(row[5]);
-        if (status !== "pending") continue;
+      const payload = parseJsonSafe(payloadRaw);
+      const wanted = upper(payload.executor || "AUTO");
+      const mine = upper(consumer || "ARC");
+      if (wanted !== "AUTO" && wanted !== mine) continue;
 
-        if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
+      const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
+      if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
 
-        const payload = parseJsonSafe(payloadRaw);
-        const wanted = upper(payload.executor || "AUTO");
-        const mine = upper(consumer || "ARC");
-        if (wanted !== "AUTO" && wanted !== mine) continue;
+      sheets.jobs.getRange(i + 1, 6).setValue("leased");
+      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+      if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
 
-        const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
-        if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
-
-        sheets.jobs.getRange(i + 1, 6).setValue("leased");
-        sheets.jobs.getRange(i + 1, 7).setValue(new Date());
-        if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
-
-        addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
-        if (workerId) {
-          putArcShortMemory(
-            workerId,
-            norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
-            "last_instruction",
-            JSON.stringify({
-              job_id: norm(row[1]),
-              mode: rowMode,
-              target: norm(payload.target),
-              prompt: norm(payload.prompt).slice(0, 500)
-            }),
-            1800,
-            norm(payload.trace_id)
-          );
-        }
-        return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
+      addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
+      if (workerId) {
+        putArcShortMemory(
+          workerId,
+          norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
+          "last_instruction",
+          JSON.stringify({
+            job_id: norm(row[1]),
+            mode: rowMode,
+            target: norm(payload.target),
+            prompt: norm(payload.prompt).slice(0, 500)
+          }),
+          1800,
+          norm(payload.trace_id)
+        );
       }
-      return null;
-    } finally {
-      lock.releaseLock();
+      return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
     }
+    return null;
   };
 
   const findTraceByMissionId = (missionId) => {
@@ -1467,24 +1449,19 @@ function doPost(e) {
 
   if (mode === "route_chat") {
     if (autonomyPaused) return jsonOut({ status: "paused", routed: 0 });
-    const lock = LockService.getScriptLock();
-    const locked = lock.tryLock(5000);
-    if (!locked) return jsonOut({ status: "busy", routed: 0, error: "route_lock_timeout" });
-    try {
-      const routed = routePendingChatCommands(true);
-      if (routed.length > 0) {
-        return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
-      }
-      const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
-      if (recent.length > 0) {
-        addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
-        return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
-      }
-      addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
-      return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
-    } finally {
-      lock.releaseLock();
+    // In METRON architecture, we skip LockService for route_chat to avoid timeouts.
+    // It relies on idempotent row checks within routePendingChatCommands.
+    const routed = routePendingChatCommands(true);
+    if (routed.length > 0) {
+      return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
     }
+    const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
+    if (recent.length > 0) {
+      addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
+      return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
+    }
+    addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
+    return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
   }
 
   if (mode === "mothership_submit") {

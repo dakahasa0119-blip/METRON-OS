@@ -40,8 +40,6 @@ class ArcWorker(
     private val statusTrail = ArrayDeque<String>()
     private var statusSeq: Long = 0L
     private var lastFastHeartbeatAtMs: Long = 0L
-    private val fastHeartbeatMinIntervalMs: Long = 1200L
-    private var pendingFastHeartbeatJob: Job? = null
     private var lastCopilotDiagAtMs: Long = 0L
     private val copilotDiagCooldownMs: Long = 20_000L
     private var consultInFlight: Boolean = false
@@ -71,7 +69,6 @@ class ArcWorker(
     
     private var currentDoneCallback: (() -> Unit)? = null
     private var timeoutJob: Job? = null
-    private var taskHeartbeatJob: Job? = null
     private fun isDriveReferencePrompt(prompt: String): Boolean {
         val p = prompt.lowercase()
         val marks = listOf(
@@ -359,41 +356,16 @@ class ArcWorker(
         requestFastHeartbeat(status)
     }
 
-    @Synchronized
-    private fun reserveFastHeartbeatDelayMs(nowMs: Long): Long {
-        val delta = nowMs - lastFastHeartbeatAtMs
-        if (delta >= fastHeartbeatMinIntervalMs) {
-            lastFastHeartbeatAtMs = nowMs
-            return 0L
-        }
-        return (fastHeartbeatMinIntervalMs - delta).coerceAtLeast(0L)
-    }
-
     private fun requestFastHeartbeat(status: String) {
         if (isAborted) return
-        // 実行中コンテキストのみで即時反映。待機中は定期heartbeatに任せる。
         if (currentQid == null && currentMissionId.isNullOrBlank()) return
-        val nowMs = System.currentTimeMillis()
         val statusHint = when {
             status.startsWith("MISSION OK") || status.startsWith("PIPE_STEP_DONE") -> "success"
             status.startsWith("ERROR") || status.startsWith("BOT_BLOCKED") -> "error"
             else -> "running"
         }
-        val delayMs = reserveFastHeartbeatDelayMs(nowMs)
-        if (delayMs <= 0L) {
-            pendingFastHeartbeatJob?.cancel()
-            pendingFastHeartbeatJob = null
-            announceStatus(statusHint)
-            return
-        }
-        pendingFastHeartbeatJob?.cancel()
-        pendingFastHeartbeatJob = workerScope.launch {
-            delay(delayMs)
-            if (isAborted) return@launch
-            if (currentQid == null && currentMissionId.isNullOrBlank()) return@launch
-            synchronized(this@ArcWorker) {
-                lastFastHeartbeatAtMs = System.currentTimeMillis()
-            }
+        
+        if (statusHint == "success" || statusHint == "error") {
             announceStatus(statusHint)
         }
     }
@@ -422,10 +394,6 @@ class ArcWorker(
     private fun cancelActiveJobs() {
         timeoutJob?.cancel()
         timeoutJob = null
-        taskHeartbeatJob?.cancel()
-        taskHeartbeatJob = null
-        pendingFastHeartbeatJob?.cancel()
-        pendingFastHeartbeatJob = null
     }
 
     fun abortCurrent() { 
@@ -488,7 +456,6 @@ class ArcWorker(
                 }
                 currentDoneCallback = done
                 announceStatus("running")
-                startTaskHeartbeat(task.qid)
                 executeAiTask(task)
             }
             is ArcTask.VisionRequest -> {
@@ -706,16 +673,7 @@ class ArcWorker(
         return withTimeoutOrNull(1500) { d.await() } ?: ProgressSignal()
     }
 
-    private fun startTaskHeartbeat(qid: String) {
-        taskHeartbeatJob?.cancel()
-        taskHeartbeatJob = workerScope.launch {
-            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(3_000L, 8_000L)
-            while (isActive && !isAborted && currentQid == qid) {
-                announceStatus("running")
-                delay(intervalMs)
-            }
-        }
-    }
+
 
     private fun sendResultWithRetry(
         qid: String,

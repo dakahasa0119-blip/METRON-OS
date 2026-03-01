@@ -194,20 +194,20 @@ class MainActivity : AppCompatActivity() {
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = mainScope.launch {
-            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(5000L, 120000L)
+            // METRON runs in a relaxed, stateless mode. Polling is slowed down.
+            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(60_000L, 300_000L)
             while (isActive) {
                 val now = System.currentTimeMillis()
-                if (now - lastSlotSyncAtMs >= 120_000L) {
+                if (now - lastSlotSyncAtMs >= 300_000L) {
                     syncSlotsFromGateway()
                 }
                 val busy = arcWorker.currentQid != null || allAiPipeline.isRunning()
                 if (!busy) {
-                    arcWorker.announceStatus("heartbeat") { instruction ->
+                    arcWorker.announceStatus("idle") { instruction ->
                         handleGatewayInstruction(instruction)
                     }
                 }
-                val nextDelay = if (busy) minOf(intervalMs, 10_000L) else intervalMs
-                delay(nextDelay)
+                delay(intervalMs)
             }
         }
     }

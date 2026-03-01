@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">ARC</string>
+    <string name="app_name">METRON</string>
     <string name="btn_gemini">ジェミニ</string>
     <string name="btn_chatgpt">チャットGPT</string>
     <string name="btn_copilot">Claude</string>

@@ -15,11 +15,7 @@ class GatewayClient(private val prefs: Prefs) {
     private val currentVersion = "13.6"
     private val maxInlineImageB64 = 180_000
     var telemetrySupplier: (() -> JSONObject)? = null
-    private val hbLock = Any()
-    @Volatile private var hbSending: Boolean = false
-    @Volatile private var hbPendingStatusJson: String? = null
-    @Volatile private var hbPendingPriority: Boolean = false
-    @Volatile private var hbPendingCallback: ((JSONObject) -> Unit)? = null
+
 
     /**
      * 🌐 [Settings用] 接続テスト (Handshake)
@@ -452,47 +448,8 @@ class GatewayClient(private val prefs: Prefs) {
 
     fun sendHeartbeat(statusJson: String, onInstruction: (JSONObject) -> Unit = {}) {
         if (prefs.gasUrl.isBlank()) return
-        val nextPriority = isPriorityHeartbeat(statusJson)
-        if (nextPriority) {
-            clientScope.launch {
-                postHeartbeat(statusJson, onInstruction)
-            }
-            return
-        }
-        var shouldStartDrain = false
-        synchronized(hbLock) {
-            if (hbPendingStatusJson != null && hbPendingPriority && !nextPriority) {
-                // 終端系(success/error)を待っている間は通常heartbeatで上書きしない
-            } else {
-                hbPendingStatusJson = statusJson
-                hbPendingCallback = onInstruction
-                hbPendingPriority = nextPriority
-            }
-            if (!hbSending) {
-                hbSending = true
-                shouldStartDrain = true
-            }
-        }
-        if (!shouldStartDrain) return
         clientScope.launch {
-            while (true) {
-                val nextPayload: String?
-                val nextCallback: ((JSONObject) -> Unit)?
-                synchronized(hbLock) {
-                    nextPayload = hbPendingStatusJson
-                    nextCallback = hbPendingCallback
-                    hbPendingStatusJson = null
-                    hbPendingCallback = null
-                    hbPendingPriority = false
-                }
-                if (nextPayload == null) {
-                    synchronized(hbLock) {
-                        hbSending = false
-                    }
-                    break
-                }
-                postHeartbeat(nextPayload, nextCallback ?: onInstruction)
-            }
+            postHeartbeat(statusJson, onInstruction)
         }
     }
 
@@ -547,14 +504,7 @@ class GatewayClient(private val prefs: Prefs) {
         } catch (_: Exception) {}
     }
 
-    private fun isPriorityHeartbeat(statusJson: String): Boolean {
-        return try {
-            val s = JSONObject(statusJson).optString("status", "").lowercase()
-            s == "success" || s == "error"
-        } catch (_: Exception) {
-            false
-        }
-    }
+
 
     private fun isGatewayAck(response: String): Boolean {
         val raw = response.trim()

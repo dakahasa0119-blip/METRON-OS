@@ -1,0 +1,422 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index 0a816a7..458aabe 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -8,7 +8,7 @@ android {
+     compileSdk 34
+ 
+     defaultConfig {
+-        applicationId "com.arc"
++        applicationId "com.arc.metron"
+         minSdk 24
+         targetSdk 34
+         versionCode 1
+diff --git a/app/src/main/java/com/arc/ArcWorker.kt b/app/src/main/java/com/arc/ArcWorker.kt
+index e3fb3b5..8f314a8 100644
+--- a/app/src/main/java/com/arc/ArcWorker.kt
++++ b/app/src/main/java/com/arc/ArcWorker.kt
+@@ -40,8 +40,6 @@ class ArcWorker(
+     private val statusTrail = ArrayDeque<String>()
+     private var statusSeq: Long = 0L
+     private var lastFastHeartbeatAtMs: Long = 0L
+-    private val fastHeartbeatMinIntervalMs: Long = 1200L
+-    private var pendingFastHeartbeatJob: Job? = null
+     private var lastCopilotDiagAtMs: Long = 0L
+     private val copilotDiagCooldownMs: Long = 20_000L
+     private var consultInFlight: Boolean = false
+@@ -71,7 +69,6 @@ class ArcWorker(
+     
+     private var currentDoneCallback: (() -> Unit)? = null
+     private var timeoutJob: Job? = null
+-    private var taskHeartbeatJob: Job? = null
+     private fun isDriveReferencePrompt(prompt: String): Boolean {
+         val p = prompt.lowercase()
+         val marks = listOf(
+@@ -359,41 +356,16 @@ class ArcWorker(
+         requestFastHeartbeat(status)
+     }
+ 
+-    @Synchronized
+-    private fun reserveFastHeartbeatDelayMs(nowMs: Long): Long {
+-        val delta = nowMs - lastFastHeartbeatAtMs
+-        if (delta >= fastHeartbeatMinIntervalMs) {
+-            lastFastHeartbeatAtMs = nowMs
+-            return 0L
+-        }
+-        return (fastHeartbeatMinIntervalMs - delta).coerceAtLeast(0L)
+-    }
+-
+     private fun requestFastHeartbeat(status: String) {
+         if (isAborted) return
+-        // 実行中コンテキストのみで即時反映。待機中は定期heartbeatに任せる。
+         if (currentQid == null && currentMissionId.isNullOrBlank()) return
+-        val nowMs = System.currentTimeMillis()
+         val statusHint = when {
+             status.startsWith("MISSION OK") || status.startsWith("PIPE_STEP_DONE") -> "success"
+             status.startsWith("ERROR") || status.startsWith("BOT_BLOCKED") -> "error"
+             else -> "running"
+         }
+-        val delayMs = reserveFastHeartbeatDelayMs(nowMs)
+-        if (delayMs <= 0L) {
+-            pendingFastHeartbeatJob?.cancel()
+-            pendingFastHeartbeatJob = null
+-            announceStatus(statusHint)
+-            return
+-        }
+-        pendingFastHeartbeatJob?.cancel()
+-        pendingFastHeartbeatJob = workerScope.launch {
+-            delay(delayMs)
+-            if (isAborted) return@launch
+-            if (currentQid == null && currentMissionId.isNullOrBlank()) return@launch
+-            synchronized(this@ArcWorker) {
+-                lastFastHeartbeatAtMs = System.currentTimeMillis()
+-            }
++        
++        if (statusHint == "success" || statusHint == "error") {
+             announceStatus(statusHint)
+         }
+     }
+@@ -422,10 +394,6 @@ class ArcWorker(
+     private fun cancelActiveJobs() {
+         timeoutJob?.cancel()
+         timeoutJob = null
+-        taskHeartbeatJob?.cancel()
+-        taskHeartbeatJob = null
+-        pendingFastHeartbeatJob?.cancel()
+-        pendingFastHeartbeatJob = null
+     }
+ 
+     fun abortCurrent() { 
+@@ -488,7 +456,6 @@ class ArcWorker(
+                 }
+                 currentDoneCallback = done
+                 announceStatus("running")
+-                startTaskHeartbeat(task.qid)
+                 executeAiTask(task)
+             }
+             is ArcTask.VisionRequest -> {
+@@ -706,16 +673,7 @@ class ArcWorker(
+         return withTimeoutOrNull(1500) { d.await() } ?: ProgressSignal()
+     }
+ 
+-    private fun startTaskHeartbeat(qid: String) {
+-        taskHeartbeatJob?.cancel()
+-        taskHeartbeatJob = workerScope.launch {
+-            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(3_000L, 8_000L)
+-            while (isActive && !isAborted && currentQid == qid) {
+-                announceStatus("running")
+-                delay(intervalMs)
+-            }
+-        }
+-    }
++
+ 
+     private fun sendResultWithRetry(
+         qid: String,
+diff --git a/app/src/main/java/com/arc/GatewayClient.kt b/app/src/main/java/com/arc/GatewayClient.kt
+index d559215..3d389c3 100644
+--- a/app/src/main/java/com/arc/GatewayClient.kt
++++ b/app/src/main/java/com/arc/GatewayClient.kt
+@@ -15,11 +15,7 @@ class GatewayClient(private val prefs: Prefs) {
+     private val currentVersion = "13.6"
+     private val maxInlineImageB64 = 180_000
+     var telemetrySupplier: (() -> JSONObject)? = null
+-    private val hbLock = Any()
+-    @Volatile private var hbSending: Boolean = false
+-    @Volatile private var hbPendingStatusJson: String? = null
+-    @Volatile private var hbPendingPriority: Boolean = false
+-    @Volatile private var hbPendingCallback: ((JSONObject) -> Unit)? = null
++
+ 
+     /**
+      * 🌐 [Settings用] 接続テスト (Handshake)
+@@ -452,47 +448,8 @@ class GatewayClient(private val prefs: Prefs) {
+ 
+     fun sendHeartbeat(statusJson: String, onInstruction: (JSONObject) -> Unit = {}) {
+         if (prefs.gasUrl.isBlank()) return
+-        val nextPriority = isPriorityHeartbeat(statusJson)
+-        if (nextPriority) {
+-            clientScope.launch {
+-                postHeartbeat(statusJson, onInstruction)
+-            }
+-            return
+-        }
+-        var shouldStartDrain = false
+-        synchronized(hbLock) {
+-            if (hbPendingStatusJson != null && hbPendingPriority && !nextPriority) {
+-                // 終端系(success/error)を待っている間は通常heartbeatで上書きしない
+-            } else {
+-                hbPendingStatusJson = statusJson
+-                hbPendingCallback = onInstruction
+-                hbPendingPriority = nextPriority
+-            }
+-            if (!hbSending) {
+-                hbSending = true
+-                shouldStartDrain = true
+-            }
+-        }
+-        if (!shouldStartDrain) return
+         clientScope.launch {
+-            while (true) {
+-                val nextPayload: String?
+-                val nextCallback: ((JSONObject) -> Unit)?
+-                synchronized(hbLock) {
+-                    nextPayload = hbPendingStatusJson
+-                    nextCallback = hbPendingCallback
+-                    hbPendingStatusJson = null
+-                    hbPendingCallback = null
+-                    hbPendingPriority = false
+-                }
+-                if (nextPayload == null) {
+-                    synchronized(hbLock) {
+-                        hbSending = false
+-                    }
+-                    break
+-                }
+-                postHeartbeat(nextPayload, nextCallback ?: onInstruction)
+-            }
++            postHeartbeat(statusJson, onInstruction)
+         }
+     }
+ 
+@@ -547,14 +504,7 @@ class GatewayClient(private val prefs: Prefs) {
+         } catch (_: Exception) {}
+     }
+ 
+-    private fun isPriorityHeartbeat(statusJson: String): Boolean {
+-        return try {
+-            val s = JSONObject(statusJson).optString("status", "").lowercase()
+-            s == "success" || s == "error"
+-        } catch (_: Exception) {
+-            false
+-        }
+-    }
++
+ 
+     private fun isGatewayAck(response: String): Boolean {
+         val raw = response.trim()
+diff --git a/app/src/main/java/com/arc/MainActivity.kt b/app/src/main/java/com/arc/MainActivity.kt
+index 38fd184..9295479 100644
+--- a/app/src/main/java/com/arc/MainActivity.kt
++++ b/app/src/main/java/com/arc/MainActivity.kt
+@@ -194,20 +194,20 @@ class MainActivity : AppCompatActivity() {
+     private fun startHeartbeatLoop() {
+         heartbeatJob?.cancel()
+         heartbeatJob = mainScope.launch {
+-            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(5000L, 120000L)
++            // METRON runs in a relaxed, stateless mode. Polling is slowed down.
++            val intervalMs = prefs.heartbeatIntervalMs.coerceIn(60_000L, 300_000L)
+             while (isActive) {
+                 val now = System.currentTimeMillis()
+-                if (now - lastSlotSyncAtMs >= 120_000L) {
++                if (now - lastSlotSyncAtMs >= 300_000L) {
+                     syncSlotsFromGateway()
+                 }
+                 val busy = arcWorker.currentQid != null || allAiPipeline.isRunning()
+                 if (!busy) {
+-                    arcWorker.announceStatus("heartbeat") { instruction ->
++                    arcWorker.announceStatus("idle") { instruction ->
+                         handleGatewayInstruction(instruction)
+                     }
+                 }
+-                val nextDelay = if (busy) minOf(intervalMs, 10_000L) else intervalMs
+-                delay(nextDelay)
++                delay(intervalMs)
+             }
+         }
+     }
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 23488ed..94f1992 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -1,5 +1,5 @@
+ <resources>
+-    <string name="app_name">ARC</string>
++    <string name="app_name">METRON</string>
+     <string name="btn_gemini">ジェミニ</string>
+     <string name="btn_chatgpt">チャットGPT</string>
+     <string name="btn_copilot">Claude</string>
+diff --git a/gateway/ARC_Gateway_doPost.gs b/gateway/ARC_Gateway_doPost.gs
+index 1ebf78c..115a79f 100644
+--- a/gateway/ARC_Gateway_doPost.gs
++++ b/gateway/ARC_Gateway_doPost.gs
+@@ -667,24 +667,18 @@ function doPost(e) {
+ 
+   const claimMothershipMessage = (workerId) => {
+     if (autonomyPaused) return null;
+-    const lock = LockService.getScriptLock();
+-    if (!lock.tryLock(5000)) return null;
+-    try {
+-      const rows = sheets.mothership.getDataRange().getValues();
+-      for (let i = 1; i < rows.length; i++) {
+-        const status = lower(rows[i][4]);
+-        if (status !== "pending") continue;
+-        const msgId = norm(rows[i][1]);
+-        const user = norm(rows[i][2]);
+-        const content = norm(rows[i][3]);
+-        sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
+-        addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
+-        return { message_id: msgId, user: user, content: content };
+-      }
+-      return null;
+-    } finally {
+-      lock.releaseLock();
++    const rows = sheets.mothership.getDataRange().getValues();
++    for (let i = 1; i < rows.length; i++) {
++      const status = lower(rows[i][4]);
++      if (status !== "pending") continue;
++      const msgId = norm(rows[i][1]);
++      const user = norm(rows[i][2]);
++      const content = norm(rows[i][3]);
++      sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
++      addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
++      return { message_id: msgId, user: user, content: content };
+     }
++    return null;
+   };
+ 
+   const completeMothershipMessage = (messageId, isError, workerId) => {
+@@ -1162,64 +1156,52 @@ function doPost(e) {
+ 
+   const claimNextInstruction = (workerId, consumer) => {
+     if (autonomyPaused) return null;
+-    const lock = LockService.getScriptLock();
+-    const locked = lock.tryLock(5000);
+-    if (!locked) {
+-      addAudit("", "LEASE_LOCK_TIMEOUT", "", workerId, "busy", consumer);
+-      return null;
+-    }
+-
+-    try {
+-      recoverStalePendingJobs();
+-      requeueExpiredLeases();
+-      routePendingChatCommands(false);
+-
+-      const rows = sheets.jobs.getDataRange().getValues();
+-      // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
+-      for (let i = rows.length - 1; i >= 1; i--) {
+-        const row = rows[i];
+-        const rowWorker = norm(row[2]);
+-        const rowMode = norm(row[3]) || "request_arc";
+-        const payloadRaw = norm(row[4]);
+-        const status = lower(row[5]);
+-        if (status !== "pending") continue;
+-
+-        if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
+-
+-        const payload = parseJsonSafe(payloadRaw);
+-        const wanted = upper(payload.executor || "AUTO");
+-        const mine = upper(consumer || "ARC");
+-        if (wanted !== "AUTO" && wanted !== mine) continue;
++    
++    // In METRON architecture, heavy maintenance is moved out of the heartbeat loop
++    // to prevent LockService contention. We simply scan for pending jobs.
++    const rows = sheets.jobs.getDataRange().getValues();
++    // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
++    for (let i = rows.length - 1; i >= 1; i--) {
++      const row = rows[i];
++      const rowWorker = norm(row[2]);
++      const rowMode = norm(row[3]) || "request_arc";
++      const payloadRaw = norm(row[4]);
++      const status = lower(row[5]);
++      if (status !== "pending") continue;
+ 
+-        const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
+-        if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
++      if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
+ 
+-        sheets.jobs.getRange(i + 1, 6).setValue("leased");
+-        sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+-        if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
++      const payload = parseJsonSafe(payloadRaw);
++      const wanted = upper(payload.executor || "AUTO");
++      const mine = upper(consumer || "ARC");
++      if (wanted !== "AUTO" && wanted !== mine) continue;
+ 
+-        addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
+-        if (workerId) {
+-          putArcShortMemory(
+-            workerId,
+-            norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
+-            "last_instruction",
+-            JSON.stringify({
+-              job_id: norm(row[1]),
+-              mode: rowMode,
+-              target: norm(payload.target),
+-              prompt: norm(payload.prompt).slice(0, 500)
+-            }),
+-            1800,
+-            norm(payload.trace_id)
+-          );
+-        }
+-        return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
++      const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
++      if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
++
++      sheets.jobs.getRange(i + 1, 6).setValue("leased");
++      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
++      if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
++
++      addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
++      if (workerId) {
++        putArcShortMemory(
++          workerId,
++          norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
++          "last_instruction",
++          JSON.stringify({
++            job_id: norm(row[1]),
++            mode: rowMode,
++            target: norm(payload.target),
++            prompt: norm(payload.prompt).slice(0, 500)
++          }),
++          1800,
++          norm(payload.trace_id)
++        );
+       }
+-      return null;
+-    } finally {
+-      lock.releaseLock();
++      return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
+     }
++    return null;
+   };
+ 
+   const findTraceByMissionId = (missionId) => {
+@@ -1467,24 +1449,19 @@ function doPost(e) {
+ 
+   if (mode === "route_chat") {
+     if (autonomyPaused) return jsonOut({ status: "paused", routed: 0 });
+-    const lock = LockService.getScriptLock();
+-    const locked = lock.tryLock(5000);
+-    if (!locked) return jsonOut({ status: "busy", routed: 0, error: "route_lock_timeout" });
+-    try {
+-      const routed = routePendingChatCommands(true);
+-      if (routed.length > 0) {
+-        return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
+-      }
+-      const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
+-      if (recent.length > 0) {
+-        addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
+-        return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
+-      }
+-      addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
+-      return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
+-    } finally {
+-      lock.releaseLock();
+-    }
++    // In METRON architecture, we skip LockService for route_chat to avoid timeouts.
++    // It relies on idempotent row checks within routePendingChatCommands.
++    const routed = routePendingChatCommands(true);
++    if (routed.length > 0) {
++      return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
++    }
++    const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
++    if (recent.length > 0) {
++      addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
++      return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
++    }
++    addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
++    return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
+   }
+ 
+   if (mode === "mothership_submit") {
