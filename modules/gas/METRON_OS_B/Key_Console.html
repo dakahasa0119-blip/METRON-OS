@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; background: #f9f9f9; }
+    .card { background: white; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h3 { margin-top: 0; color: #1a73e8; font-size: 16px; margin-bottom: 5px; }
+    .sub-title { font-size: 11px; color: #888; margin-bottom: 15px; }
+
+    .role-label { font-weight: bold; display: block; margin-bottom: 5px; font-size: 12px; color: #555; }
+    .key-link { float: right; font-weight: normal; color: #1a73e8; text-decoration: none; font-size: 11px; cursor: pointer; }
+    .key-link:hover { text-decoration: underline; }
+
+    input { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-family: monospace; font-size: 13px; }
+    input:focus { border-color: #1a73e8; outline: none; }
+
+    .divider { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
+
+    .builder-section { background-color: #f0fdf4; padding: 10px; border-radius: 6px; border: 1px solid #dcfce7; margin-bottom: 12px; }
+    .builder-label { color: #15803d; }
+    .builder-link { color: #15803d; }
+
+    .btn { background: #1a73e8; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; font-size: 14px; transition: 0.2s; }
+    .btn:hover { background: #1557b0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>🚀 Multi-Role API Console</h3>
+    <div class="sub-title">v31.0 IE | Dual-Brain Configuration</div>
+
+    <!-- Commander -->
+    <label class="role-label">
+      COMMANDER (Gemini: 統括)
+      <a href="https://aistudio.google.com/app/apikey" target="_blank" class="key-link">🔗 Geminiキー取得</a>
+    </label>
+    <input type="password" id="API_KEY_COMMANDER" placeholder="Gemini Key...">
+
+    <!-- Auditor -->
+    <label class="role-label">AUDITOR (Gemini: 監査)</label>
+    <input type="password" id="API_KEY_AUDITOR" placeholder="Gemini Key...">
+
+    <!-- System -->
+    <label class="role-label">SYSTEM (Gemini: 制御)</label>
+    <input type="password" id="API_KEY_SYSTEM" placeholder="Gemini Key...">
+
+    <div class="divider"></div>
+
+    <!-- Builder / Engineer (DeepSeek) -->
+    <div class="builder-section">
+      <label class="role-label builder-label">
+        🏗️ BUILDER (DeepSeek: 建築)
+        <a href="https://platform.deepseek.com/api_keys" target="_blank" class="key-link builder-link">🔗 DeepSeekキー取得</a>
+      </label>
+      <input type="password" id="DEEPSEEK_API_KEY" placeholder="DeepSeek API Key..." style="border-color: #bbf7d0;">
+      <div style="font-size: 10px; color: #15803d; margin-top: -8px;">
+        ※DeepSeekキーが無い場合は Gemini に自動フォールバック
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Default Gemini fallback -->
+    <label class="role-label">
+      DEFAULT (Gemini: 汎用フォールバック)
+    </label>
+    <input type="password" id="AI_API_KEY" placeholder="Gemini Key...">
+
+    <button class="btn" onclick="saveKeys()">全設定を保存・同期</button>
+  </div>
+
+  <script>
+    // 起動時に既存のキーを読み込む
+    window.onload = () => {
+      google.script.run.withSuccessHandler(keys => {
+        Object.keys(keys).forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = keys[id];
+        });
+      }).getAllApiKeys();
+    };
+
+    function saveKeys() {
+      const keys = {
+        API_KEY_COMMANDER: document.getElementById('API_KEY_COMMANDER').value,
+        API_KEY_AUDITOR: document.getElementById('API_KEY_AUDITOR').value,
+        API_KEY_SYSTEM: document.getElementById('API_KEY_SYSTEM').value,
+        DEEPSEEK_API_KEY: document.getElementById('DEEPSEEK_API_KEY').value,
+        AI_API_KEY: document.getElementById('AI_API_KEY').value
+      };
+
+      const btn = document.querySelector('.btn');
+      btn.innerText = "同期中...";
+      btn.disabled = true;
+
+      google.script.run.withSuccessHandler(msg => {
+        alert(msg);
+        google.script.host.close();
+      }).updateAllApiKeys(keys);
+    }
+  </script>
+</body>
+</html>

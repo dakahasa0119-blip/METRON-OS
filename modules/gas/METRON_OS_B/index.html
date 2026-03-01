@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><?= systemName ?> - METRON Console</title>
+
+  <style>
+    :root {
+      --bg-main: #f5f6f8;
+      --bg-panel: #ffffff;
+      --line-green: #06c755;
+      --line-blue: #7494c0;
+      --text-main: #333333;
+      --text-dim: #888888;
+      --border: #e6e6e6;
+      --bubble-ai: #ffffff;
+      --bubble-user: #95eb67;
+      --accent-red: #d73a49;
+      --tab-active: #202124;
+      --tab-inactive: #999999;
+      --timeline-line: #d0d7de;
+      --timeline-dot: #0969da;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-size: 16px; /* ← 統一 */
+    }
+
+    header {
+      background: #ffffff;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    header .title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    header .title-main {
+      font-weight: 600;
+      letter-spacing: 0.8px;
+      font-size: 17px;
+    }
+
+    header .title-sub {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    header .right-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-btn {
+      font-size: 11px;
+      cursor: pointer;
+      background: none;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 4px 8px;
+      color: #444;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* タブページ */
+    .tab-page {
+      flex: 1;
+      display: none;
+      overflow: hidden;
+    }
+    .tab-page.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* パネル共通 */
+    .panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      margin: 10px;
+      background: var(--bg-panel);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .panel-header {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .panel-header-sub {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-weight: normal;
+    }
+
+    .panel-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      gap: 8px;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* チャット領域 */
+    #chat-log {
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .bubble {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 16px;
+      line-height: 1.6;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+      white-space: pre-wrap;
+    }
+
+    .user-bubble {
+      align-self: flex-end;
+      background-color: var(--bubble-user);
+      border-top-right-radius: 3px;
+    }
+
+    .ai-bubble {
+      align-self: flex-start;
+      background-color: var(--bubble-ai);
+      border-top-left-radius: 3px;
+    }
+
+    .bubble-time {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      display: block;
+    }
+
+    .input-box {
+      background: #fff;
+      padding: 10px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    textarea {
+      flex: 1;
+      height: 50px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 10px 14px;
+      resize: none;
+      outline: none;
+      font-size: 16px;
+    }
+
+    .btn-primary {
+      background: var(--line-green);
+      color: #fff;
+      border: none;
+      border-radius: 18px;
+      padding: 0 20px;
+      height: 44px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn-secondary {
+      background: #fff;
+      color: var(--accent-red);
+      border-radius: 18px;
+      padding: 8px 14px;
+      border: 1px solid var(--accent-red);
+      font-size: 14px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .btn-secondary:disabled,
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    /* Chrono（改善案カード） */
+    .chrono-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .chrono-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      border-left: 4px solid var(--line-green);
+      transition: 0.2s;
+    }
+
+    .chrono-card.active-version {
+      border-left-color: #28a745;
+      background: #f0fff4;
+      border-width: 2px 2px 2px 8px;
+    }
+
+    .chrono-date {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .chrono-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .chrono-desc {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 10px;
+      line-height: 1.5;
+      background: rgba(0,0,0,0.02);
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #eee;
+    }
+
+    .chrono-btn-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .chrono-btn {
+      flex: 1;
+      min-width: 90px;
+      padding: 8px;
+      font-size: 14px;
+      background: #f0f7ff;
+      color: #007bff;
+      border: 1px solid #007bff;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .chrono-btn:hover:not(:disabled) {
+      background: #007bff;
+      color: #fff;
+    }
+
+    .chrono-btn:disabled {
+      background: #e0e0e0;
+      color: #999;
+      border-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    /* 進化タイムライン */
+    .evolution-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .evolution-top {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fafbfc;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 80px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .evolution-top-title {
+      font-size: 14px;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+
+    .evolution-timeline {
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fff;
+      overflow-y: auto;
+      min-height: 0;
+    }
+
+    .timeline-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text-dim);
+    }
+
+    .timeline-list {
+      position: relative;
+      margin-left: 14px;
+      padding-left: 10px;
+      border-left: 2px solid var(--timeline-line);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding-left: 6px;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -14px;
+      top: 4px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--timeline-dot);
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 1px var(--timeline-line);
+    }
+
+    .timeline-date {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 2px;
+    }
+
+    .timeline-label {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .timeline-note {
+      font-size: 13px;
+      color: #555;
+    }
+
+    /* モーダル */
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-content {
+      background: #fff;
+      width: 92%;
+      max-width: 800px;
+      max-height: 80vh;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow: hidden;
+      font-size: 15px;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 16px;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 4px;
+    }
+
+    .modal-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .modal-section {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 6px;
+      background: #fafbfc;
+      font-size: 15px;
+      white-space: pre-wrap;
+    }
+
+    .modal-summary {
+      font-size: 15px;
+      color: #444;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 6px;
+      background: #fdf7e3;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn-ghost {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    /* ローディング */
+    .loader {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #007bff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* トースト通知 */
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      color: #fff;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      transform: translateY(-10px);
+      z-index: 999999;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .toast-error {
+      background: #d9534f;
+    }
+
+    .toast-success {
+      background: #28a745;
+    }
+
+    /* モーダルフェードイン */
+    .fade-in {
+      animation: fadeIn 0.35s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.97); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+  </style>
+</head>
+
+<body class="sidebar-mode">
+
+<header>
+  <div class="title-block">
+    <span class="title-main"><?= systemName ?></span>
+    <span class="title-sub">METRON Console ver 30.5 EE</span>
+  </div>
+  <div class="right-actions">
+    <button class="header-btn" onclick="window.open('https://script.google.com/home', '_blank')">エディタ</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- チャット -->
+  <div id="tab-chat" class="tab-page active">
+    <div class="panel">
+      <div class="panel-header">
+        チャット
+        <span class="panel-header-sub">AIとの対話</span>
+      </div>
+      <div class="panel-body">
+        <div id="chat-log"></div>
+      </div>
+      <div class="input-box">
+        <textarea id="user-input" placeholder="司令を入力..."></textarea>
+        <button class="btn-primary" onclick="engageCommunication()">送信</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 改善案（Chrono） -->
+  <div id="tab-chrono" class="tab-page">
+    <div class="panel">
+      <div class="panel-header">
+        改善案（Chrono）
+        <span class="panel-header-sub">30日履歴 & パッチ管理</span>
+      </div>
+      <div class="panel-body">
+        <div id="chrono-list" class="chrono-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 進化センター -->
+  <div id="tab-evolution" class="tab-page">
+    <div class="panel">
+      <div class="panel-header">
+        進化センター
+        <span class="panel-header-sub">persona & 進化タイムライン</span>
+      </div>
+      <div class="panel-body">
+        <div class="evolution-layout">
+
+          <div class="evolution-top">
+            <div class="evolution-top-title">現在の persona 状態</div>
+            <div id="persona-display" style="font-size:14px; white-space:pre-wrap;"></div>
+            <div>
+              <button class="btn-secondary" onclick="triggerEvolution()">🧬 深層自己進化を実行</button>
+            </div>
+          </div>
+
+          <div class="evolution-timeline">
+            <div class="timeline-title">進化タイムライン（Evolution Timeline）</div>
+            <div id="evolution-timeline" class="timeline-list"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定 -->
+  <div id="tab-settings" class="tab-page">
+    <div class="panel">
+      <div class="panel-header">
+        設定
+        <span class="panel-header-sub">システム情報 & リンク</span>
+      </div>
+      <div class="panel-body">
+        <p style="font-size:14px; color:#666;">バージョン: 30.5 EE</p>
+        <button class="btn-secondary" onclick="window.open('https://script.google.com/home', '_blank')">GAS エディタを開く</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- 下部タブメニュー（スマホ用） -->
+<div id="bottom-tabs">
+  <button class="tab-btn active" onclick="switchTab('chat')">
+    <span class="tab-icon">💬</span>
+    チャット
+  </button>
+  <button class="tab-btn" onclick="switchTab('chrono')">
+    <span class="tab-icon">📋</span>
+    改善案
+  </button>
+  <button class="tab-btn" onclick="switchTab('evolution')">
+    <span class="tab-icon">🧬</span>
+    進化
+  </button>
+  <button class="tab-btn" onclick="switchTab('settings')">
+    <span class="tab-icon">⚙</span>
+    設定
+  </button>
+</div>
+
+<!-- 差分プレビューモーダル（サイドバー用） -->
+<div id="diff-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <span>差分プレビュー</span>
+      <button class="btn-ghost" onclick="closeDiff()">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="modal-section">
+        <strong>【現行コード】</strong>
+        <pre id="diff-current" style="margin-top:4px;"></pre>
+      </div>
+
+      <div class="modal-section">
+        <strong>【新パッチ】</strong>
+        <pre id="diff-patch" style="margin-top:4px;"></pre>
+      </div>
+
+      <div class="modal-summary" id="diff-summary"></div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="openDiffInMainDeck()">🖥 大画面で開く</button>
+      <button class="btn-ghost" onclick="closeDiff()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全画面ローディング -->
+<div id="global-loading" style="
+  display:none;
+  position:fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  background:rgba(255,255,255,0.6);
+  z-index:99999;
+  align-items:center;
+  justify-content:center;
+">
+  <div class="loader"></div>
+</div>
+
+<!-- トースト通知（成功 / エラー） -->
+<div id="toast-error" class="toast toast-error"></div>
+<div id="toast-success" class="toast toast-success"></div>
+
+<script>
+
+  /* ============================================================
+   Chrono ページング機能（完全コピペ版）
+============================================================ */
+
+// ページング用変数
+let chronoPage = 0;
+const chronoPageSize = 20;   // ← 1ページの件数（自由に変更可）
+let chronoAllItems = [];
+
+/* メイン更新 */
+function updateModules() {
+  google.script.run.withSuccessHandler(data => {
+
+    /* 進化タイムライン */
+    if (data.evolutionHistory) {
+      const box = document.getElementById('evolution-timeline');
+      box.innerHTML = '';
+
+      if (data.evolutionHistory.length === 0) {
+        box.innerHTML = '<div style="font-size:12px; color:#999;">まだ進化履歴はありません。</div>';
+      } else {
+        data.evolutionHistory.forEach(ev => {
+          const color =
+            ev.type === "patch" ? "#0969da" :
+            ev.type === "persona" ? "#1a7f37" :
+            ev.type === "evolution" ? "#6f42c1" :
+            "#444";
+
+          const item = document.createElement('div');
+          item.className = 'timeline-item';
+          item.innerHTML = `
+            <div class="timeline-dot" style="background:${color};"></div>
+            <div class="timeline-date">${ev.date}</div>
+            <div class="timeline-label">${ev.patch}</div>
+            <div class="timeline-note">${ev.note || ''}</div>
+          `;
+          box.appendChild(item);
+        });
+      }
+    }
+
+    /* チャットログ */
+    if (data.logs) {
+      const log = document.getElementById('chat-log');
+      log.innerHTML = '';
+      data.logs.forEach(l => {
+        const isUser = (l.role === 'user' || l.role === 'Commander');
+        const div = document.createElement('div');
+        div.className = 'bubble ' + (isUser ? 'user-bubble' : 'ai-bubble');
+        div.innerHTML = `${l.text}<span class="bubble-time">${l.timestamp}</span>`;
+        log.appendChild(div);
+      });
+      log.scrollTop = log.scrollHeight;
+    }
+
+    /* 改善案（Chrono） — ページング対応 */
+    if (data.chronoHistory) {
+      chronoAllItems = data.chronoHistory || [];
+      chronoPage = 0;
+      renderChronoPage();
+    }
+
+    /* persona */
+    if (typeof data.persona !== 'undefined') {
+      document.getElementById('persona-display').innerText = data.persona || '（persona情報なし）';
+    }
+
+  }).getChronoStatus();
+}
+
+/* ============================================================
+   Chrono ページ描画
+============================================================ */
+function renderChronoPage() {
+  const list = document.getElementById('chrono-list');
+  list.innerHTML = '';
+
+  const start = chronoPage * chronoPageSize;
+  const end = start + chronoPageSize;
+  const pageItems = chronoAllItems.slice(start, end);
+
+  pageItems.forEach(item => {
+    const isActive = (item.status === 'ACTIVE');
+    const card = document.createElement('div');
+    card.className = 'chrono-card ' + (isActive ? 'active-version' : '');
+
+    card.innerHTML = `
+      <div class="chrono-date">
+        <span>${item.date}</span>
+        ${isActive ? '<span style="font-size:11px; color:#1a7f37; font-weight:600;">ACTIVE</span>' : ''}
+      </div>
+
+      <div class="chrono-title">${item.appName}</div>
+
+      <div class="chrono-desc">${item.description || '（詳細な説明がありません）'}</div>
+
+      <div class="chrono-btn-row">
+        <button class="chrono-btn" onclick="showDiff('${item.docUrl}')">🔍 差分を見る</button>
+        <button class="chrono-btn" ${isActive ? 'disabled' : ''} onclick="runRestore('${item.docUrl}')">
+          ${isActive ? '✅ 適用済み' : '↩️ 承認して適用'}
+        </button>
+      </div>
+    `;
+
+    list.appendChild(card);
+  });
+
+  renderChronoPager();
+}
+
+/* ============================================================
+   ページャー UI
+============================================================ */
+function renderChronoPager() {
+  const list = document.getElementById('chrono-list');
+
+  const pager = document.createElement('div');
+  pager.style.display = 'flex';
+  pager.style.justifyContent = 'space-between';
+  pager.style.marginTop = '10px';
+
+  const totalPages = Math.ceil(chronoAllItems.length / chronoPageSize);
+
+  pager.innerHTML = `
+    <button class="btn-secondary" ${chronoPage <= 0 ? 'disabled' : ''} 
+      onclick="chronoPrevPage()">← 前へ</button>
+
+    <span style="font-size:13px; color:#666;">
+      Page ${chronoPage + 1} / ${totalPages}
+    </span>
+
+    <button class="btn-secondary" ${chronoPage >= totalPages - 1 ? 'disabled' : ''} 
+      onclick="chronoNextPage()">次へ →</button>
+  `;
+
+  list.appendChild(pager);
+}
+
+function chronoPrevPage() {
+  if (chronoPage > 0) {
+    chronoPage--;
+    renderChronoPage();
+  }
+}
+
+function chronoNextPage() {
+  const totalPages = Math.ceil(chronoAllItems.length / chronoPageSize);
+  if (chronoPage < totalPages - 1) {
+    chronoPage++;
+    renderChronoPage();
+  }
+}
+
+  /* タブ切り替え */
+  function switchTab(name) {
+    document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+
+    document.querySelectorAll('#bottom-tabs .tab-btn').forEach(btn => btn.classList.remove('active'));
+    const btn = Array.from(document.querySelectorAll('#bottom-tabs .tab-btn'))
+      .find(b => b.getAttribute('onclick').includes(name));
+    if (btn) btn.classList.add('active');
+  }
+
+  /* 初期ロード */
+  window.onload = () => {
+    updateModules();
+    setInterval(updateModules, 30000);
+  };
+
+  /* メイン更新 */
+  function updateModules() {
+    google.script.run.withSuccessHandler(data => {
+
+      /* 進化タイムライン */
+      if (data.evolutionHistory) {
+        const box = document.getElementById('evolution-timeline');
+        box.innerHTML = '';
+
+        if (data.evolutionHistory.length === 0) {
+          box.innerHTML = '<div style="font-size:12px; color:#999;">まだ進化履歴はありません。</div>';
+        } else {
+          data.evolutionHistory.forEach(ev => {
+            const color =
+              ev.type === "patch" ? "#0969da" :
+              ev.type === "persona" ? "#1a7f37" :
+              ev.type === "evolution" ? "#6f42c1" :
+              "#444";
+
+            const item = document.createElement('div');
+            item.className = 'timeline-item';
+            item.innerHTML = `
+              <div class="timeline-dot" style="background:${color};"></div>
+              <div class="timeline-date">${ev.date}</div>
+              <div class="timeline-label">${ev.patch}</div>
+              <div class="timeline-note">${ev.note || ''}</div>
+            `;
+            box.appendChild(item);
+          });
+        }
+      }
+
+      /* チャットログ */
+      if (data.logs) {
+        const log = document.getElementById('chat-log');
+        log.innerHTML = '';
+        data.logs.forEach(l => {
+          const isUser = (l.role === 'user' || l.role === 'Commander');
+          const div = document.createElement('div');
+          div.className = 'bubble ' + (isUser ? 'user-bubble' : 'ai-bubble');
+          div.innerHTML = `${l.text}<span class="bubble-time">${l.timestamp}</span>`;
+          log.appendChild(div);
+        });
+        log.scrollTop = log.scrollHeight;
+      }
+
+      /* 改善案（Chrono） — ページング対応 */
+if (data.chronoHistory) {
+  chronoAllItems = data.chronoHistory || [];
+  chronoPage = 0;
+  renderChronoPage();
+}
+
+      /* persona */
+      if (typeof data.persona !== 'undefined') {
+        document.getElementById('persona-display').innerText = data.persona || '（persona情報なし）';
+      }
+
+    }).getChronoStatus();
+  }
+
+  /* チャット送信 */
+  function engageCommunication() {
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  showGlobalLoading();
+
+  google.script.run.withSuccessHandler(() => {
+    hideGlobalLoading();
+    showSuccess("送信しました");
+    updateModules();
+  }).handleGatewayChat(text);
+}
+
+
+  /* 深層自己進化 */
+  function triggerEvolution() {
+    if (!confirm('深層自己進化を開始します。')) return;
+
+    showGlobalLoading();
+
+    google.script.run.withSuccessHandler(() => {
+      hideGlobalLoading();
+      showSuccess("深層自己進化を実行しました");
+      switchTab('evolution');
+      updateModules();
+    }).runMidnightEvolution();
+  }
+
+  /* パッチ適用（承認） */
+  function runRestore(url) {
+    if (!confirm('この状態を承認して適用しますか？')) return;
+
+    showGlobalLoading();
+
+    google.script.run.withSuccessHandler(() => {
+      hideGlobalLoading();
+      showSuccess("パッチを適用しました");
+      switchTab('evolution');
+      updateModules();
+    }).emergencyRestoreFromUI(url);
+  }
+
+  /* 差分プレビュー（サイドバー） */
+ function showDiff(url) {
+  console.log("DIFF URL:", url);
+
+  if (!url || url === "undefined" || url === "null") {
+    showError("このパッチには差分を表示できるドキュメントがありません（docUrl が空）");
+    return;
+  }
+
+  window.currentDiffUrl = url;
+
+
+
+    showGlobalLoading();
+
+    google.script.run.withSuccessHandler(data => {
+      hideGlobalLoading();
+
+      if (data.error) {
+        showError("差分取得に失敗しました");
+        return;
+      }
+
+      document.getElementById('diff-current').innerText = data.current || '';
+      document.getElementById('diff-patch').innerText = data.patch || '';
+      document.getElementById('diff-summary').innerText = data.summary || '要約なし';
+
+      const modal = document.getElementById('diff-modal');
+      modal.style.display = 'flex';
+
+      modal.classList.add('fade-in');
+      setTimeout(() => modal.classList.remove('fade-in'), 400);
+
+      showSuccess("差分を読み込みました");
+    }).getCodeDiffWithSummary(url);
+  }
+
+  function closeDiff() {
+    document.getElementById('diff-modal').style.display = 'none';
+  }
+
+  /* 差分プレビュー（大画面：メインデッキ） */
+  function openDiffInMainDeck() {
+    if (!window.currentDiffUrl) {
+      showError("先に差分を取得してください");
+      return;
+    }
+
+    showGlobalLoading();
+
+    google.script.run.withSuccessHandler(() => {
+      hideGlobalLoading();
+      showSuccess("大画面を開きました");
+    }).showDiffMainDeck(window.currentDiffUrl);
+  }
+
+  /* HTMLエスケープ（大画面用） */
+  function escapeHtml(str) {
+    if (!str) return "";
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  /* ローディング制御 */
+  function showGlobalLoading() {
+    document.getElementById('global-loading').style.display = 'flex';
+  }
+
+  function hideGlobalLoading() {
+    document.getElementById('global-loading').style.display = 'none';
+  }
+
+  /* トースト通知 */
+  function showError(msg) {
+    const t = document.getElementById('toast-error');
+    t.innerText = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  function showSuccess(msg) {
+    const t = document.getElementById('toast-success');
+    t.innerText = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+</script>
+
+</body>
+</html>

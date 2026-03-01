@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link rel="stylesheet" href="App_Styles.css">
+  <script>
+    const APP_CONFIG = <?= JSON.stringify(config) ?>;
+    const MODE = "<?= mode ?>";
+    const TEMPLATE_LEVEL = <?= templateLevel ?>;
+
+    google.script.run.withSuccessHandler(renderData).getData();
+
+    function renderData(data) {
+      window.APP_DATA = data;
+      updateDataList();
+    }
+
+    function addRecord() {
+      const record = {
+        "フィールド1": document.getElementById("f1").value,
+        "フィールド2": document.getElementById("f2").value,
+        "フィールド3": document.getElementById("f3").value
+      };
+
+      google.script.run.withSuccessHandler(() => {
+        google.script.run.withSuccessHandler(renderData).getData();
+      }).addData(record);
+    }
+
+    function deleteRecord(id) {
+      google.script.run.withSuccessHandler(() => {
+        google.script.run.withSuccessHandler(renderData).getData();
+      }).deleteData(id);
+    }
+
+    function updateDataList() {
+      const container = document.getElementById("data-list");
+      container.innerHTML = "";
+
+      APP_DATA.forEach(r => {
+        const div = document.createElement("div");
+        div.className = "card";
+        div.innerHTML = `
+          <div class="card-title">${r["フィールド1"]}</div>
+          <div class="card-sub">${r["フィールド2"]}</div>
+          <button class="delete-btn" onclick="deleteRecord('${r.ID}')">削除</button>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+// アップデートチェック
+google.script.run.withSuccessHandler(showUpdateBadge).checkForUpdate();
+
+function showUpdateBadge(info) {
+  if (info.update) {
+    document.getElementById("update-badge").style.display = "inline-block";
+  }
+}
+
+    function switchTab(tab) {
+      document.querySelectorAll(".tab-content").forEach(el => el.style.display = "none");
+      document.getElementById(tab).style.display = "block";
+    }
+  </script>
+</head>
+
+<body>
+
+  <!-- ヘッダー -->
+  <div class="header">
+    <img src="data:image/png;base64,<?= config.logo ?>" class="logo">
+    <div class="app-title"><?= config.name ?></div>
+    <div class="mode-badge <?= mode === 'CONNECTED' ? 'connected' : 'standalone' ?>">
+      <?= mode === 'CONNECTED' ? '母艦連携' : '独立モード' ?>
+    </div>
+  </div>
+
+<div id="update-badge" style="
+  display:none;
+  background:#FF3B30;
+  color:white;
+  padding:4px 10px;
+  border-radius:12px;
+  font-size:12px;
+  margin-top:6px;
+">
+  アップデートがあります
+</div>
+
+  <!-- ホーム -->
+  <div id="home" class="tab-content" style="display:block;">
+    <h2>ホーム</h2>
+    <p><?= config.description ?></p>
+
+    <? if (templateLevel === 3) { ?>
+      <div class="card">
+        <div class="card-title">ダッシュボード</div>
+        <div class="card-sub">レベル3テンプレートでは、データに応じたメトリクスが表示されます。</div>
+      </div>
+    <? } ?>
+  </div>
+
+  <!-- データ -->
+  <div id="data" class="tab-content">
+    <h2>データ管理</h2>
+
+    <div class="input-group">
+      <input id="f1" placeholder="フィールド1">
+      <input id="f2" placeholder="フィールド2">
+      <input id="f3" placeholder="フィールド3">
+      <button onclick="addRecord()">追加</button>
+    </div>
+
+    <div id="data-list"></div>
+  </div>
+
+  <!-- 設定 -->
+  <div id="settings" class="tab-content">
+    <h2>設定</h2>
+
+    <div class="card">
+      <div class="card-title">アプリ名</div>
+      <div class="card-sub"><?= config.name ?></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">テンプレートレベル</div>
+      <div class="card-sub">レベル <?= templateLevel ?></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">モード</div>
+      <div class="card-sub"><?= mode ?></div>
+    </div>
+  </div>
+
+  <!-- ログ -->
+  <div id="logs" class="tab-content">
+    <h2>ログ</h2>
+    <p>ログはスプレッドシートの Log シートに保存されています。</p>
+  </div>
+
+  <!-- タブバー -->
+  <div class="tab-bar">
+    <div class="tab" onclick="switchTab('home')">ホーム</div>
+    <div class="tab" onclick="switchTab('data')">データ</div>
+    <div class="tab" onclick="switchTab('settings')">設定</div>
+    <div class="tab" onclick="switchTab('logs')">ログ</div>
+
+    <? if (templateLevel === 3) { ?>
+      <div class="tab" onclick="switchTab('dashboard')">分析</div>
+    <? } ?>
+  </div>
+
+</body>
+</html>

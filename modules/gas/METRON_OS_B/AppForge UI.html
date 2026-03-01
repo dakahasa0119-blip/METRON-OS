@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; }
+    .card { padding: 16px; border-radius: 12px; background: #fff; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .btn { padding: 10px 16px; background: #007AFF; color: white; border-radius: 10px; border: none; }
+  </style>
+</head>
+
+<body>
+
+  <h2>AppForge – 新しいアプリを生成</h2>
+
+  <div class="card">
+    <h3>アプリ名</h3>
+    <input id="appName" style="width:100%; padding:8px;">
+  </div>
+
+  <div class="card">
+    <h3>テンプレートレベル</h3>
+    <select id="templateLevel" style="width:100%; padding:8px;">
+      <option value="2">レベル2（中量・汎用）</option>
+      <option value="3">レベル3（重量・業務向け）</option>
+    </select>
+  </div>
+
+  <div class="card">
+    <h3>モード</h3>
+    <select id="mode" style="width:100%; padding:8px;">
+      <option value="CONNECTED">母艦連携モード</option>
+      <option value="STANDALONE">独立モード</option>
+    </select>
+  </div>
+
+  <button class="btn" onclick="generate()">アプリを生成</button>
+
+  <script>
+    function generate() {
+      const name = document.getElementById("appName").value;
+      const level = document.getElementById("templateLevel").value;
+      const mode = document.getElementById("mode").value;
+
+      google.script.run.withSuccessHandler(url => {
+        alert("アプリが生成されました！\nURL: " + url);
+      }).generateApp(name, level, mode);
+    }
+  </script>
+
+</body>
+</html>

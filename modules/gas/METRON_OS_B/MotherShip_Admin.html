@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: -apple-system, sans-serif; padding: 16px; }
+    .section { margin-bottom: 24px; padding: 16px; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .btn { padding: 8px 12px; border-radius: 8px; border: none; background: #007AFF; color: #fff; cursor: pointer; }
+    table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+    th, td { border-bottom: 1px solid #eee; padding: 6px 8px; font-size: 13px; }
+    .danger { background: #ffe5e5; }
+    .log-table { font-size: 12px; }
+    input { padding: 6px; margin-right: 6px; }
+    .metric { font-size: 14px; margin: 4px 0; }
+    .diff-added { background: #e0ffe0; }
+    .diff-removed { background: #ffe0e0; }
+    .diff-modified { background: #fff5cc; }
+    .tab-btn { padding: 6px 10px; margin-right: 6px; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; }
+    .tab-btn.active { background: #007AFF; color: white; }
+  </style>
+</head>
+<body>
+
+  <!-- Dashboard -->
+  <div class="section">
+    <h2>MotherShip Dashboard</h2>
+    <div id="dashboard"></div>
+  </div>
+
+  <!-- Backup Manager -->
+  <div class="section">
+    <h2>Backup Manager</h2>
+    <button class="btn" onclick="createBackup()">バックアップを作成</button>
+    <div id="backup-list"></div>
+  </div>
+
+  <!-- Template Manager -->
+  <div class="section">
+    <h2>Template Manager</h2>
+    <div>現在のテンプレートバージョン: <span id="tmpl-version"></span></div>
+    <div>MotherShip Version: <span id="ms-version"></span></div>
+    <button class="btn" onclick="runSetup()">テンプレートを再登録（setupTemplates）</button>
+  </div>
+
+  <!-- App Manager -->
+  <div class="section">
+    <h2>App Manager</h2>
+    <button class="btn" onclick="updateAll()">すべて更新</button>
+    <div id="apps"></div>
+  </div>
+
+  <!-- Diff Viewer -->
+  <div class="section">
+    <h2>Template Diff Viewer</h2>
+    <div id="diff-tabs"></div>
+    <div id="diff-view"></div>
+  </div>
+
+  <!-- Log Viewer -->
+  <div class="section">
+    <h2>Log Viewer</h2>
+    <button class="btn" onclick="loadLogs()">ログを読み込む</button>
+    <div id="logs"></div>
+  </div>
+
+  <!-- Profile Manager -->
+  <div class="section">
+    <h2>Profile Manager（設定配信）</h2>
+
+    <div style="margin-bottom:10px;">
+      <input id="new-key" placeholder="キー">
+      <input id="new-value" placeholder="値">
+      <button class="btn" onclick="addProfile()">追加</button>
+    </div>
+
+    <div id="profiles"></div>
+  </div>
+
+  <div class="section">
+  <h2>UI Builder</h2>
+
+  <div>
+    <input id="new-key" placeholder="field_key">
+    <input id="new-label" placeholder="label">
+    <select id="new-type">
+      <option value="text">text</option>
+      <option value="number">number</option>
+      <option value="textarea">textarea</option>
+      <option value="select">select</option>
+    </select>
+    <input id="new-options" placeholder="options（カンマ区切り）">
+    <button class="btn" onclick="addUIField()">追加</button>
+  </div>
+
+  <div id="ui-fields"></div>
+</div>
+
+<script>
+  google.script.run.withSuccessHandler(renderUIFields).getUIFields();
+
+  function renderUIFields(list) {
+    const container = document.getElementById("ui-fields");
+    let html = "<table><tr><th>key</th><th>label</th><th>type</th><th>options</th><th>order</th><th></th></tr>";
+
+    list.forEach((f, i) => {
+      html += \`
+        <tr>
+          <td>\${f.field_key}</td>
+          <td>\${f.label}</td>
+          <td>\${f.type}</td>
+          <td>\${f.options.join(",")}</td>
+          <td>\${f.order}</td>
+          <td><button onclick="deleteUIField('\${f.field_key}')">削除</button></td>
+        </tr>
+      \`;
+    });
+
+    html += "</table>";
+    container.innerHTML = html;
+  }
+
+  function addUIField() {
+    const key = document.getElementById("new-key").value;
+    const label = document.getElementById("new-label").value;
+    const type = document.getElementById("new-type").value;
+    const options = document.getElementById("new-options").value;
+
+    google.script.run.withSuccessHandler(() => {
+      google.script.run.withSuccessHandler(renderUIFields).getUIFields();
+    }).addUIField(key, label, type, options);
+  }
+
+  function deleteUIField(key) {
+    google.script.run.withSuccessHandler(() => {
+      google.script.run.withSuccessHandler(renderUIFields).getUIFields();
+    }).deleteUIField(key);
+  }
+</script>
+
+  <script>
+    // Dashboard
+    google.script.run.withSuccessHandler(renderDashboard).getMotherShipStats();
+
+    function renderDashboard(stats) {
+      const d = document.getElementById('dashboard');
+      d.innerHTML = `
+        <div class="metric">登録アプリ数: ${stats.appCount}</div>
+        <div class="metric">Connected: ${stats.connected}</div>
+        <div class="metric">Standalone: ${stats.standalone}</div>
+        <div class="metric">UPDATE_AVAILABLE: ${stats.updateAvailable}</div>
+        <div class="metric">テンプレートバージョン: ${stats.templateVersion}</div>
+        <div class="metric">MotherShip Version: ${stats.motherShipVersion}</div>
+        <div class="metric">ログ件数: ${stats.logCount}</div>
+        <div class="metric">プロファイル数: ${stats.profileCount}</div>
+      `;
+    }
+
+    // Backup Manager
+    google.script.run.withSuccessHandler(renderBackupList).getBackupList();
+
+    function createBackup() {
+      if (!confirm("母艦のバックアップを作成しますか？")) return;
+      google.script.run.withSuccessHandler(name => {
+        alert("バックアップを作成しました: " + name);
+        google.script.run.withSuccessHandler(renderBackupList).getBackupList();
+      }).backupMotherShip();
+    }
+
+    function renderBackupList(list) {
+      const container = document.getElementById('backup-list');
+      let html = '<table><tr><th>日時</th><th>名前</th><th>ファイルID</th></tr>';
+
+      list.forEach(row => {
+        html += `
+          <tr>
+            <td>${row.time}</td>
+            <td>${row.name}</td>
+            <td>${row.id}</td>
+          </tr>`;
+      });
+
+      html += '</table>';
+      container.innerHTML = html;
+    }
+
+    // Template version
+    google.script.run.withSuccessHandler(v => {
+      document.getElementById('tmpl-version').textContent = v;
+    }).getTemplateVersion();
+
+    google.script.run.withSuccessHandler(v => {
+      document.getElementById('ms-version').textContent = v;
+    }).getMotherShipVersion();
+
+    // App registry
+    google.script.run.withSuccessHandler(renderApps).getAppRegistryList();
+
+    function runSetup() {
+      if (!confirm("テンプレートを再登録しますか？")) return;
+      google.script.run.setupTemplates();
+      alert("テンプレート再登録を実行しました。");
+    }
+
+    function renderApps(list) {
+      const container = document.getElementById('apps');
+      let html = '<table><tr><th>行</th><th>名前</th><th>モード</th><th>Version</th><th>Flag</th><th>操作</th></tr>';
+
+      list.forEach(row => {
+        const danger = row.flag === "UPDATE_AVAILABLE" ? "danger" : "";
+        html += `
+          <tr class="${danger}">
+            <td>${row.row}</td>
+            <td>${row.name}</td>
+            <td>${row.mode}</td>
+            <td>${row.version}</td>
+            <td>${row.flag}</td>
+            <td>
+              <button class="btn" onclick="updateApp(${row.row})">更新</button>
+              <button class="btn" onclick="showDiff('${row.id}')">差分</button>
+            </td>
+          </tr>`;
+      });
+
+      html += '</table>';
+      container.innerHTML = html;
+    }
+
+    function updateApp(row) {
+      if (!confirm("このアプリを最新テンプレートで更新しますか？")) return;
+      google.script.run.updateAppFromRegistry(row);
+      alert("更新を実行しました。App_Registry を再読み込みしてください。");
+    }
+
+    function updateAll() {
+      if (!confirm("UPDATE_AVAILABLE のアプリをすべて更新しますか？")) return;
+      google.script.run.updateAllApps();
+      alert("一括更新を実行しました。App_Registry を再読み込みしてください。");
+    }
+
+    // Diff Viewer
+    function showDiff(appId) {
+      google.script.run.withSuccessHandler(renderDiff).getAppDiff(appId);
+    }
+
+    function renderDiff(diff) {
+      const tabs = {
+        core: "CORE",
+        data: "DATA",
+        ui: "UI",
+        integration: "INTEGRATION",
+        standalone: "STANDALONE"
+      };
+
+      const tabContainer = document.getElementById("diff-tabs");
+      const viewContainer = document.getElementById("diff-view");
+
+      // タブ生成
+      let tabHtml = "";
+      Object.keys(tabs).forEach(key => {
+        tabHtml += `<button class="tab-btn" onclick="switchDiffTab('${key}')">${tabs[key]}</button>`;
+      });
+      tabContainer.innerHTML = tabHtml;
+
+      // 差分データを保存
+      window._diffData = diff;
+
+      // 初期タブ表示
+      switchDiffTab("core");
+    }
+
+    function switchDiffTab(key) {
+      const view = document.getElementById("diff-view");
+      const diffs = window._diffData[key];
+
+      let html = '<table><tr><th>行</th><th>母艦</th><th>アプリ</th></tr>';
+
+      diffs.forEach(row => {
+        html += `
+          <tr class="diff-modified">
+            <td>${row.line}</td>
+            <td>${row.mother}</td>
+            <td>${row.app}</td>
+          </tr>`;
+      });
+
+      html += '</table>';
+      view.innerHTML = html;
+
+      // タブの active 切り替え
+      document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+      document.querySelector(`.tab-btn[onclick="switchDiffTab('${key}')"]`).classList.add("active");
+    }
+
+    // Logs
+    function loadLogs() {
+      google.script.run.withSuccessHandler(renderLogs).getMotherShipLogs();
+    }
+
+    function renderLogs(list) {
+      const container = document.getElementById('logs');
+      let html = '<table class="log-table"><tr><th>日時</th><th>アプリ名</th><th>メッセージ</th></tr>';
+
+      list.forEach(row => {
+        html += `
+          <tr>
+            <td>${row.time}</td>
+            <td>${row.app}</td>
+            <td>${row.msg}</td>
+          </tr>`;
+      });
+
+      html += '</table>';
+      container.innerHTML = html;
+    }
+
+    // Profiles
+    google.script.run.withSuccessHandler(renderProfiles).getAllProfiles();
+
+    function renderProfiles(list) {
+      const container = document.getElementById('profiles');
+      let html = '<table><tr><th>キー</th><th>値</th><th>操作</th></tr>';
+
+      list.forEach(row => {
+        html += `
+          <tr>
+            <td>${row.key}</td>
+            <td>${row.value}</td>
+            <td><button class="btn" onclick="deleteProfile('${row.key}')">削除</button></td>
+          </tr>`;
+      });
+
+      html += '</table>';
+      container.innerHTML = html;
+    }
+
+    function addProfile() {
+      const key = document.getElementById('new-key').value;
+      const value = document.getElementById('new-value').value;
+      google.script.run.withSuccessHandler(() => {
+        google.script.run.withSuccessHandler(renderProfiles).getAllProfiles();
+      }).addProfile(key, value);
+    }
+
+    function deleteProfile(key) {
+      if (!confirm("削除しますか？")) return;
+      google.script.run.withSuccessHandler(() => {
+        google.script.run.withSuccessHandler(renderProfiles).getAllProfiles();
+      }).deleteProfile(key);
+    }
+  </script>
+
+</body>
+</html>
