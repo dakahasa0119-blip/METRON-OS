@@ -2437,14 +2437,27 @@ function doPost(e) {
   }
 
   if (mode === "metron_heartbeat") {
-    const workerId = norm(data.worker_id);
+    let workerId = norm(data.worker_id);
+    let isNewAssignedId = false;
+    if (!workerId) {
+      workerId = "MTN_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
+      isNewAssignedId = true;
+    }
     upsertMetronNode(workerId, data.status || "online", data.version || "");
     const instruction = claimMetronMessage(workerId);
-    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
+    const responseData = { status: "ok" };
+    if (instruction) responseData.instruction = instruction;
+    if (isNewAssignedId) responseData.assigned_id = workerId;
+    return jsonOut(responseData);
   }
 
   if (mode === "metron_pull") {
-    const workerId = norm(data.worker_id);
+    let workerId = norm(data.worker_id);
+    let isNewAssignedId = false;
+    if (!workerId) {
+      workerId = "MTN_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
+      isNewAssignedId = true;
+    }
     const consumer = upper(data.executor || "METRON_OS");
     
     // metronNodes に死活報告
@@ -2476,10 +2489,16 @@ function doPost(e) {
         });
       }
     }
-    if (pending.length === 0) return jsonOut({ status: "ok", instruction: null });
+    if (pending.length === 0) {
+      const emptyRes = { status: "ok", instruction: null };
+      if (isNewAssignedId) emptyRes.assigned_id = workerId;
+      return jsonOut(emptyRes);
+    }
     const job = pending[0];
     sheets.metronQueue.getRange(job.row, 6).setValue("leased");
-    return jsonOut({ status: "ok", instruction: job });
+    const jobRes = { status: "ok", instruction: job };
+    if (isNewAssignedId) jobRes.assigned_id = workerId;
+    return jsonOut(jobRes);
   }
 
   if (mode === "metron_result") {
@@ -3341,7 +3360,12 @@ function doPost(e) {
   if (mode === "arc_heartbeat" || mode === "register_worker") {
     const ip = norm(data.ip);
     const port = norm(data.port);
-    const workerId = norm(data.worker_id) || (ip && port ? (ip + ":" + port) : "");
+    let workerId = norm(data.worker_id) || (ip && port ? (ip + ":" + port) : "");
+    let isNewAssignedId = false;
+    if (!workerId) {
+      workerId = "GWN_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
+      isNewAssignedId = true;
+    }
     const consumer = upper(data.executor || "ARC");
     const all = sheets.nodes.getDataRange().getValues();
     let foundRow = -1;
@@ -3445,7 +3469,10 @@ function doPost(e) {
       (runningLike && !activeLeaseForWorker);
     const instruction = canLease ? safeClaimNextInstruction(workerId, consumer, norm(data.trace_id)) : null;
     addAudit(norm(data.trace_id), "ARC_HEARTBEAT", "", workerId, "ok", consumer);
-    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
+    const responseData = { status: "ok" };
+    if (instruction) responseData.instruction = instruction;
+    if (isNewAssignedId) responseData.assigned_id = workerId;
+    return jsonOut(responseData);
   }
 
   if (mode === "lease_job") {

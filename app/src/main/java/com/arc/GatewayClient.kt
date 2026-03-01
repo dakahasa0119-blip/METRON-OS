@@ -495,6 +495,13 @@ class GatewayClient(private val prefs: Prefs) {
             if (!response.startsWith("{")) return
             val parsed = JSONObject(response)
             withContext(Dispatchers.Main) {
+                if (parsed.has("assigned_id") && prefs.workerId.isEmpty()) {
+                    val assigned = parsed.optString("assigned_id", "")
+                    if (assigned.isNotBlank()) {
+                        prefs.workerId = assigned
+                        Log.d("ARC_GW_HB", "Gateway assigned new worker_id: $assigned")
+                    }
+                }
                 val instruction = parsed.optJSONObject("instruction")
                 if (instruction != null) {
                     Log.d("ARC_GW_HB", "instruction mode=${instruction.optString("mode")} job_id=${instruction.optString("job_id")}")

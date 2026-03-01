@@ -42,16 +42,10 @@ class Prefs(context: Context) {
         }
         set(v) { edit { putString("auth_token", v) } }
 
-    /** ARCノード識別子。Gateway側の lease 対象識別に使用 */
+    /** ARCノード識別子。Gateway側の lease 対象識別に使用（Gatewayからの自動付与） */
     var workerId: String
         get() {
-            val stored = sp.getString("worker_id", "") ?: ""
-            if (stored.isEmpty()) {
-                val generated = "arc-" + java.util.UUID.randomUUID().toString().replace("-", "").take(12)
-                edit { putString("worker_id", generated) }
-                return generated
-            }
-            return stored
+            return sp.getString("worker_id", "") ?: ""
         }
         set(v) { edit { putString("worker_id", v) } }
 
