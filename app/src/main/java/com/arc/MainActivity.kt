@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -46,12 +45,7 @@ class MainActivity : AppCompatActivity() {
     private var smokeWaiter: CompletableDeferred<String?>? = null
     private var lastSlotSyncAtMs: Long = 0L
 
-    private var wakeLock: PowerManager.WakeLock? = null
-    private val screenTimeoutHandler = Handler(Looper.getMainLooper())
-    private val disableScreenRunnable = Runnable {
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        debugHud.update("SCREEN: SLEEP (AUTO)")
-    }
+
 
     private lateinit var arcWorker: ArcWorker
     private lateinit var arcQueue: ArcTaskQueue
@@ -62,35 +56,11 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             pokeScreen()
             webViewManager.resumeRuntime()
-            val bringToFront = shouldBringToFrontFor(reason)
-            debugHud.update(if (bringToFront) "GW: EXEC" else "GW: BG_EXEC")
-            Log.d("ARC_UI", "Foreground ensure requested: $reason / bring=$bringToFront")
-            if (!bringToFront) return@runOnUiThread
-            try {
-                val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                am.appTasks.firstOrNull()?.moveToFront()
-            } catch (e: Exception) {
-                Log.w("ARC_UI", "moveToFront failed: ${e.message}")
-            }
-            val intent = Intent(this, MainActivity::class.java).apply {
-                addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
-                )
-            }
-            startActivity(intent)
+            debugHud.update("GW: EXEC_REQ")
         }
     }
 
-    private fun shouldBringToFrontFor(reason: String): Boolean {
-        if (reason.startsWith("dynamic_setup")) return true
-        if (reason.startsWith("gateway_instruction") || reason == "remote_job") {
-            return prefs.shouldForceForegroundForGatewayTask()
-        }
-        return true
-    }
+
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,17 +98,6 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             debugHud.update("SCREEN: ACTIVE")
-            screenTimeoutHandler.removeCallbacks(disableScreenRunnable)
-            screenTimeoutHandler.postDelayed(disableScreenRunnable, 10 * 60 * 1000)
-            acquireWakeLock()
-        }
-    }
-
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ARC:KeepAlive").apply {
-            acquire(10 * 60 * 1000L)
         }
     }
 
@@ -1051,7 +1010,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        wakeLock?.let { if (it.isHeld) it.release() }
     }
 
     override fun onDestroy() {
@@ -1060,7 +1018,6 @@ class MainActivity : AppCompatActivity() {
         heartbeatJob?.cancel()
         mainScope.cancel()
         arcServer?.stop(); webViewManager.destroy()
-        screenTimeoutHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 }

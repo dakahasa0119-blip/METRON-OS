@@ -729,6 +729,16 @@ function doPost(e) {
     const limit = clamp(parseIntSafe(options.limit, 4), 1, 12);
     const scan = clamp(parseIntSafe(options.scan, 300), 50, 1200);
     const sourceFilter = norm(options.source);
+
+    const cache = CacheService.getScriptCache();
+    const cacheKey = "RAG_" + Utilities.base64Encode(query + "|" + limit + "|" + scan + "|" + sourceFilter).slice(0, 200);
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (_) {}
+    }
+
     const tokens = tokenizeForMemory(query);
     const rows = readRecentRows(sheets.gatewayMemory, 6, scan).rows;
     const ranked = [];
@@ -773,7 +783,7 @@ function doPost(e) {
       });
     }
     ranked.sort((a, b) => b._score - a._score);
-    return ranked.slice(0, limit).map((r) => ({
+    const finalResult = ranked.slice(0, limit).map((r) => ({
       timestamp: r.timestamp,
       key: r.key,
       value: r.value,
@@ -781,6 +791,8 @@ function doPost(e) {
       trace_id: r.trace_id,
       tags: r.tags
     }));
+    cache.put(cacheKey, JSON.stringify(finalResult), 180); // 3 minutes cache limit to save execution time
+    return finalResult;
   };
 
   const compactMemoryItems = (rows, limitChars) => {
@@ -789,7 +801,18 @@ function doPost(e) {
     const lines = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
-      const line = "[" + norm(r.key) + "] " + norm(r.value).slice(0, 360);
+      let meta = "";
+      let domain = "";
+      try {
+        const tagObj = JSON.parse(r.tags);
+        if (tagObj.outcome === "error") meta = "⚠️失敗/警告";
+        else if (tagObj.outcome === "success") meta = "✅成功/解決";
+        else meta = "📌記録";
+        if (tagObj.domain) domain = "(" + tagObj.domain + ") ";
+      } catch (_) {
+        meta = (r.source && r.source.indexOf("error") >= 0) ? "⚠️失敗" : "📌記録";
+      }
+      const line = `- ${meta} ${domain}[${norm(r.key)}] ${norm(r.value).slice(0, 360).replace(/\n/g, " ")}`;
       if (!line.trim()) continue;
       if (used + line.length + 1 > maxChars) break;
       lines.push(line);
@@ -839,7 +862,7 @@ function doPost(e) {
     if (!dedup || dedup.length === 0) return { context: "", hit_count: 0, keys: [] };
     const compact = compactMemoryItems(dedup, 900);
     if (!compact) return { context: "", hit_count: 0, keys: [] };
-    const memoryHeader = "【Gateway記憶(関連)】\n" + compact + "\n";
+    const memoryHeader = "【METRON文明ベース知識：過去の関連記録】\n" + compact + "\n";
     return {
       context: memoryHeader,
       hit_count: dedup.length,
@@ -3243,7 +3266,7 @@ function doPost(e) {
         memValue,
         "arc_result_auto",
         traceId,
-        [resultTarget, resultSlot, "success", reqUser].filter((x) => x).join(",")
+        JSON.stringify({ domain: "web_interaction", target: resultTarget, slot: resultSlot, outcome: "success", user: reqUser })
       );
       const qTokens = tokenizeForMemory(reqContent);
       if (qTokens.length > 0) {
@@ -3253,7 +3276,7 @@ function doPost(e) {
           ("user=" + reqUser + " / " + memValue).slice(0, MAX_MEMORY_VALUE),
           "arc_result_auto",
           traceId,
-          [resultTarget, resultSlot, "topic"].filter((x) => x).join(",")
+          JSON.stringify({ domain: "knowledge", target: resultTarget, slot: resultSlot, topic: qTokens[0] })
         );
       }
     }
@@ -3328,7 +3351,7 @@ function doPost(e) {
           ("request=" + reqContent + "\nerror=[" + err + "] " + errData).replace(/\s+/g, " ").slice(0, MAX_MEMORY_VALUE),
           "arc_error_auto",
           traceId,
-          [errorTarget, errorSlot, "error", "retry"].filter((x) => x).join(",")
+          JSON.stringify({ domain: "web_interaction", target: errorTarget, slot: errorSlot, outcome: "error", retry: "scheduled" })
         );
       }
       addAudit(traceId, "ARC_ERROR_RETRY", missionId, workerId, "pending", "retry=" + retry.retry_count + ",executor=" + retry.executor);
@@ -3343,7 +3366,7 @@ function doPost(e) {
         ("request=" + reqContent + "\nerror=[" + err + "] " + errData).replace(/\s+/g, " ").slice(0, MAX_MEMORY_VALUE),
         "arc_error_auto",
         traceId,
-        [errorTarget, errorSlot, "error"].filter((x) => x).join(",")
+        JSON.stringify({ domain: "web_interaction", target: errorTarget, slot: errorSlot, outcome: "error" })
       );
     }
     addAudit(traceId, "ARC_ERROR", missionId, workerId, "error", err + " / " + retry.reason);

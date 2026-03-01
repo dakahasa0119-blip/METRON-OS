@@ -80,18 +80,4 @@ else
   "$ROOT_DIR/scripts/restore_arc_window_normal.sh" || true
 fi
 
-echo "[4.6/4] restart window mode daemon"
-"$ROOT_DIR/scripts/arc_window_mode_daemon.sh" restart || true
-
-case "$ENABLE_SYSTEMD_DAEMON" in
-  1|true|TRUE|yes|YES|auto|AUTO|"")
-    if command -v systemctl >/dev/null 2>&1; then
-      echo "[4.7/4] ensure systemd user daemon (best effort)"
-      "$ROOT_DIR/scripts/install_arc_window_daemon_service.sh" >/tmp/arc_window_daemon_service_install.log 2>&1 || true
-    fi
-    ;;
-  *)
-    ;;
-esac
-
 echo "install_and_launch: DONE"
