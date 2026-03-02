@@ -10,7 +10,15 @@ METRON is an **Asynchronous, Stateless, Self-Rebuilding AI Operating System** bu
 - **DNA-Driven Evolution**: Source code is treated as "DNA" stored in Google Drive. METRON extracts, analyzes, and reinjects this DNA into itself to evolve.
 - **Universal Salvage**: Failed jobs (Dead Jobs) are not lost; the `BAKU` module (Salvager) collects fragments to prevent loss of context.
 
-## 2. Component Architecture
+## 2. Synchronization & Source of Truth (Workflow)
+- **原本 (Source of Truth)**: The GitHub repository (`METRON-OS`) and local file system. Development happens here first.
+- **Live Environment**: Google Apps Script (GAS).
+- **Synchronization**: All code changes MUST be deployed to GAS using **`clasp push`**.
+- **Agent Roles**:
+    - **Jules/IDEA**: Code logic improvements, DNA analysis.
+    - **Antigravity**: Physical deployment (`clasp push`), terminal execution, and log monitoring.
+
+## 3. Component Architecture
 
 ### [METRON_GATEWAY] (The Interface & Router)
 - **Role**: Entry point for Android apps and external requests.
@@ -44,4 +52,4 @@ METRON is an **Asynchronous, Stateless, Self-Rebuilding AI Operating System** bu
 
 ---
 **Handover prepared by Antigravity (Advanced Agentic AI).**
-*Reference the Repository Manifest for full file list.*
+*Reference the [Complete Repository Manifest](file:///home/dakahasa0119/.gemini/antigravity/brain/67fd66ae-f1ad-4bd8-bef5-fa14ce643267/repository_manifest.md) for the full exhaustive list of 78+ files.*
