@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>BAKU Universal Engine</title>
+    <?!= includeFile('App_Styles.css'); ?>
+</head>
+
+<body class="dark">
+
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">🌊</div>
+        <div class="app-title">BAKU Universal Engine</div>
+        <div style="font-size: 12px; color: var(--ios-gray); margin-top: 5px;">汎用コード抽出・システム進化コア</div>
+    </div>
+
+    <!-- 1. Universal Target Setup (Gateway Independent) -->
+    <div class="card">
+        <h3 class="card-title">ターゲット抽出器 <span class="badge">単体動作</span></h3>
+        <p style="font-size: 13px; color: var(--ios-gray); margin-bottom: 10px;">
+            GoogleドライブのフォルダURL、または Apps Script プロジェクトのURLを貼り付けると、BAKUが直接アクセスしてソースコード（DNA）を抽出し、保管庫に保存します。
+        </p>
+        <div class="input-group">
+            <input type="text" id="targetUrlInput" placeholder="Drive または Script のURLを貼り付け...">
+            <button onclick="extractTarget()" id="extractBtn">DNA 抽出</button>
+        </div>
+    </div>
+
+    <!-- 2. Universal Dead Job Salvage Monitor -->
+    <div class="card">
+        <h3 class="card-title">サルベージモニター <span class="badge green" id="queueBadge">監視中</span></h3>
+        <p style="font-size: 13px; color: var(--ios-gray); margin-bottom: 15px;">
+            他システム（ARC, MotherShip等）で発生したエラーや、途中で放棄されたジョブを監視・救出します。
+        </p>
+        <div class="stat-row">
+            <span class="stat-label">デプロイ待機キュー (Gateway)</span>
+            <span class="stat-value" id="deployQueueCount">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">検出された「停止ジョブ」</span>
+            <span class="stat-value" id="deadJobsCount">-</span>
+        </div>
+        <div style="margin-top: 15px; text-align: right;">
+            <button class="success" onclick="triggerSalvage()" id="salvageBtn">停止ジョブを強制救出</button>
+        </div>
+    </div>
+
+    <!-- 3. DNA Vault Viewer -->
+    <div class="card">
+        <h3 class="card-title">DNA 保管庫 <span class="badge" id="dnaBadge">読込中</span></h3>
+        <p style="font-size: 13px; color: var(--ios-gray); margin-bottom: 15px;">
+            BAKUがこれまでに学習・抽出した関数やクラス（DNA）の蓄積状況です。
+        </p>
+        <div class="stat-row">
+            <span class="stat-label">既知の総関数数</span>
+            <span class="stat-value" id="knownTotalCount">-</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">OSに組み込み済みのDNA</span>
+            <span class="stat-value" id="installedCount">-</span>
+        </div>
+        <div style="margin-top: 10px;">
+            <span style="font-size: 12px; font-weight: bold;">直近で抽出されたDNAシグネチャ:</span>
+            <ul class="data-list" id="dnaList">
+                <li>読み込み中...</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 4. Evolution Control -->
+    <div class="card" style="border-left: 4px solid var(--ios-blue);">
+        <h3 class="card-title">進化エンジン (OS再構築)</h3>
+        <p style="font-size: 13px; color: var(--ios-gray); margin-bottom: 15px;">
+            蓄積されたDNAを元に、METRONコアシステム全体を最新の状態に自己再構築させます。
+        </p>
+        <div class="stat-row">
+            <span class="stat-label">現在の METRON OS 世代</span>
+            <span class="stat-value" id="currentGenText">第 - 世代</span>
+        </div>
+        <div style="margin-top: 15px; text-align: right;">
+            <button class="danger" onclick="triggerEvolution()" id="evolveBtn">OS強制再構築 (Self-Rebuild)</button>
+        </div>
+    </div>
+
+    <!-- Action Feedback Toast -->
+    <div id="toast">Action Started...</div>
+
+    <script>
+        // Show Toast Notification
+        function showToast(message) {
+            const toast = document.getElementById("toast");
+            toast.innerText = message;
+            toast.className = "show";
+            setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 3000);
+        }
+
+        // Set Button Loading State
+        function setBtnLoading(btnId, isLoading, originalText = "") {
+            const btn = document.getElementById(btnId);
+            if (isLoading) {
+                btn.disabled = true;
+                btn.dataset.original = btn.innerHTML;
+                btn.innerHTML = '<span class="spinner"></span> Wait...';
+                btn.style.opacity = '0.7';
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = btn.dataset.original || originalText;
+                btn.style.opacity = '1';
+            }
+        }
+
+        // Load Data on Start
+        function loadDashboardData() {
+            // 1. Fetch Queue/Salvage Stats
+            google.script.run.withSuccessHandler(res => {
+                if (res.status === "ok") {
+                    document.getElementById('deployQueueCount').innerText = res.deployQueue;
+                    document.getElementById('deadJobsCount').innerText = res.deadJobs;
+                }
+            }).getQueueStats();
+
+            // 2. Fetch DNA Vault Stats
+            google.script.run.withSuccessHandler(res => {
+                if (res.status === "ok") {
+                    document.getElementById('knownTotalCount').innerText = res.knownTotalCount;
+                    document.getElementById('installedCount').innerText = res.installedCount;
+                    document.getElementById('dnaBadge').innerText = res.knownTotalCount + " Unique";
+
+                    let listHtml = "";
+                    if (res.recent.length === 0) listHtml = "<li>No recent DNA available.</li>";
+                    res.recent.forEach(dna => {
+                        listHtml += `<li><code>${dna.name || 'unknown'}</code></li>`;
+                    });
+                    document.getElementById('dnaList').innerHTML = listHtml;
+                }
+            }).getDNAStats();
+
+            // 3. Fetch Evolution Stats
+            google.script.run.withSuccessHandler(res => {
+                if (res.status === "ok") {
+                    document.getElementById('currentGenText').innerText = "Gen " + res.currentGeneration;
+                }
+            }).getEvolutionStats();
+        }
+
+        // Action: Extract Data directly via URL
+        function extractTarget() {
+            const urlInput = document.getElementById('targetUrlInput').value;
+            if (!urlInput) {
+                showToast("Drive か Script のURLを入力してください。");
+                return;
+            }
+
+            setBtnLoading("extractBtn", true);
+            showToast("抽出シーケンスを初期化中...");
+
+            google.script.run.withSuccessHandler(res => {
+                setBtnLoading("extractBtn", false, "DNA 抽出");
+                if (res.status === "ok") {
+                    showToast(res.message);
+                    document.getElementById('targetUrlInput').value = ""; // clear input
+                    loadDashboardData(); // Refresh UI
+                } else {
+                    showToast("エラー: " + res.error);
+                }
+            }).manualTargetExtract(urlInput);
+        }
+
+        // Action: Force Salvage
+        function triggerSalvage() {
+            if (!confirm("未処理の停止ジョブをすべて強制的に救出し、キューをクリアします。よろしいですか？")) return;
+
+            setBtnLoading("salvageBtn", true);
+            showToast("停止ジョブをサルベージ中...");
+
+            google.script.run.withSuccessHandler(res => {
+                setBtnLoading("salvageBtn", false, "停止ジョブを強制救出");
+                if (res.status === "ok") {
+                    showToast(res.message);
+                    loadDashboardData();
+                } else {
+                    showToast("エラー: " + res.error);
+                }
+            }).manualProcessDeadJobs();
+        }
+
+        // Action: Force OS Rebuild
+        function triggerEvolution() {
+            if (!confirm("【警告】現在蓄積されているDNAから、METRON_CORE OS全体の自己再構築（Self-Rebuild）を開始します。実行しますか？")) return;
+
+            setBtnLoading("evolveBtn", true);
+            showToast("自己再構築シーケンスを開始...");
+
+            google.script.run.withSuccessHandler(res => {
+                setBtnLoading("evolveBtn", false, "OS強制再構築 (Self-Rebuild)");
+                if (res.status === "ok") {
+                    showToast("再構築完了！Gatewayログを確認してください。");
+                    loadDashboardData();
+                } else {
+                    showToast("再構築エラー: " + res.error);
+                }
+            }).manualTriggerEvolution();
+        }
+
+        // Run Once
+        window.onload = loadDashboardData;
+    </script>
+</body>
+
+</html>

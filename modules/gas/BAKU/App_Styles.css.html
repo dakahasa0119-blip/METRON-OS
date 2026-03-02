@@ -1,0 +1,252 @@
+<style>
+    /* ============================================================
+   App_Styles.css (BAKU Version)
+   iOS-style design matching METRON aesthetics
+============================================================ */
+
+    :root {
+        --ios-blue: #007AFF;
+        --ios-green: #34C759;
+        --ios-red: #FF3B30;
+        --ios-gray: #8E8E93;
+        --ios-light-bg: #F2F2F7;
+        --ios-dark-bg: #1C1C1E;
+        --ios-card-light: #FFFFFF;
+        --ios-card-dark: #2C2C2E;
+        --ios-text-light: #000000;
+        --ios-text-dark: #FFFFFF;
+    }
+
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--ios-light-bg);
+        color: var(--ios-text-light);
+        transition: background 0.3s, color 0.3s;
+    }
+
+    body.dark {
+        background: var(--ios-dark-bg);
+        color: var(--ios-text-dark);
+    }
+
+    .header {
+        text-align: center;
+        padding: 15px;
+        background: var(--ios-card-light);
+        border-bottom: 1px solid #ddd;
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+    }
+
+    body.dark .header {
+        background: var(--ios-card-dark);
+        border-bottom: 1px solid #444;
+    }
+
+    .logo {
+        font-size: 32px;
+        margin-bottom: 5px;
+    }
+
+    .app-title {
+        font-size: 20px;
+        font-weight: 600;
+        margin: 0px;
+    }
+
+    .card {
+        background: var(--ios-card-light);
+        margin: 15px;
+        padding: 20px;
+        border-radius: 14px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        transition: background 0.3s;
+    }
+
+    body.dark .card {
+        background: var(--ios-card-dark);
+        box-shadow: 0 2px 5px rgba(255, 255, 255, 0.05);
+    }
+
+    h3.card-title {
+        font-size: 18px;
+        margin-top: 0;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    body.dark h3.card-title {
+        border-bottom: 1px solid #444;
+    }
+
+    .stat-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    body.dark .stat-row {
+        border-bottom: 1px solid #333;
+    }
+
+    .stat-label {
+        font-weight: 500;
+        color: var(--ios-gray);
+    }
+
+    .stat-value {
+        font-weight: bold;
+    }
+
+    .input-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    input[type="text"] {
+        flex: 1;
+        padding: 12px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        font-size: 14px;
+        background: #fafafa;
+    }
+
+    body.dark input[type="text"] {
+        background: #3A3A3C;
+        border: 1px solid #555;
+        color: white;
+    }
+
+    button {
+        background: var(--ios-blue);
+        color: white;
+        border: none;
+        padding: 12px 18px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+
+    button:active {
+        opacity: 0.7;
+    }
+
+    button.danger {
+        background: var(--ios-red);
+    }
+
+    button.success {
+        background: var(--ios-green);
+    }
+
+    .badge {
+        background: var(--ios-blue);
+        color: white;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: normal;
+    }
+
+    .badge.green {
+        background: var(--ios-green);
+    }
+
+    .badge.red {
+        background: var(--ios-red);
+    }
+
+    ul.data-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    ul.data-list li {
+        padding: 8px;
+        border-bottom: 1px solid #eee;
+        font-size: 13px;
+        word-break: break-all;
+    }
+
+    body.dark ul.data-list li {
+        border-bottom: 1px solid #444;
+    }
+
+    #toast {
+        visibility: hidden;
+        min-width: 250px;
+        background-color: #333;
+        color: #fff;
+        text-align: center;
+        border-radius: 8px;
+        padding: 12px;
+        position: fixed;
+        z-index: 2000;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 30px;
+        font-size: 14px;
+        box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.3);
+    }
+
+    #toast.show {
+        visibility: visible;
+        animation: fadein 0.5s, fadeout 0.5s 2.5s;
+    }
+
+    @keyframes fadein {
+        from {
+            bottom: 0;
+            opacity: 0;
+        }
+
+        to {
+            bottom: 30px;
+            opacity: 1;
+        }
+    }
+
+    @keyframes fadeout {
+        from {
+            bottom: 30px;
+            opacity: 1;
+        }
+
+        to {
+            bottom: 0;
+            opacity: 0;
+        }
+    }
+
+    .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: spin 1s ease-in-out infinite;
+        margin-right: 5px;
+        vertical-align: middle;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+</style>
