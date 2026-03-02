@@ -197,7 +197,7 @@ function doPost(e) {
     const m = lower(v);
     return m === "autonomous" ? "autonomous" : "interactive";
   };
-  const mode = norm(data.mode);
+  let mode = norm(data.mode);
 
   const parseJsonSafe = (raw) => {
     try {
@@ -3296,90 +3296,97 @@ function doPost(e) {
   }
 
   if (mode === "arc_result" || mode === "report_result") {
-    const missionIdRaw = norm(data.qid || data.mission_id);
-    const missionId = resolveMissionJobId(missionIdRaw);
-    const result = norm(data.text);
-    const evalSummary = norm(data.eval_summary);
-    const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
-    sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
-    const found = findJobRowById(missionId);
-    const resultTarget = canonicalTarget(data.target || (found && found.payload ? found.payload.target : "")) || "";
-    const resultSlot = canonicalSlotId((found && found.payload ? found.payload.slot_id : "") || data.slot_id || "");
-    const mainRef = findMainChatByMissionId(missionId || missionIdRaw);
-    const reqUser = mainRef ? norm(mainRef.user) : "";
-    const reqContent = mainRef ? norm(mainRef.content) : norm(data.prompt);
-    if (found && evalSummary) {
-      const payload = found.payload || {};
-      payload.last_eval_summary = evalSummary.slice(0, 1200);
-      payload.last_eval_at = nowIso();
-      sheets.jobs.getRange(found.rowIndex, 5).setValue(JSON.stringify(payload));
-    }
-    completeArcJob(missionId, "done");
-    const linked = completeLinkedChat(missionId, result, "result");
-    if (!linked) appendOrphanChatResult(missionId, result, "result", data.target || "");
-    const bakuReport = parseBakuStructuredReport(result);
-    if (bakuReport) {
-      addAudit(traceId, "BAKU_REPORT_PARSED", missionId, norm(data.worker_id), "ok", norm(bakuReport.domain) + " / " + norm(bakuReport.mode));
-      maybeEnqueueBakuFollowup(missionId, traceId, bakuReport);
-    }
-    if (norm(data.worker_id)) {
-      putArcShortMemory(
-        norm(data.worker_id),
-        norm(data.session_id) || traceId || missionId,
-        "last_result",
-        result.slice(0, MAX_MEMORY_VALUE),
-        1800,
-        traceId
-      );
-    }
-    if (resultTarget) {
-      markTargetSuccess(resultTarget, traceId);
-    }
-    if (reqUser && result) {
-      const keyBase = "user:" + reqUser + ":" + (resultSlot || resultTarget || "general");
-      const memValue = ("request=" + reqContent + "\nresult=" + result)
-        .replace(/\s+/g, " ")
-        .slice(0, MAX_MEMORY_VALUE);
-      setGatewayLongMemory(
-        keyBase + ":last_success",
-        memValue,
-        "arc_result_auto",
-        traceId,
-        [resultTarget, resultSlot, "success", reqUser].filter((x) => x).join(",")
-      );
-      const qTokens = tokenizeForMemory(reqContent);
-      if (qTokens.length > 0) {
-        const topicKey = "topic:" + qTokens[0] + ":" + (resultTarget || "general");
-        setGatewayLongMemory(
-          topicKey,
-          ("user=" + reqUser + " / " + memValue).slice(0, MAX_MEMORY_VALUE),
-          "arc_result_auto",
-          traceId,
-          [resultTarget, resultSlot, "topic"].filter((x) => x).join(",")
+    if (lower(norm(data.is_error || "false")) === "true") {
+      data.error_type = "arc_result_error";
+      data.data = norm(data.text || data.error_message || "app deployment error");
+      mode = "arc_error";
+      // let it fall through to arc_error block below
+    } else {
+      const missionIdRaw = norm(data.qid || data.mission_id);
+      const missionId = resolveMissionJobId(missionIdRaw);
+      const result = norm(data.text);
+      const evalSummary = norm(data.eval_summary);
+      const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
+      sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
+      const found = findJobRowById(missionId);
+      const resultTarget = canonicalTarget(data.target || (found && found.payload ? found.payload.target : "")) || "";
+      const resultSlot = canonicalSlotId((found && found.payload ? found.payload.slot_id : "") || data.slot_id || "");
+      const mainRef = findMainChatByMissionId(missionId || missionIdRaw);
+      const reqUser = mainRef ? norm(mainRef.user) : "";
+      const reqContent = mainRef ? norm(mainRef.content) : norm(data.prompt);
+      if (found && evalSummary) {
+        const payload = found.payload || {};
+        payload.last_eval_summary = evalSummary.slice(0, 1200);
+        payload.last_eval_at = nowIso();
+        sheets.jobs.getRange(found.rowIndex, 5).setValue(JSON.stringify(payload));
+      }
+      completeArcJob(missionId, "done");
+      const linked = completeLinkedChat(missionId, result, "result");
+      if (!linked) appendOrphanChatResult(missionId, result, "result", data.target || "");
+      const bakuReport = parseBakuStructuredReport(result);
+      if (bakuReport) {
+        addAudit(traceId, "BAKU_REPORT_PARSED", missionId, norm(data.worker_id), "ok", norm(bakuReport.domain) + " / " + norm(bakuReport.mode));
+        maybeEnqueueBakuFollowup(missionId, traceId, bakuReport);
+      }
+      if (norm(data.worker_id)) {
+        putArcShortMemory(
+          norm(data.worker_id),
+          norm(data.session_id) || traceId || missionId,
+          "last_result",
+          result.slice(0, MAX_MEMORY_VALUE),
+          1800,
+          traceId
         );
       }
-    }
-
-    // Check if we need to auto-deploy the result to a GAS project
-    // AppForge or MotherShip sets prompt that contains "スプレッドシート [ {scriptId} ] にバインドされた Apps Script プロジェクト"
-    const isAppDeployTarget = result.indexOf("--- FILE:") >= 0 && (data.mode === "request_app_deployment" || (found && found.payload && found.payload.mode === "request_app_deployment") || (reqContent && reqContent.indexOf("Apps Script プロジェクト") >= 0));
-    if (isAppDeployTarget) {
-      // 抽出対象のScriptIdを推測する。通常 Prompt に "スプレッドシート [ ID ]" が入っているか、
-      // ターゲットとして指定されているかなど。（ARC側のプロンプト抽出要件に基づく）
-      const scriptIdMatch = (reqContent || data.prompt || "").match(/\[\s*([a-zA-Z0-9_-]{30,})\s*\]/);
-      const targetAppId = scriptIdMatch ? scriptIdMatch[1] : (data.target || "");
-      if (targetAppId && targetAppId.length > 30) {
-        addAudit(traceId, "DEPLOY_START", targetAppId, "", "info", "Starting GAS auto-deployment");
-        const deploySuccess = deployAppScript(targetAppId, result, traceId);
-        if (deploySuccess && mainRef) {
-          sheets.main.getRange(mainRef.row_index, 5).setValue(norm(mainRef.response) + "\n\n[Gateway Auto-Deploy] SUCCESS to " + targetAppId);
+      if (resultTarget) {
+        markTargetSuccess(resultTarget, traceId);
+      }
+      if (reqUser && result) {
+        const keyBase = "user:" + reqUser + ":" + (resultSlot || resultTarget || "general");
+        const memValue = ("request=" + reqContent + "\nresult=" + result)
+          .replace(/\s+/g, " ")
+          .slice(0, MAX_MEMORY_VALUE);
+        setGatewayLongMemory(
+          keyBase + ":last_success",
+          memValue,
+          "arc_result_auto",
+          traceId,
+          [resultTarget, resultSlot, "success", reqUser].filter((x) => x).join(",")
+        );
+        const qTokens = tokenizeForMemory(reqContent);
+        if (qTokens.length > 0) {
+          const topicKey = "topic:" + qTokens[0] + ":" + (resultTarget || "general");
+          setGatewayLongMemory(
+            topicKey,
+            ("user=" + reqUser + " / " + memValue).slice(0, MAX_MEMORY_VALUE),
+            "arc_result_auto",
+            traceId,
+            [resultTarget, resultSlot, "topic"].filter((x) => x).join(",")
+          );
         }
       }
-    }
 
-    addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
-    triggerNextAction(missionId, traceId);
-    return jsonOut({ status: "ok", trace_id: traceId });
+      // Check if we need to auto-deploy the result to a GAS project
+      // AppForge or MotherShip sets prompt that contains "スプレッドシート [ {scriptId} ] にバインドされた Apps Script プロジェクト"
+      const isAppDeployTarget = result.indexOf("--- FILE:") >= 0 && (data.mode === "request_app_deployment" || (found && found.payload && found.payload.mode === "request_app_deployment") || (reqContent && reqContent.indexOf("Apps Script プロジェクト") >= 0));
+      if (isAppDeployTarget) {
+        // 抽出対象のScriptIdを推測する。通常 Prompt に "スプレッドシート [ ID ]" が入っているか、
+        // ターゲットとして指定されているかなど。（ARC側のプロンプト抽出要件に基づく）
+        const scriptIdMatch = (reqContent || data.prompt || "").match(/\[\s*([a-zA-Z0-9_-]{30,})\s*\]/);
+        const targetAppId = scriptIdMatch ? scriptIdMatch[1] : (data.target || "");
+        if (targetAppId && targetAppId.length > 30) {
+          addAudit(traceId, "DEPLOY_START", targetAppId, "", "info", "Starting GAS auto-deployment");
+          const deploySuccess = deployAppScript(targetAppId, result, traceId);
+          if (deploySuccess && mainRef) {
+            sheets.main.getRange(mainRef.row_index, 5).setValue(norm(mainRef.response) + "\n\n[Gateway Auto-Deploy] SUCCESS to " + targetAppId);
+          }
+        }
+      }
+
+      addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
+      triggerNextAction(missionId, traceId);
+      return jsonOut({ status: "ok", trace_id: traceId });
+    }
   }
 
   if (mode === "arc_error" || mode === "report_error") {

@@ -445,8 +445,6 @@ class MainActivity : AppCompatActivity() {
         }
     )
 }
-        )
-    }
 
     private fun executeLoad(target: AiTarget, customUrl: String? = null) {
         currentTarget = target

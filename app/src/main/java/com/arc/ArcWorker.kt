@@ -1199,6 +1199,17 @@ class ArcWorker(
         }
         currentDoneCallback = null
         isFinalizingResult = false
+        
+        // 🚨 異常終了（タイムアウト・フォールバック等）の場合に
+        // 司令部のパイプラインが await() で無限待ち（150秒など）するのを防ぐため、
+        // タスク終了時に強制的に空文字（失敗）シグナルを送る。
+        // ※ 成功時はすでに onAiResult(結果) が呼ばれており、多重シグナルは無視されるので安全。
+        if (wasQid.startsWith("PIPE_")) {
+            pipelineProvider().onAiResult("")
+        } else if (wasQid.startsWith("RESEARCH_") || wasQid.startsWith("GEN_")) {
+            appDeploymentProvider?.invoke()?.onAiResult("")
+        }
+
         d?.invoke()
     }
     private fun executeVisionTask(t: ArcTask.VisionRequest) { 
