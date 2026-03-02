@@ -325,14 +325,14 @@ function doPost(e) {
       ARC_REQUIRE_SIGNATURE: "false",
       ARC_SIGNATURE_WINDOW_SEC: "180",
       ARC_NONCE_TTL_SEC: "300"
-      ,ARC_COMPACT_SCAN_MAX: "300"
-      ,ARC_AUDIT_COMPACT_WINDOW_SEC: "90"
-      ,ARC_ERROR_COMPACT_WINDOW_SEC: "300"
-      ,ARC_ROUTE_RECENT_WINDOW_SEC: "45"
-      ,ARC_ROUTE_CURSOR_LOOKBACK_ROWS: "40"
-      ,ARC_ROUTE_BACKFILL_SEC: "60"
-      ,ARC_LEASE_PROGRESS_TOUCH_ENABLED: "true"
-      ,ARC_LEASE_EXPIRE_MAX: "2"
+      , ARC_COMPACT_SCAN_MAX: "300"
+      , ARC_AUDIT_COMPACT_WINDOW_SEC: "90"
+      , ARC_ERROR_COMPACT_WINDOW_SEC: "300"
+      , ARC_ROUTE_RECENT_WINDOW_SEC: "45"
+      , ARC_ROUTE_CURSOR_LOOKBACK_ROWS: "40"
+      , ARC_ROUTE_BACKFILL_SEC: "60"
+      , ARC_LEASE_PROGRESS_TOUCH_ENABLED: "true"
+      , ARC_LEASE_EXPIRE_MAX: "2"
     };
     Object.keys(defaults).forEach((k) => {
       if (!norm(props.getProperty(k))) props.setProperty(k, defaults[k]);
@@ -605,7 +605,7 @@ function doPost(e) {
     try {
       const obj = JSON.parse(txt);
       if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
-    } catch (_) {}
+    } catch (_) { }
     const out = {};
     out[fallbackField] = txt;
     return out;
@@ -1705,9 +1705,9 @@ function doPost(e) {
           "",
           "pending",
           canonicalTarget(cmd.requestedTarget) + "->" + canonicalTarget(cmd.target) +
-            " / reason=" + norm(cmd.adaptiveDecision.reason) +
-            " / sr=" + norm(cmd.adaptiveDecision.success_rate) +
-            " / lat=" + norm(cmd.adaptiveDecision.avg_latency_sec)
+          " / reason=" + norm(cmd.adaptiveDecision.reason) +
+          " / sr=" + norm(cmd.adaptiveDecision.success_rate) +
+          " / lat=" + norm(cmd.adaptiveDecision.avg_latency_sec)
         );
       }
       if (memPack.hit_count > 0) {
@@ -2343,6 +2343,166 @@ function doPost(e) {
     addAudit(toTraceId(data.trace_id), "CHAT_SUBMITTED", "", "", "new", user);
     return jsonOut({ status: "ok" });
   }
+
+  const deployAppScript = (targetScriptId, resultText, traceId) => {
+    try {
+      const token = ScriptApp.getOAuthToken();
+      if (!token) {
+        addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "No OAuth Token available.");
+        return false;
+      }
+      const files = [];
+      const fileRegex = /---\s*FILE:\s*([a-zA-Z0-9_\-\.]+)\s*---\s*```[a-z]*\n([\s\S]*?)\n```/g;
+      let match;
+      while ((match = fileRegex.exec(resultText)) !== null) {
+        const fileName = match[1].trim();
+        const fileContent = match[2];
+        const nameParts = fileName.split('.');
+        if (nameParts.length < 2) continue;
+        const typeStr = nameParts[nameParts.length - 1].toLowerCase();
+        let fileType = "SERVER_JS";
+        if (typeStr === 'html') fileType = "HTML";
+        else if (typeStr === 'json') fileType = "JSON";
+        files.push({
+          name: nameParts.slice(0, -1).join('.'),
+          type: fileType,
+          source: fileContent
+        });
+      }
+      if (files.length === 0) {
+        addAudit(traceId, "DEPLOY_SKIP", targetScriptId, "", "warn", "No valid files found for deployment.");
+        return false;
+      }
+      const contentUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/content";
+      const fetchContentRes = UrlFetchApp.fetch(contentUrl, {
+        method: "get",
+        headers: { Authorization: "Bearer " + token },
+        muteHttpExceptions: true
+      });
+      let existingFiles = [];
+      if (fetchContentRes.getResponseCode() === 200) {
+        const contentData = JSON.parse(fetchContentRes.getContentText());
+        existingFiles = contentData.files || [];
+      }
+      const hasManifest = files.some((f) => f.name === 'appsscript');
+      if (!hasManifest) {
+        const existingManifest = existingFiles.find((f) => f.name === 'appsscript');
+        if (existingManifest) {
+          files.push(existingManifest);
+        }
+      }
+      const putPayload = { files: files };
+      const putRes = UrlFetchApp.fetch(contentUrl, {
+        method: "put",
+        contentType: "application/json",
+        headers: { Authorization: "Bearer " + token },
+        payload: JSON.stringify(putPayload),
+        muteHttpExceptions: true
+      });
+      if (putRes.getResponseCode() >= 300) {
+        addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to PUT code: " + putRes.getContentText());
+        return false;
+      }
+      const versionsUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions";
+      const verRes = UrlFetchApp.fetch(versionsUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: "Bearer " + token },
+        payload: JSON.stringify({ description: "Auto-deployed by METRON at " + new Date().toISOString() }),
+        muteHttpExceptions: true
+      });
+      if (verRes.getResponseCode() >= 300) {
+        addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to create Version: " + verRes.getContentText());
+        return false;
+      }
+      const versionData = JSON.parse(verRes.getContentText());
+      const versionNumber = versionData.versionNumber;
+      const deploymentsUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/deployments";
+      const depsRes = UrlFetchApp.fetch(deploymentsUrl, {
+        method: "get",
+        headers: { Authorization: "Bearer " + token },
+        muteHttpExceptions: true
+      });
+      let currentDeploymentId = null;
+      let deploymentsList = [];
+      if (depsRes.getResponseCode() === 200) {
+        const dData = JSON.parse(depsRes.getContentText());
+        deploymentsList = dData.deployments || [];
+        const existingWebDep = deploymentsList.find((d) => d.deploymentConfig && d.deploymentConfig.versionNumber);
+        if (existingWebDep) {
+          currentDeploymentId = existingWebDep.deploymentId;
+        }
+      }
+      if (currentDeploymentId) {
+        const updateUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/deployments/" + currentDeploymentId;
+        const updatePayload = {
+          deploymentConfig: {
+            versionNumber: versionNumber,
+            description: "Auto-deployed by METRON at " + new Date().toISOString()
+          }
+        };
+        const updateRes = UrlFetchApp.fetch(updateUrl, {
+          method: "put",
+          contentType: "application/json",
+          headers: { Authorization: "Bearer " + token },
+          payload: JSON.stringify(updatePayload),
+          muteHttpExceptions: true
+        });
+        if (updateRes.getResponseCode() >= 300) {
+          addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to update deployment: " + updateRes.getContentText());
+        } else {
+          addAudit(traceId, "DEPLOY_SUCCESS", targetScriptId, "", "ok", "v" + versionNumber + " -> deps:" + currentDeploymentId);
+        }
+      } else {
+        const createPayload = {
+          versionNumber: versionNumber,
+          description: "Initial Auto-deploy by METRON"
+        };
+        const createRes = UrlFetchApp.fetch(deploymentsUrl, {
+          method: "post",
+          contentType: "application/json",
+          headers: { Authorization: "Bearer " + token },
+          payload: JSON.stringify(createPayload),
+          muteHttpExceptions: true
+        });
+        if (createRes.getResponseCode() >= 300) {
+          addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to create deployment: " + createRes.getContentText());
+        } else {
+          const newData = JSON.parse(createRes.getContentText());
+          addAudit(traceId, "DEPLOY_SUCCESS", targetScriptId, "", "ok", "v" + versionNumber + " -> NEW deps:" + newData.deploymentId);
+        }
+      }
+      const verListRes = UrlFetchApp.fetch(versionsUrl, {
+        method: "get",
+        headers: { Authorization: "Bearer " + token },
+        muteHttpExceptions: true
+      });
+      if (verListRes.getResponseCode() === 200) {
+        const vData = JSON.parse(verListRes.getContentText());
+        const allVersions = vData.versions || [];
+        if (allVersions.length > 150) {
+          allVersions.sort((a, b) => a.versionNumber - b.versionNumber);
+          const toDelete = allVersions.slice(0, 20);
+          let deletedCount = 0;
+          for (let i = 0; i < toDelete.length; i++) {
+            const v = toDelete[i];
+            const delUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions/" + v.versionNumber;
+            const delRes = UrlFetchApp.fetch(delUrl, {
+              method: "delete",
+              headers: { Authorization: "Bearer " + token },
+              muteHttpExceptions: true
+            });
+            if (delRes.getResponseCode() < 300) deletedCount++;
+          }
+          addAudit(traceId, "DEPLOY_CLEANUP", targetScriptId, "", "ok", "Deleted " + deletedCount + " old versions.");
+        }
+      }
+      return true;
+    } catch (e) {
+      addAudit(traceId, "DEPLOY_EXCEPTION", targetScriptId, "", "error", e.toString());
+      return false;
+    }
+  };
 
   const triggerNextAction = (missionId, traceId) => {
     // ARC_DONE または MOTHERSHIP_DONE になった直後に連鎖判定を行う
@@ -3199,6 +3359,24 @@ function doPost(e) {
         );
       }
     }
+
+    // Check if we need to auto-deploy the result to a GAS project
+    // AppForge or MotherShip sets prompt that contains "スプレッドシート [ {scriptId} ] にバインドされた Apps Script プロジェクト"
+    const isAppDeployTarget = result.indexOf("--- FILE:") >= 0 && (data.mode === "request_app_deployment" || (found && found.payload && found.payload.mode === "request_app_deployment") || (reqContent && reqContent.indexOf("Apps Script プロジェクト") >= 0));
+    if (isAppDeployTarget) {
+      // 抽出対象のScriptIdを推測する。通常 Prompt に "スプレッドシート [ ID ]" が入っているか、
+      // ターゲットとして指定されているかなど。（ARC側のプロンプト抽出要件に基づく）
+      const scriptIdMatch = (reqContent || data.prompt || "").match(/\[\s*([a-zA-Z0-9_-]{30,})\s*\]/);
+      const targetAppId = scriptIdMatch ? scriptIdMatch[1] : (data.target || "");
+      if (targetAppId && targetAppId.length > 30) {
+        addAudit(traceId, "DEPLOY_START", targetAppId, "", "info", "Starting GAS auto-deployment");
+        const deploySuccess = deployAppScript(targetAppId, result, traceId);
+        if (deploySuccess && mainRef) {
+          sheets.main.getRange(mainRef.row_index, 5).setValue(norm(mainRef.response) + "\n\n[Gateway Auto-Deploy] SUCCESS to " + targetAppId);
+        }
+      }
+    }
+
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
     triggerNextAction(missionId, traceId);
     return jsonOut({ status: "ok", trace_id: traceId });
@@ -3329,7 +3507,7 @@ function doPost(e) {
     const hudSeqKey = workerId ? ("hud_seq:" + workerId) : "";
     const prevHudSeq = hudSeqKey ? parseHudSeq(hbCache.get(hudSeqKey)) : -1;
     const hudSeqProgress = hudSeq >= 0 && (prevHudSeq < 0 || hudSeq > prevHudSeq);
-    const hudTail = (function(v) {
+    const hudTail = (function (v) {
       try {
         if (Array.isArray(v)) return v.map((x) => norm(x)).join(" > ").slice(0, 1200);
         const s = norm(v);

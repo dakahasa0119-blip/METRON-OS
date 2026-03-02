@@ -238,6 +238,18 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
     });
   },
 
+  deployToGateway_: function (targetScriptId, resultText, traceId) {
+    return this.postGateway_("report_result", {
+      qid: "baku_deploy_" + Date.now(),
+      mission_id: "baku_deploy_" + Date.now(),
+      target: targetScriptId || "",
+      prompt: "スプレッドシート [ " + targetScriptId + " ] にバインドされた Apps Script プロジェクト",
+      text: String(resultText || ""),
+      trace_id: String(traceId || ""),
+      mode: "request_app_deployment"
+    });
+  },
+
   ensurePlaybookSheet_: function () {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName("BAKU_PLAYBOOK") || ss.insertSheet("BAKU_PLAYBOOK");
