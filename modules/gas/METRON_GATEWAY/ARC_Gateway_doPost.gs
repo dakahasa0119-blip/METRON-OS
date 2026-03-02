@@ -27,176 +27,6 @@ function doPost(e) {
   const norm = (v) => String(v || "").trim();
   const lower = (v) => norm(v).toLowerCase();
   const upper = (v) => norm(v).toUpperCase();
-  const canonicalTarget = (v) => {
-    const t = lower(v).replace(/[^a-z0-9_-]/g, "").slice(0, 40);
-    if (!t) return "";
-    if (t === "claude") return "copilot";
-    return t;
-  };
-  const canonicalSlotId = (v) => {
-    const s = lower(v).replace(/[^a-z0-9_-]/g, "");
-    return s.slice(0, 40);
-  };
-  const normalizeSlotAliasId = (slotId) => {
-    const sid = canonicalSlotId(slotId);
-    if (sid === "copilot") return "claude";
-    return sid;
-  };
-  const defaultSlotRegistry = () => ([
-    {
-      slot_id: "chatgpt",
-      display_name: "ChatGPT",
-      target: "chatgpt",
-      enabled: true,
-      priority: 10,
-      login: "openai"
-    },
-    {
-      slot_id: "gemini",
-      display_name: "Gemini",
-      target: "gemini",
-      enabled: true,
-      priority: 20,
-      login: "google"
-    },
-    {
-      slot_id: "claude",
-      display_name: "Claude",
-      target: "copilot",
-      enabled: false,
-      priority: 30,
-      login: "google_or_email"
-    }
-  ]);
-  const normalizeSlotEntry = (slot, idx) => {
-    const s = slot && typeof slot === "object" ? slot : {};
-    const target = canonicalTarget(s.target);
-    const slotIdSeed = normalizeSlotAliasId(s.slot_id) || (target && target !== "all" ? target : ("slot" + (idx + 1)));
-    const enabled = (() => {
-      if (typeof s.enabled === "boolean") return s.enabled;
-      const ev = lower(norm(s.enabled));
-      if (!ev) return true;
-      return ev !== "false" && ev !== "0" && ev !== "off";
-    })();
-    return {
-      slot_id: slotIdSeed,
-      display_name: norm(s.display_name) || slotIdSeed,
-      target: target && target !== "all" ? target : "gemini",
-      enabled: enabled,
-      priority: clamp(parseInt(norm(s.priority), 10), 1, 999) || ((idx + 1) * 10),
-      login: norm(s.login).slice(0, 40),
-      url: norm(s.url).slice(0, 400),
-      input_selector: norm(s.input_selector).slice(0, 240),
-      send_selector: norm(s.send_selector).slice(0, 240),
-      response_selector: norm(s.response_selector).slice(0, 240)
-    };
-  };
-  const loadSlotRegistry = () => {
-    const raw = norm(props.getProperty("ARC_SLOT_REGISTRY_JSON"));
-    const base = (() => {
-      if (!raw) return defaultSlotRegistry();
-      try {
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed) || parsed.length === 0) return defaultSlotRegistry();
-        return parsed;
-      } catch (_) {
-        return defaultSlotRegistry();
-      }
-    })();
-    const out = [];
-    const seen = {};
-    for (let i = 0; i < base.length; i++) {
-      const n = normalizeSlotEntry(base[i], i);
-      if (!n.slot_id || seen[n.slot_id]) continue;
-      seen[n.slot_id] = true;
-      out.push(n);
-    }
-    if (out.length === 0) {
-      const defs = defaultSlotRegistry().map((s, i) => normalizeSlotEntry(s, i));
-      props.setProperty("ARC_SLOT_REGISTRY_JSON", JSON.stringify(defs));
-      return defs;
-    }
-    const sorted = out.sort((a, b) => a.priority - b.priority);
-    const hasLegacyCopilot = sorted.some((s) => canonicalSlotId(s.slot_id) === "copilot");
-    const hasClaude = sorted.some((s) => canonicalSlotId(s.slot_id) === "claude");
-    if (hasLegacyCopilot && !hasClaude) {
-      const migrated = sorted.map((s) => {
-        if (canonicalSlotId(s.slot_id) !== "copilot") return s;
-        return Object.assign({}, s, { slot_id: "claude", display_name: norm(s.display_name) || "Claude" });
-      });
-      saveSlotRegistry(migrated);
-      return migrated;
-    }
-    return sorted;
-  };
-  const saveSlotRegistry = (slots) => {
-    const arr = Array.isArray(slots) ? slots : [];
-    props.setProperty("ARC_SLOT_REGISTRY_JSON", JSON.stringify(arr));
-  };
-  const findSlotById = (slotId, slots) => {
-    const sid = normalizeSlotAliasId(slotId);
-    if (!sid) return null;
-    const arr = Array.isArray(slots) ? slots : loadSlotRegistry();
-    for (let i = 0; i < arr.length; i++) {
-      if (normalizeSlotAliasId(arr[i].slot_id) === sid) return arr[i];
-    }
-    return null;
-  };
-  const preferredSlotForTarget = (target, slots) => {
-    const t = canonicalTarget(target);
-    if (!t || t === "all") return null;
-    const arr = Array.isArray(slots) ? slots : loadSlotRegistry();
-    const enabled = arr.filter((s) => s.enabled && canonicalTarget(s.target) === t);
-    if (enabled.length > 0) return enabled[0];
-    const any = arr.filter((s) => canonicalTarget(s.target) === t);
-    return any.length > 0 ? any[0] : null;
-  };
-  const resolveSlotForTarget = (target, requestedSlotId, slots) => {
-    const arr = Array.isArray(slots) ? slots : loadSlotRegistry();
-    const t = canonicalTarget(target);
-    const sid = canonicalSlotId(requestedSlotId);
-    if (sid) {
-      const hit = findSlotById(sid, arr);
-      if (hit && canonicalTarget(hit.target) === t) return sid;
-    }
-    const preferred = preferredSlotForTarget(t, arr);
-    return preferred ? canonicalSlotId(preferred.slot_id) : "";
-  };
-  const listSlotTargets = (enabledOnly) => {
-    const arr = loadSlotRegistry();
-    const out = [];
-    const seen = {};
-    for (let i = 0; i < arr.length; i++) {
-      const s = arr[i];
-      if (enabledOnly && !s.enabled) continue;
-      const t = canonicalTarget(s.target || "");
-      if (!t || t === "all" || seen[t]) continue;
-      seen[t] = true;
-      out.push(t);
-    }
-    return out;
-  };
-  const resolveOperationalTarget = (target, options) => {
-    const opt = options && typeof options === "object" ? options : {};
-    const allowAll = opt.allowAll === true;
-    const fallback = canonicalTarget(opt.fallback || "");
-    const t = canonicalTarget(target || "");
-    if (allowAll && t === "all") return "all";
-    if (t && t !== "all") {
-      const known = listSlotTargets(false);
-      if (known.indexOf(t) >= 0) return t;
-    }
-    if (fallback && fallback !== "all") return fallback;
-    const enabledTargets = listSlotTargets(true);
-    if (enabledTargets.length > 0) return enabledTargets[0];
-    const allTargets = listSlotTargets(false);
-    if (allTargets.length > 0) return allTargets[0];
-    return "gemini";
-  };
-  const normalizeRuntimeMode = (v) => {
-    const m = lower(v);
-    return m === "autonomous" ? "autonomous" : "interactive";
-  };
   const mode = norm(data.mode);
 
   const parseJsonSafe = (raw) => {
@@ -232,16 +62,16 @@ function doPost(e) {
     return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "BAKU";
   })();
   const defaultRoute = (() => {
-    const v = upper(norm(props.getProperty("ARC_DEFAULT_ROUTE") || "METRON"));
-    return v === "ARC" ? "ARC" : "METRON";
+    const v = upper(norm(props.getProperty("ARC_DEFAULT_ROUTE") || "MOTHERSHIP"));
+    return v === "ARC" ? "ARC" : "MOTHERSHIP";
   })();
   const defaultExecutor = (() => {
     const v = upper(norm(props.getProperty("ARC_DEFAULT_EXECUTOR") || "AUTO"));
     return v === "ARC" || v === "BAKU" || v === "AUTO" ? v : "AUTO";
   })();
   const defaultTarget = (() => {
-    const v = canonicalTarget(norm(props.getProperty("ARC_DEFAULT_TARGET") || "gemini"));
-    return v || "gemini";
+    const v = lower(norm(props.getProperty("ARC_DEFAULT_TARGET") || "gemini"));
+    return v === "chatgpt" || v === "copilot" || v === "all" || v === "gemini" ? v : "gemini";
   })();
   const requireSignature = lower(norm(props.getProperty("ARC_REQUIRE_SIGNATURE") || "false")) === "true";
   const autonomyPaused = lower(norm(props.getProperty("ARC_AUTONOMY_PAUSED") || "false")) === "true";
@@ -266,24 +96,6 @@ function doPost(e) {
   const routeBackfillSecRaw = parseInt(norm(props.getProperty("ARC_ROUTE_BACKFILL_SEC")) || "60", 10);
   const routeBackfillSec = Number.isFinite(routeBackfillSecRaw) && routeBackfillSecRaw >= 10 ? Math.min(routeBackfillSecRaw, 900) : 60;
   const leaseProgressTouchEnabled = lower(norm(props.getProperty("ARC_LEASE_PROGRESS_TOUCH_ENABLED") || "true")) === "true";
-  const adaptiveTargetEnabled = lower(norm(props.getProperty("ARC_ADAPTIVE_TARGET_ENABLED") || "true")) === "true";
-  const adaptiveWindowSecRaw = parseInt(norm(props.getProperty("ARC_ADAPTIVE_TARGET_WINDOW_SEC")) || "1800", 10);
-  const adaptiveWindowSec = Number.isFinite(adaptiveWindowSecRaw) && adaptiveWindowSecRaw >= 120
-    ? Math.min(adaptiveWindowSecRaw, 86400)
-    : 1800;
-  const adaptiveScanMaxRaw = parseInt(norm(props.getProperty("ARC_ADAPTIVE_TARGET_SCAN_MAX")) || "400", 10);
-  const adaptiveScanMax = Number.isFinite(adaptiveScanMaxRaw) && adaptiveScanMaxRaw >= 100
-    ? Math.min(adaptiveScanMaxRaw, 2000)
-    : 400;
-  const consultEnabled = lower(norm(props.getProperty("ARC_CONSULT_ENABLED") || "false")) === "true";
-  const targetCooldownSecRaw = parseInt(norm(props.getProperty("ARC_TARGET_COOLDOWN_SEC")) || "180", 10);
-  const targetCooldownSec = Number.isFinite(targetCooldownSecRaw) && targetCooldownSecRaw >= 30
-    ? Math.min(targetCooldownSecRaw, 3600)
-    : 180;
-  const targetFailStreakThresholdRaw = parseInt(norm(props.getProperty("ARC_TARGET_FAIL_STREAK_THRESHOLD")) || "2", 10);
-  const targetFailStreakThreshold = Number.isFinite(targetFailStreakThresholdRaw) && targetFailStreakThresholdRaw >= 1
-    ? Math.min(targetFailStreakThresholdRaw, 10)
-    : 2;
 
   const parseKeyMap = (raw) => {
     const txt = norm(raw);
@@ -296,7 +108,7 @@ function doPost(e) {
     }
   };
   const workerAuthMap = parseKeyMap(props.getProperty("ARC_WORKER_AUTH_MAP"));
-  const metronAuthMap = parseKeyMap(props.getProperty("METRON_WORKER_AUTH_MAP"));
+  const mothershipAuthMap = parseKeyMap(props.getProperty("MOTHERSHIP_WORKER_AUTH_MAP"));
 
   const parseAllowlist = (raw) => {
     const txt = norm(raw);
@@ -304,7 +116,7 @@ function doPost(e) {
     return txt.split(",").map((x) => norm(x)).filter((x) => x);
   };
   const arcWorkerAllowlist = parseAllowlist(props.getProperty("ARC_WORKER_ALLOWLIST"));
-  const metronWorkerAllowlist = parseAllowlist(props.getProperty("METRON_WORKER_ALLOWLIST"));
+  const mothershipWorkerAllowlist = parseAllowlist(props.getProperty("MOTHERSHIP_WORKER_ALLOWLIST"));
 
   const ensureRecommendedDefaults = () => {
     const defaults = {
@@ -337,9 +149,6 @@ function doPost(e) {
     Object.keys(defaults).forEach((k) => {
       if (!norm(props.getProperty(k))) props.setProperty(k, defaults[k]);
     });
-    if (!norm(props.getProperty("ARC_SLOT_REGISTRY_JSON"))) {
-      props.setProperty("ARC_SLOT_REGISTRY_JSON", JSON.stringify(defaultSlotRegistry()));
-    }
   };
 
   const expectedAuth = props.getProperty("ARC_AUTH_KEY") || "";
@@ -349,13 +158,12 @@ function doPost(e) {
     "arc_learning",
     "arc_heartbeat", "register_worker", "lease_job",
     "arc_consult", "route_chat",
-    "metron_submit", "metron_heartbeat", "metron_pull", "metron_result", "metron_error",
-    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts", "admin_target_scores", "admin_slot_scores", "admin_slot_list", "admin_slot_upsert", "admin_slot_delete",
+    "mothership_submit", "mothership_heartbeat", "mothership_pull", "mothership_result", "mothership_error",
+    "admin_status", "admin_cleanup", "admin_pause", "admin_resume", "admin_recover_queues", "admin_debug_snapshot", "admin_job_probe", "admin_chat_probe", "admin_mission_timing", "admin_set_timeouts",
     "admin_diag_latest",
-    "gateway_memory_put", "gateway_memory_get", "gateway_memory_search", "memory_put", "memory_get", "memory_search",
+    "gateway_memory_put", "gateway_memory_get", "memory_put", "memory_get",
     "arc_memory_put", "arc_memory_get", "arc_short_memory_put", "arc_short_memory_get",
-    "arc_diag_snapshot",
-    "arc_runtime_status", "arc_runtime_set", "arc_set_runtime_mode"
+    "arc_diag_snapshot"
   ];
 
   const getRequestTsMs = (v) => {
@@ -378,14 +186,14 @@ function doPost(e) {
   };
   const resolveSigningKey = (modeName, workerId) => {
     const w = norm(workerId);
-    if (modeName.indexOf("metron_") === 0) return norm(metronAuthMap[w] || expectedAuth);
+    if (modeName.indexOf("mothership_") === 0) return norm(mothershipAuthMap[w] || expectedAuth);
     return norm(workerAuthMap[w] || expectedAuth);
   };
   const validateWorkerAllowlist = (modeName, workerId) => {
     const wid = norm(workerId);
     if (!wid) return { ok: true };
-    if (modeName.indexOf("metron_") === 0) {
-      if (metronWorkerAllowlist.length > 0 && metronWorkerAllowlist.indexOf(wid) < 0) {
+    if (modeName.indexOf("mothership_") === 0) {
+      if (mothershipWorkerAllowlist.length > 0 && mothershipWorkerAllowlist.indexOf(wid) < 0) {
         return { ok: false, error: "worker_not_allowed" };
       }
       return { ok: true };
@@ -444,8 +252,8 @@ function doPost(e) {
     results: ensureSheet("ARC_RESULTS", ["Timestamp", "MissionID", "Target", "Prompt", "Result", "ImageURL"]),
     errors: ensureSheet("ARC_ERRORS", ["Timestamp", "QID", "Type", "Data"]),
     learning: ensureSheet("ARC_LEARNING", ["Timestamp", "Target", "Learned"]),
-    metronQueue: ensureSheet("METRON_QUEUE", ["Timestamp", "MessageID", "TargetID", "Mode", "Content", "Status"]),
-    metronNodes: ensureSheet("METRON_NODES", ["LastSeen", "NodeID", "Status", "Version"]),
+    mothership: ensureSheet("MOTHERSHIP_QUEUE", ["Timestamp", "MessageID", "User", "Content", "Status"]),
+    mothershipNodes: ensureSheet("MOTHERSHIP_NODES", ["LastSeen", "WorkerID", "Status", "Version"]),
     audit: ensureSheet("ARC_AUDIT", ["Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
     dead: ensureSheet("ARC_DEAD_JOBS", ["Timestamp", "JobID", "TraceID", "Executor", "Target", "Prompt", "RetryCount", "ErrorType", "ErrorData", "FailedWorker", "Reason", "Payload"]),
     auditArchive: ensureSheet("ARC_AUDIT_ARCHIVE", ["ArchivedAt", "Timestamp", "TraceID", "Event", "JobID", "Worker", "Status", "Detail"]),
@@ -702,174 +510,6 @@ function doPost(e) {
     return out;
   };
 
-  const tokenizeForMemory = (text) => {
-    const src = lower(text)
-      .replace(/https?:\/\/\S+/g, " ")
-      .replace(/[^a-z0-9_\-\u3040-\u30ff\u3400-\u9fff]+/g, " ");
-    const parts = src.split(/\s+/).map((x) => norm(x)).filter((x) => x.length >= 2);
-    const stop = {
-      the: 1, and: 1, for: 1, with: 1, from: 1, this: 1, that: 1, your: 1, you: 1, are: 1,
-      の: 1, に: 1, は: 1, を: 1, が: 1, と: 1, で: 1, です: 1, ます: 1, する: 1
-    };
-    const out = [];
-    const seen = {};
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
-      if (stop[p]) continue;
-      if (seen[p]) continue;
-      seen[p] = true;
-      out.push(p);
-      if (out.length >= 12) break;
-    }
-    return out;
-  };
-
-  const searchGatewayLongMemory = (query, opts) => {
-    const options = opts && typeof opts === "object" ? opts : {};
-    const limit = clamp(parseIntSafe(options.limit, 4), 1, 12);
-    const scan = clamp(parseIntSafe(options.scan, 300), 50, 1200);
-    const sourceFilter = norm(options.source);
-
-    const cache = CacheService.getScriptCache();
-    const cacheKey = "RAG_" + Utilities.base64Encode(query + "|" + limit + "|" + scan + "|" + sourceFilter).slice(0, 200);
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      try {
-        return JSON.parse(cached);
-      } catch (_) {}
-    }
-
-    const tokens = tokenizeForMemory(query);
-    const rows = readRecentRows(sheets.gatewayMemory, 6, scan).rows;
-    const ranked = [];
-    const sourceWeight = (src) => {
-      const s = lower(src);
-      if (s === "arc_result_auto") return 3.0;
-      if (s === "arc_error_auto") return 2.2;
-      if (s === "gateway_manual" || s === "gateway") return 1.6;
-      if (s.indexOf("diag") >= 0 || s.indexOf("webview") >= 0) return 0.2;
-      return 1.0;
-    };
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const row = rows[i];
-      const source = norm(row[3]);
-      if (sourceFilter && source !== sourceFilter) continue;
-      const key = norm(row[1]);
-      const value = norm(row[2]);
-      const tags = norm(row[5]);
-      const keyL = lower(key);
-      const valL = lower(value);
-      const tagL = lower(tags);
-      let score = 0;
-      for (let t = 0; t < tokens.length; t++) {
-        const tok = tokens[t];
-        if (!tok) continue;
-        if (keyL.indexOf(tok) >= 0) score += 2.2;
-        if (valL.indexOf(tok) >= 0) score += 1.0;
-        if (tagL.indexOf(tok) >= 0) score += 1.2;
-      }
-      if (tokens.length > 0 && score < 2.0) continue;
-      const ts = toMs(row[0]);
-      const recency = Number.isFinite(ts) ? Math.max(0, 1 - ((Date.now() - ts) / (1000 * 60 * 60 * 24 * 30))) : 0;
-      const weighted = score * sourceWeight(source);
-      ranked.push({
-        timestamp: row[0],
-        key: key,
-        value: value,
-        source: source,
-        trace_id: norm(row[4]),
-        tags: tags,
-        _score: weighted + recency
-      });
-    }
-    ranked.sort((a, b) => b._score - a._score);
-    const finalResult = ranked.slice(0, limit).map((r) => ({
-      timestamp: r.timestamp,
-      key: r.key,
-      value: r.value,
-      source: r.source,
-      trace_id: r.trace_id,
-      tags: r.tags
-    }));
-    cache.put(cacheKey, JSON.stringify(finalResult), 180); // 3 minutes cache limit to save execution time
-    return finalResult;
-  };
-
-  const compactMemoryItems = (rows, limitChars) => {
-    const maxChars = clamp(parseIntSafe(limitChars, 900), 240, 2400);
-    let used = 0;
-    const lines = [];
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      let meta = "";
-      let domain = "";
-      try {
-        const tagObj = JSON.parse(r.tags);
-        if (tagObj.outcome === "error") meta = "⚠️失敗/警告";
-        else if (tagObj.outcome === "success") meta = "✅成功/解決";
-        else meta = "📌記録";
-        if (tagObj.domain) domain = "(" + tagObj.domain + ") ";
-      } catch (_) {
-        meta = (r.source && r.source.indexOf("error") >= 0) ? "⚠️失敗" : "📌記録";
-      }
-      const line = `- ${meta} ${domain}[${norm(r.key)}] ${norm(r.value).slice(0, 360).replace(/\n/g, " ")}`;
-      if (!line.trim()) continue;
-      if (used + line.length + 1 > maxChars) break;
-      lines.push(line);
-      used += line.length + 1;
-    }
-    return lines.join("\n");
-  };
-
-  const findMainChatByMissionId = (missionId) => {
-    const mid = norm(missionId);
-    if (!mid) return null;
-    const rows = sheets.main.getDataRange().getValues();
-    for (let i = rows.length - 1; i >= 1; i--) {
-      if (norm(rows[i][5]) !== mid) continue;
-      return {
-        row_index: i + 1,
-        ts: rows[i][0],
-        user: norm(rows[i][1]),
-        content: norm(rows[i][2]),
-        status: norm(rows[i][3]),
-        response: norm(rows[i][4]),
-        mission_id: norm(rows[i][5])
-      };
-    }
-    return null;
-  };
-
-  const buildGatewayMemoryContextForRoute = (user, target, slotId, prompt, missionId) => {
-    const u = norm(user);
-    const t = canonicalTarget(target);
-    const sid = canonicalSlotId(slotId);
-    const baseQuery = [u, t, sid, prompt].join(" ").trim();
-    const hits = []
-      .concat(searchGatewayLongMemory(baseQuery, { limit: 3, scan: 500, source: "arc_result_auto" }))
-      .concat(searchGatewayLongMemory(baseQuery, { limit: 2, scan: 500, source: "arc_error_auto" }))
-      .concat(searchGatewayLongMemory(baseQuery, { limit: 2, scan: 500, source: "gateway_manual" }));
-    const dedup = [];
-    const seen = {};
-    for (let i = 0; i < hits.length; i++) {
-      const h = hits[i];
-      const k = norm(h.key) + "|" + norm(h.trace_id);
-      if (!k || seen[k]) continue;
-      seen[k] = true;
-      dedup.push(h);
-      if (dedup.length >= 6) break;
-    }
-    if (!dedup || dedup.length === 0) return { context: "", hit_count: 0, keys: [] };
-    const compact = compactMemoryItems(dedup, 900);
-    if (!compact) return { context: "", hit_count: 0, keys: [] };
-    const memoryHeader = "【METRON文明ベース知識：過去の関連記録】\n" + compact + "\n";
-    return {
-      context: memoryHeader,
-      hit_count: dedup.length,
-      keys: dedup.map((x) => norm(x.key)).filter((x) => x)
-    };
-  };
-
   const cleanupArcShortMemory = (maxRowsToScan) => {
     const limit = clamp(parseIntSafe(maxRowsToScan, 500), 50, 5000);
     const last = sheets.arcShortMemory.getLastRow();
@@ -956,433 +596,36 @@ function doPost(e) {
     return out;
   };
 
-  const getTargetFailStreak = (target) => {
-    const t = canonicalTarget(target);
-    if (!t) return 0;
-    const cache = CacheService.getScriptCache();
-    const n = parseInt(norm(cache.get("target_fail_streak:" + t)), 10);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  };
-
-  const getTargetCooldownState = (target) => {
-    const t = canonicalTarget(target);
-    if (!t) return { active: false, remaining_sec: 0, streak: 0, until_ms: 0 };
-    const cache = CacheService.getScriptCache();
-    const untilMsRaw = parseInt(norm(cache.get("target_cooldown_until:" + t)), 10);
-    const untilMs = Number.isFinite(untilMsRaw) && untilMsRaw > 0 ? untilMsRaw : 0;
-    const remainingSec = untilMs > 0 ? Math.max(0, Math.ceil((untilMs - Date.now()) / 1000)) : 0;
-    return {
-      active: remainingSec > 0,
-      remaining_sec: remainingSec,
-      streak: getTargetFailStreak(t),
-      until_ms: untilMs
-    };
-  };
-
-  const clearTargetDegradeState = (target) => {
-    const t = canonicalTarget(target);
-    if (!t) return;
-    const cache = CacheService.getScriptCache();
-    cache.remove("target_fail_streak:" + t);
-    cache.remove("target_cooldown_until:" + t);
-  };
-
-  const shouldCooldownForError = (errType, errData) => {
-    const u = upper(errType + " " + errData);
-    return (
-      u.indexOf("STALL") >= 0 ||
-      u.indexOf("TIMEOUT") >= 0 ||
-      u.indexOf("LOGIN_REQUIRED") >= 0 ||
-      u.indexOf("BOT_BLOCKED") >= 0 ||
-      u.indexOf("TARGET_STALL") >= 0 ||
-      u.indexOf("SCREEN_BLOCKED") >= 0 ||
-      u.indexOf("NO_PROGRESS") >= 0 ||
-      u.indexOf("NETWORK") >= 0 ||
-      u.indexOf("RATE_LIMIT") >= 0
-    );
-  };
-
-  const markTargetFailure = (target, errType, errData, traceId) => {
-    const t = canonicalTarget(target);
-    if (!t) return { cooled: false, streak: 0, reason: "invalid_target" };
-    if (!shouldCooldownForError(errType, errData)) return { cooled: false, streak: getTargetFailStreak(t), reason: "non_cooldown_error" };
-    const cache = CacheService.getScriptCache();
-    const prev = getTargetFailStreak(t);
-    const streak = prev + 1;
-    cache.put("target_fail_streak:" + t, String(streak), Math.max(targetCooldownSec * 3, 300));
-    if (streak < targetFailStreakThreshold) return { cooled: false, streak: streak, reason: "threshold_not_reached" };
-    const untilMs = Date.now() + targetCooldownSec * 1000;
-    cache.put("target_cooldown_until:" + t, String(untilMs), targetCooldownSec);
-    addAudit(norm(traceId), "TARGET_COOLDOWN_ON", "", "", "warn", t + " / streak=" + streak + " / sec=" + targetCooldownSec);
-    return { cooled: true, streak: streak, cooldown_sec: targetCooldownSec, until_ms: untilMs };
-  };
-
-  const markTargetSuccess = (target, traceId) => {
-    const t = canonicalTarget(target);
-    if (!t) return;
-    const state = getTargetCooldownState(t);
-    if (state.streak <= 0 && !state.active) return;
-    clearTargetDegradeState(t);
-    addAudit(norm(traceId), "TARGET_COOLDOWN_OFF", "", "", "ok", t + " / recovered");
-  };
-
-  const buildAdaptiveTargetScores = (windowSecRaw) => {
-    const windowSec = clamp(parseIntSafe(windowSecRaw, adaptiveWindowSec), 120, 86400);
-    const nowMs = Date.now();
-    const fromMs = nowMs - windowSec * 1000;
-    const targets = (() => {
-      const slots = loadSlotRegistry();
-      const seen = {};
-      const out = [];
-      for (let i = 0; i < slots.length; i++) {
-        const t = canonicalTarget(slots[i].target || "");
-        if (!t || seen[t]) continue;
-        seen[t] = true;
-        out.push(t);
-      }
-      if (!seen[defaultTarget]) {
-        seen[defaultTarget] = true;
-        out.push(defaultTarget);
-      }
-      if (out.length === 0) return ["gemini"];
-      return out;
-    })();
-    const stats = {};
-    targets.forEach((t) => {
-      stats[t] = {
-        target: t,
-        success: 0,
-        error: 0,
-        latency_sum_sec: 0,
-        latency_count: 0,
-        avg_latency_sec: null,
-        terminated: 0,
-        success_rate: null,
-        cooldown_active: false,
-        cooldown_remaining_sec: 0,
-        fail_streak: 0
-      };
-    });
-
-    const jobMap = {};
-    const jobs = readRecentRows(sheets.jobs, 7, adaptiveScanMax).rows;
-    for (let i = jobs.length - 1; i >= 0; i--) {
-      const row = jobs[i];
-      const jobId = norm(row[1]);
-      if (!jobId || jobMap[jobId]) continue;
-      const createdMs = toMs(row[0]);
-      if (!Number.isFinite(createdMs) || createdMs < fromMs) continue;
-      const payload = parseJsonSafe(norm(row[4]));
-      const target = canonicalTarget(payload.target || "");
-      if (!target || !stats[target]) continue;
-      jobMap[jobId] = { target: target, createdMs: createdMs };
-    }
-
-    const results = readRecentRows(sheets.results, 6, adaptiveScanMax).rows;
-    for (let i = results.length - 1; i >= 0; i--) {
-      const row = results[i];
-      const tsMs = toMs(row[0]);
-      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
-      const missionId = norm(row[1]);
-      const job = jobMap[missionId];
-      const target = job ? job.target : canonicalTarget(row[2]);
-      if (!target || !stats[target]) continue;
-      const st = stats[target];
-      st.success++;
-      if (job && Number.isFinite(job.createdMs)) {
-        const latencySec = Math.max(0, Math.floor((tsMs - job.createdMs) / 1000));
-        st.latency_sum_sec += latencySec;
-        st.latency_count++;
-      }
-    }
-
-    const errors = readRecentRows(sheets.errors, 4, adaptiveScanMax).rows;
-    for (let i = errors.length - 1; i >= 0; i--) {
-      const row = errors[i];
-      const tsMs = toMs(row[0]);
-      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
-      const missionId = norm(row[1]);
-      const job = jobMap[missionId];
-      if (!job || !stats[job.target]) continue;
-      stats[job.target].error++;
-    }
-
-    targets.forEach((t) => {
-      const st = stats[t];
-      st.terminated = st.success + st.error;
-      st.success_rate = st.terminated > 0 ? Number((st.success / st.terminated).toFixed(3)) : null;
-      st.avg_latency_sec = st.latency_count > 0 ? Number((st.latency_sum_sec / st.latency_count).toFixed(2)) : null;
-      const cool = getTargetCooldownState(t);
-      st.cooldown_active = cool.active;
-      st.cooldown_remaining_sec = cool.remaining_sec;
-      st.fail_streak = cool.streak;
-    });
-
-    return stats;
-  };
-
-  const pickAdaptiveTarget = (opts) => {
-    const options = opts && typeof opts === "object" ? opts : {};
-    const preferred = canonicalTarget(options.preferred || "") || defaultTarget;
-    const exclude = canonicalTarget(options.exclude || "");
-    const forceAdaptive = options.forceAdaptive === true;
-    const scores = buildAdaptiveTargetScores(options.windowSec);
-    const baseCandidates = Object.keys(scores).filter((t) => t !== exclude);
-    if (baseCandidates.length === 0) {
-      return { target: preferred, reason: "no_candidate", scores: scores };
-    }
-    const readyCandidates = baseCandidates.filter((t) => !(scores[t] && scores[t].cooldown_active));
-    const candidates = readyCandidates.length > 0 ? readyCandidates : baseCandidates;
-
-    let best = null;
-    for (let i = 0; i < candidates.length; i++) {
-      const t = candidates[i];
-      const st = scores[t];
-      if (!st) continue;
-      if (!best) {
-        best = { target: t, st: st };
-        continue;
-      }
-      const b = best.st;
-      const sr = st.success_rate === null ? -1 : st.success_rate;
-      const bSr = b.success_rate === null ? -1 : b.success_rate;
-      if (sr > bSr) {
-        best = { target: t, st: st };
-        continue;
-      }
-      if (sr < bSr) continue;
-      const lat = st.avg_latency_sec === null ? 999999 : st.avg_latency_sec;
-      const bLat = b.avg_latency_sec === null ? 999999 : b.avg_latency_sec;
-      if (lat < bLat) {
-        best = { target: t, st: st };
-        continue;
-      }
-      if (lat > bLat) continue;
-      if (st.success > b.success) best = { target: t, st: st };
-    }
-
-    if (!best) return { target: preferred, reason: "no_stats", scores: scores };
-    const hasTerminated = best.st.terminated > 0;
-    if (!hasTerminated && !forceAdaptive) {
-      return { target: preferred, reason: "insufficient_stats", scores: scores };
-    }
-    return {
-      target: best.target,
-      reason: "adaptive_best",
-      scores: scores,
-      success_rate: best.st.success_rate,
-      avg_latency_sec: best.st.avg_latency_sec
-    };
-  };
-
-  const buildAdaptiveSlotScores = (windowSecRaw) => {
-    const windowSec = clamp(parseIntSafe(windowSecRaw, adaptiveWindowSec), 120, 86400);
-    const nowMs = Date.now();
-    const fromMs = nowMs - windowSec * 1000;
-    const slots = loadSlotRegistry();
-    const stats = {};
-    slots.forEach((s) => {
-      const sid = canonicalSlotId(s.slot_id);
-      if (!sid) return;
-      stats[sid] = {
-        slot_id: sid,
-        display_name: norm(s.display_name) || sid,
-        target: canonicalTarget(s.target) || "",
-        enabled: !!s.enabled,
-        priority: Number(s.priority || 0),
-        success: 0,
-        error: 0,
-        latency_sum_sec: 0,
-        latency_count: 0,
-        avg_latency_sec: null,
-        terminated: 0,
-        success_rate: null
-      };
-    });
-
-    const fallbackSlotForTarget = (target) => {
-      const slot = preferredSlotForTarget(target, slots);
-      return slot ? canonicalSlotId(slot.slot_id) : "";
-    };
-
-    const jobMap = {};
-    const jobs = readRecentRows(sheets.jobs, 7, adaptiveScanMax).rows;
-    for (let i = jobs.length - 1; i >= 0; i--) {
-      const row = jobs[i];
-      const jobId = norm(row[1]);
-      if (!jobId || jobMap[jobId]) continue;
-      const createdMs = toMs(row[0]);
-      if (!Number.isFinite(createdMs) || createdMs < fromMs) continue;
-      const payload = parseJsonSafe(norm(row[4]));
-      const target = canonicalTarget(payload.target || "");
-      const sid = canonicalSlotId(payload.slot_id || "") || fallbackSlotForTarget(target);
-      if (!sid || !stats[sid]) continue;
-      jobMap[jobId] = { slot_id: sid, createdMs: createdMs };
-    }
-
-    const results = readRecentRows(sheets.results, 6, adaptiveScanMax).rows;
-    for (let i = results.length - 1; i >= 0; i--) {
-      const row = results[i];
-      const tsMs = toMs(row[0]);
-      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
-      const missionId = norm(row[1]);
-      const job = jobMap[missionId];
-      const sid = job ? job.slot_id : fallbackSlotForTarget(row[2]);
-      if (!sid || !stats[sid]) continue;
-      const st = stats[sid];
-      st.success++;
-      if (job && Number.isFinite(job.createdMs)) {
-        const latencySec = Math.max(0, Math.floor((tsMs - job.createdMs) / 1000));
-        st.latency_sum_sec += latencySec;
-        st.latency_count++;
-      }
-    }
-
-    const errors = readRecentRows(sheets.errors, 4, adaptiveScanMax).rows;
-    for (let i = errors.length - 1; i >= 0; i--) {
-      const row = errors[i];
-      const tsMs = toMs(row[0]);
-      if (!Number.isFinite(tsMs) || tsMs < fromMs) continue;
-      const missionId = norm(row[1]);
-      const job = jobMap[missionId];
-      if (!job || !stats[job.slot_id]) continue;
-      stats[job.slot_id].error++;
-    }
-
-    Object.keys(stats).forEach((sid) => {
-      const st = stats[sid];
-      st.terminated = st.success + st.error;
-      st.success_rate = st.terminated > 0 ? Number((st.success / st.terminated).toFixed(3)) : null;
-      st.avg_latency_sec = st.latency_count > 0 ? Number((st.latency_sum_sec / st.latency_count).toFixed(2)) : null;
-    });
-    return stats;
-  };
-
-  const pickAdaptiveSlot = (opts) => {
-    const options = opts && typeof opts === "object" ? opts : {};
-    const slots = loadSlotRegistry();
-    const preferred = canonicalSlotId(options.preferred || "");
-    const exclude = canonicalSlotId(options.exclude || "");
-    const forceAdaptive = options.forceAdaptive === true;
-    const scores = buildAdaptiveSlotScores(options.windowSec);
-    const candidates = Object.keys(scores).filter((sid) => {
-      const st = scores[sid];
-      if (!st || !st.enabled) return false;
-      if (sid === exclude) return false;
-      return true;
-    });
-    if (candidates.length === 0) {
-      const fallback = preferred || (slots.find((s) => s.enabled) ? canonicalSlotId(slots.find((s) => s.enabled).slot_id) : "");
-      return { slot_id: fallback, reason: "no_enabled_slot", scores: scores };
-    }
-    const ranked = candidates.sort((a, b) => {
-      const A = scores[a];
-      const B = scores[b];
-      const aSr = A.success_rate === null ? -1 : A.success_rate;
-      const bSr = B.success_rate === null ? -1 : B.success_rate;
-      if (aSr !== bSr) return bSr - aSr;
-      const aLat = A.avg_latency_sec === null ? 999999 : A.avg_latency_sec;
-      const bLat = B.avg_latency_sec === null ? 999999 : B.avg_latency_sec;
-      if (aLat !== bLat) return aLat - bLat;
-      if (A.success !== B.success) return B.success - A.success;
-      return (A.priority || 999) - (B.priority || 999);
-    });
-    const best = scores[ranked[0]];
-    if (!best) return { slot_id: preferred || ranked[0], reason: "no_stats", scores: scores };
-    if (best.terminated <= 0 && !forceAdaptive && preferred && scores[preferred] && scores[preferred].enabled) {
-      return { slot_id: preferred, reason: "insufficient_stats", scores: scores };
-    }
-    return {
-      slot_id: best.slot_id,
-      reason: "adaptive_best",
-      success_rate: best.success_rate,
-      avg_latency_sec: best.avg_latency_sec,
-      scores: scores
-    };
-  };
-
   const parseCommandTags = (text) => {
     const raw = norm(text);
     const l = raw.toLowerCase();
     const has = (t) => l.indexOf(t) >= 0;
-    const slots = loadSlotRegistry();
 
     let route = defaultRoute;
     if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy") || has("#baku") || has("@baku")) route = "ARC";
-    if (has("#mother") || has("@mother") || has("#metron") || has("@metron") || has("#osb")) route = "METRON";
+    if (has("#mother") || has("@mother") || has("#metron") || has("#osb")) route = "MOTHERSHIP";
 
     let executor = defaultExecutor;
     if (has("#baku") || has("@baku")) executor = "BAKU";
     else if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy")) executor = "ARC";
 
     let target = defaultTarget;
-    let requestedTarget = defaultTarget;
-    let slotId = "";
-    let adaptiveDecision = null;
     let targetPinned = false;
-    let useMemory = true;
-    const slotTag =
-      (raw.match(/(?:^|\s)[#@]slot:([a-zA-Z0-9_-]{1,40})(?:\s|$)/i) || [])[1] ||
-      (raw.match(/\[slot:([a-zA-Z0-9_-]{1,40})\]/i) || [])[1] ||
-      "";
-    const explicitTargetTag =
-      (raw.match(/(?:^|\s)[#@]target:([a-zA-Z0-9_-]{1,40})(?:\s|$)/i) || [])[1] ||
-      (raw.match(/\[target:([a-zA-Z0-9_-]{1,40})\]/i) || [])[1] ||
-      "";
-    if (slotTag) {
-      const foundSlot = findSlotById(slotTag, slots);
-      if (foundSlot) {
-        slotId = canonicalSlotId(foundSlot.slot_id);
-        target = canonicalTarget(foundSlot.target) || target;
-        targetPinned = true;
-      }
-    }
-    if (explicitTargetTag) {
-      const explicitTarget = canonicalTarget(explicitTargetTag);
-      if (explicitTarget) {
-        target = explicitTarget;
-        targetPinned = true;
-      }
-    } else if (has("#chatgpt") || has("@chatgpt") || has("[chatgpt]")) target = "chatgpt";
+    if (has("#chatgpt") || has("@chatgpt") || has("[chatgpt]")) target = "chatgpt";
     else if (has("#copilot") || has("@copilot") || has("[copilot]")) target = "copilot";
-    else if (has("#claude") || has("@claude") || has("[claude]")) target = "copilot";
     else if (has("#all") || has("@all")) target = "ALL";
     else if (has("#gemini") || has("@gemini") || has("[gemini]")) target = "gemini";
     if (
       has("#chatgpt") || has("@chatgpt") || has("[chatgpt]") ||
       has("#gemini") || has("@gemini") || has("[gemini]") ||
-      has("#copilot") || has("@copilot") || has("[copilot]") ||
-      has("#claude") || has("@claude") || has("[claude]")
+      has("#copilot") || has("@copilot") || has("[copilot]")
     ) targetPinned = true;
     if (has("#pin_target") || has("@pin_target") || has("#locktarget") || has("#target_fixed")) targetPinned = true;
     if (has("#allow_failover") || has("@allow_failover")) targetPinned = false;
-    if (has("#no_memory") || has("@no_memory") || has("#memory_off")) useMemory = false;
-    if (has("#memory_on") || has("@memory_on")) useMemory = true;
-    if (lower(target) !== "all") {
-      target = resolveOperationalTarget(target, { fallback: defaultTarget });
-    }
-    requestedTarget = target;
-    if (slotId) {
-      const hitSlot = findSlotById(slotId, slots);
-      if (!hitSlot || canonicalTarget(hitSlot.target) !== canonicalTarget(target)) {
-        slotId = "";
-      }
-    }
-    if (!slotId && lower(target) !== "all") {
-      slotId = resolveSlotForTarget(target, "", slots);
-    }
 
     let opMode = "request_arc";
     if (has("#refresh")) opMode = "arc_refresh";
     else if (has("#screenshot") || has("#shot")) opMode = "arc_screenshot";
-    let runtimeMode = "";
-    if (has("#runtime_auto") || has("#autonomous") || has("#mode_auto")) {
-      opMode = "arc_set_runtime_mode";
-      runtimeMode = "autonomous";
-    } else if (has("#runtime_interactive") || has("#mode_interactive")) {
-      opMode = "arc_set_runtime_mode";
-      runtimeMode = "interactive";
-    }
 
     let script = "";
     const jsStart = raw.indexOf("```js");
@@ -1397,37 +640,13 @@ function doPost(e) {
     let cleanPrompt = raw
       .replace(/#[a-zA-Z0-9_:-]+/g, " ")
       .replace(/@[a-zA-Z0-9_:-]+/g, " ")
-      .replace(/\[target:[a-zA-Z0-9_-]{1,40}\]/gi, " ")
-      .replace(/\[slot:[a-zA-Z0-9_-]{1,40}\]/gi, " ")
       .replace(/\[arc\]/gi, " ")
-      .replace(/\[(chatgpt|gemini|copilot|claude)\]/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
     if (!cleanPrompt) cleanPrompt = raw;
     if (cleanPrompt.length > MAX_PROMPT) cleanPrompt = cleanPrompt.slice(0, MAX_PROMPT);
 
-    if (adaptiveTargetEnabled && !targetPinned && route === "ARC" && opMode === "request_arc" && lower(target) !== "all") {
-      const picked = pickAdaptiveTarget({ preferred: target });
-      adaptiveDecision = picked;
-      target = picked.target || target;
-      const adaptiveSlot = preferredSlotForTarget(target, slots);
-      if (adaptiveSlot) slotId = canonicalSlotId(adaptiveSlot.slot_id);
-    }
-
-    return {
-      route: route,
-      target: target,
-      slotId: slotId,
-      opMode: opMode,
-      script: script,
-      prompt: cleanPrompt,
-      executor: executor,
-      pinTarget: targetPinned,
-      runtimeMode: runtimeMode,
-      requestedTarget: requestedTarget,
-      adaptiveDecision: adaptiveDecision,
-      useMemory: useMemory
-    };
+    return { route: route, target: target, opMode: opMode, script: script, prompt: cleanPrompt, executor: executor, pinTarget: targetPinned };
   };
 
   const upsertMothershipNode = (workerId, status, version) => {
@@ -1446,41 +665,30 @@ function doPost(e) {
     else sheets.mothershipNodes.appendRow(row);
   };
 
-  const claimMetronMessage = (workerId) => {
+  const claimMothershipMessage = (workerId) => {
     if (autonomyPaused) return null;
-    const lock = LockService.getScriptLock();
-    try {
-      lock.waitLock(maxWaitTimeMs);
-    } catch (_) {
-      return null;
+    const rows = sheets.mothership.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      const status = lower(rows[i][4]);
+      if (status !== "pending") continue;
+      const msgId = norm(rows[i][1]);
+      const user = norm(rows[i][2]);
+      const content = norm(rows[i][3]);
+      sheets.mothership.getRange(i + 1, 5).setValue("leased:" + norm(workerId));
+      addAudit("", "MOTHERSHIP_LEASED", msgId, norm(workerId), "leased", user);
+      return { message_id: msgId, user: user, content: content };
     }
-    try {
-      const rows = sheets.metronQueue.getDataRange().getValues();
-      for (let i = 1; i < rows.length; i++) {
-        const status = lower(rows[i][5]);
-        if (status !== "pending") continue;
-        const msgId = norm(rows[i][1]);
-        const targetId = norm(rows[i][2]);
-        const mode = norm(rows[i][3]);
-        const content = norm(rows[i][4]);
-        sheets.metronQueue.getRange(i + 1, 6).setValue("leased:" + norm(workerId));
-        addAudit("", "METRON_LEASED", msgId, norm(workerId), "leased", targetId);
-        return { message_id: msgId, target_id: targetId, mode: mode, content: content };
-      }
-      return null;
-    } finally {
-      lock.releaseLock();
-    }
+    return null;
   };
 
-  const completeMetronMessage = (messageId, isError, workerId) => {
+  const completeMothershipMessage = (messageId, isError, workerId) => {
     const mid = norm(messageId);
     if (!mid) return false;
-    const rows = sheets.metronQueue.getDataRange().getValues();
+    const rows = sheets.mothership.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
       if (norm(rows[i][1]) !== mid) continue;
-      sheets.metronQueue.getRange(i + 1, 6).setValue(isError ? "error" : "done");
-      addAudit("", "METRON_DONE", mid, norm(workerId), isError ? "error" : "done", "");
+      sheets.mothership.getRange(i + 1, 5).setValue(isError ? "error" : "done");
+      addAudit("", "MOTHERSHIP_DONE", mid, norm(workerId), isError ? "error" : "done", "");
       return true;
     }
     return false;
@@ -1491,12 +699,9 @@ function doPost(e) {
     const traceId = toTraceId(job.traceId);
     const retryCountRaw = parseInt(norm(job.retryCount) || "0", 10);
     const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
-    const resolvedTarget = resolveOperationalTarget(job.target, { allowAll: true, fallback: defaultTarget });
-    const resolvedSlot = resolveSlotForTarget(resolvedTarget, job.slotId || job.slot_id);
     const payload = {
       qid: norm(job.qid) || jobId,
-      target: resolvedTarget,
-      slot_id: resolvedSlot,
+      target: norm(job.target) || "gemini",
       pin_target: lower(norm(job.pinTarget || "false")) === "true" ? "true" : "false",
       prompt: norm(job.prompt).slice(0, MAX_PROMPT),
       script: norm(job.script),
@@ -1507,19 +712,8 @@ function doPost(e) {
       max_retry: maxRetry,
       ts: nowIso()
     };
-    if (payload.target === "all") {
-      payload.lease_timeout_sec = Math.max(leaseTimeoutSec, 420);
-      payload.pending_timeout_sec = Math.max(pendingTimeoutSec, 900);
-    }
-    if (norm(job.targetStrategy)) payload.target_strategy = norm(job.targetStrategy).slice(0, 64);
-    if (norm(job.targetReason)) payload.target_reason = norm(job.targetReason).slice(0, 180);
-    if (job.targetSuccessRate !== null && job.targetSuccessRate !== undefined) payload.target_success_rate = job.targetSuccessRate;
-    if (job.targetAvgLatencySec !== null && job.targetAvgLatencySec !== undefined) payload.target_avg_latency_sec = job.targetAvgLatencySec;
-    if (norm(job.mode) === "arc_set_runtime_mode") {
-      payload.runtime_mode = normalizeRuntimeMode(job.runtimeMode || job.runtime_mode);
-    }
     sheets.jobs.appendRow([new Date(), jobId, norm(job.workerId), norm(job.mode) || "request_arc", JSON.stringify(payload), "pending", ""]);
-    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / slot=" + (payload.slot_id || "-") + " / retry=" + retryCount);
+    addAudit(traceId, "JOB_ENQUEUED", jobId, norm(job.workerId), "pending", payload.executor + " / " + payload.target + " / retry=" + retryCount);
     return { jobId: jobId, traceId: traceId, payload: payload };
   };
 
@@ -1593,10 +787,10 @@ function doPost(e) {
     return n;
   };
 
-  const countActiveMetronNodes = (activeSec) => {
+  const countActiveMothershipNodes = (activeSec) => {
     const limitSec = Number.isFinite(activeSec) ? activeSec : 240;
     const now = Date.now();
-    const rows = sheets.metronNodes.getDataRange().getValues();
+    const rows = sheets.mothershipNodes.getDataRange().getValues();
     let n = 0;
     for (let i = 1; i < rows.length; i++) {
       const ts = new Date(rows[i][0]).getTime();
@@ -1611,20 +805,20 @@ function doPost(e) {
 
   const resolveRetryExecutor = () => {
     const arcActive = countActiveArcNodes(240);
-    const metronActive = countActiveMetronNodes(240);
+    const mothershipActive = countActiveMothershipNodes(240);
 
     if (repairExecutor === "BAKU") {
-      if (metronActive > 0) return { executor: "BAKU", reason: "repair_baku_available" };
+      if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_baku_available" };
       if (arcActive > 0) return { executor: "ARC", reason: "repair_baku_unavailable_fallback_arc" };
       return { executor: "AUTO", reason: "no_active_worker_auto" };
     }
     if (repairExecutor === "ARC") {
       if (arcActive > 0) return { executor: "ARC", reason: "repair_arc_available" };
-      if (metronActive > 0) return { executor: "BAKU", reason: "repair_arc_unavailable_fallback_baku" };
+      if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_arc_unavailable_fallback_baku" };
       return { executor: "AUTO", reason: "no_active_worker_auto" };
     }
     if (arcActive > 0) return { executor: "ARC", reason: "repair_auto_pick_arc" };
-    if (metronActive > 0) return { executor: "BAKU", reason: "repair_auto_pick_baku" };
+    if (mothershipActive > 0) return { executor: "BAKU", reason: "repair_auto_pick_baku" };
     return { executor: "AUTO", reason: "no_active_worker_auto" };
   };
 
@@ -1646,6 +840,17 @@ function doPost(e) {
     if (allPipelineNoRetry) {
       return { retried: false, reason: "all_pipeline_failed_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
     }
+    const copilotNoRetry =
+      target === "copilot" &&
+      (
+        errType.indexOf("STALL_NO_PROGRESS") >= 0 ||
+        errType.indexOf("COPILOT_BOT_BLOCKED") >= 0 ||
+        errType.indexOf("TARGET_STALL") >= 0
+      );
+    if (copilotNoRetry) {
+      return { retried: false, reason: "copilot_block_or_stall_no_retry", retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0) };
+    }
+
     const retryCountRaw = parseInt(norm(payload.retry_count) || "0", 10);
     const retryCount = Number.isFinite(retryCountRaw) && retryCountRaw >= 0 ? retryCountRaw : 0;
 
@@ -1694,25 +899,13 @@ function doPost(e) {
     if (cmd.route === "ARC") {
       const effectiveMode = cmd.opMode;
       const resolvedId = missionId || ("CHAT_" + rowIndex + "_" + Date.now());
-      const memPack = cmd.useMemory
-        ? buildGatewayMemoryContextForRoute(user, cmd.target, cmd.slotId, cmd.prompt, resolvedId)
-        : { context: "", hit_count: 0, keys: [] };
-      const promptWithMemory = memPack.context
-        ? (memPack.context + "\n【依頼】\n" + cmd.prompt)
-        : cmd.prompt;
       const jobRes = enqueueArcJob({
         // qid と jobId は同一にして、結果報告の突合失敗を防ぐ
         jobId: resolvedId,
         qid: resolvedId,
         target: cmd.target,
-        slotId: cmd.slotId,
-        targetStrategy: cmd.adaptiveDecision ? "adaptive" : "requested",
-        targetReason: cmd.adaptiveDecision ? norm(cmd.adaptiveDecision.reason) : "requested",
-        targetSuccessRate: cmd.adaptiveDecision ? cmd.adaptiveDecision.success_rate : null,
-        targetAvgLatencySec: cmd.adaptiveDecision ? cmd.adaptiveDecision.avg_latency_sec : null,
-        prompt: promptWithMemory,
+        prompt: cmd.prompt,
         script: cmd.script,
-        runtimeMode: cmd.runtimeMode,
         mode: effectiveMode,
         executor: cmd.executor,
         pinTarget: cmd.pinTarget ? "true" : "false",
@@ -1721,47 +914,19 @@ function doPost(e) {
         traceId: traceId,
         retryCount: 0
       });
-      if (
-        cmd.adaptiveDecision &&
-        canonicalTarget(cmd.requestedTarget) &&
-        canonicalTarget(cmd.requestedTarget) !== canonicalTarget(cmd.target)
-      ) {
-        addAudit(
-          jobRes.traceId,
-          "TARGET_ADAPTIVE_SELECTED",
-          jobRes.jobId,
-          "",
-          "pending",
-          canonicalTarget(cmd.requestedTarget) + "->" + canonicalTarget(cmd.target) +
-            " / reason=" + norm(cmd.adaptiveDecision.reason) +
-            " / sr=" + norm(cmd.adaptiveDecision.success_rate) +
-            " / lat=" + norm(cmd.adaptiveDecision.avg_latency_sec)
-        );
-      }
-      if (memPack.hit_count > 0) {
-        addAudit(
-          jobRes.traceId,
-          "ROUTE_MEMORY_ATTACHED",
-          jobRes.jobId,
-          "",
-          "ok",
-          "hits=" + memPack.hit_count + " / keys=" + memPack.keys.join(",").slice(0, 320)
-        );
-      }
       sheets.main.getRange(rowIndex, 4).setValue("QUEUED_ARC");
-      const slotNote = cmd.slotId ? (" / " + cmd.slotId) : "";
-      sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + slotNote + " / " + cmd.executor + " / " + jobRes.traceId);
+      sheets.main.getRange(rowIndex, 5).setValue("ARC queued: " + effectiveMode + " / " + cmd.target + " / " + cmd.executor + " / " + jobRes.traceId);
       sheets.main.getRange(rowIndex, 6).setValue(jobRes.jobId);
-      return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode, traceId: jobRes.traceId, slotId: jobRes.payload.slot_id || "" };
+      return { routed: "ARC", jobId: jobRes.jobId, mode: effectiveMode, traceId: jobRes.traceId };
     }
 
-    const msgId = missionId || ("MT_" + rowIndex + "_" + Date.now());
-    sheets.metronQueue.appendRow([new Date(), msgId, "METRON_OS", "request_metron", content, "pending"]);
-    sheets.main.getRange(rowIndex, 4).setValue("ROUTED_METRON");
-    sheets.main.getRange(rowIndex, 5).setValue("Forwarded to METRON / " + traceId);
+    const msgId = missionId || ("MS_" + rowIndex + "_" + Date.now());
+    sheets.mothership.appendRow([new Date(), msgId, user, content, "pending"]);
+    sheets.main.getRange(rowIndex, 4).setValue("ROUTED_MOTHERSHIP");
+    sheets.main.getRange(rowIndex, 5).setValue("Forwarded to MOTHERSHIP / " + traceId);
     sheets.main.getRange(rowIndex, 6).setValue(msgId);
-    addAudit(traceId, "METRON_ROUTED", msgId, "", "pending", user);
-    return { routed: "METRON", jobId: msgId, mode: "metron_queue", traceId: traceId };
+    addAudit(traceId, "MOTHERSHIP_ROUTED", msgId, "", "pending", user);
+    return { routed: "MOTHERSHIP", jobId: msgId, mode: "mothership_queue", traceId: traceId };
   };
 
   const routePendingChatCommands = (enableBackfillRaw) => {
@@ -1816,12 +981,12 @@ function doPost(e) {
       const ts = toMs(row[0]);
       if (Number.isFinite(ts) && nowMs - ts > windowSec * 1000) break;
       const st = lower(row[3]);
-      if (st !== "queued_arc" && st !== "routed_metron") continue;
+      if (st !== "queued_arc" && st !== "routed_mothership") continue;
       const missionId = norm(row[5]);
       if (!missionId) continue;
       const response = norm(row[4]);
-      const routed = st === "queued_arc" ? "ARC" : "METRON";
-      let modeName = st === "queued_arc" ? "request_arc" : "metron_queue";
+      const routed = st === "queued_arc" ? "ARC" : "MOTHERSHIP";
+      let modeName = st === "queued_arc" ? "request_arc" : "mothership_queue";
       if (st === "queued_arc" && response.indexOf("ARC queued:") === 0) {
         const parts = response.split(" / ");
         if (parts.length >= 2) modeName = norm(parts[1]) || modeName;
@@ -1851,14 +1016,10 @@ function doPost(e) {
       const row = rows[i];
       const status = lower(row[5]);
       if (status !== "leased") continue;
-      const payload = parseJsonSafe(norm(row[4]));
-      const rowLeaseSecRaw = parseInt(norm(payload.lease_timeout_sec || ""), 10);
-      const rowLeaseMs = Number.isFinite(rowLeaseSecRaw) && rowLeaseSecRaw >= 30
-        ? rowLeaseSecRaw * 1000
-        : thresholdMs;
       const leasedAt = new Date(row[6]).getTime();
-      if (!Number.isFinite(leasedAt) || now - leasedAt < rowLeaseMs) continue;
+      if (!Number.isFinite(leasedAt) || now - leasedAt < thresholdMs) continue;
 
+      const payload = parseJsonSafe(norm(row[4]));
       const leaseExpiredCountRaw = parseInt(norm(payload.lease_expire_count) || "0", 10);
       const leaseExpiredCount = (Number.isFinite(leaseExpiredCountRaw) ? leaseExpiredCountRaw : 0) + 1;
       payload.lease_expire_count = leaseExpiredCount;
@@ -1964,12 +1125,9 @@ function doPost(e) {
       const row = rows[i];
       if (lower(row[5]) !== "pending") continue;
       const createdAtMs = new Date(row[0]).getTime();
+      if (!Number.isFinite(createdAtMs) || now - createdAtMs < thresholdMs) continue;
+
       const payload = parseJsonSafe(norm(row[4]));
-      const rowPendingSecRaw = parseInt(norm(payload.pending_timeout_sec || ""), 10);
-      const rowPendingMs = Number.isFinite(rowPendingSecRaw) && rowPendingSecRaw >= 60
-        ? rowPendingSecRaw * 1000
-        : thresholdMs;
-      if (!Number.isFinite(createdAtMs) || now - createdAtMs < rowPendingMs) continue;
       const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
       if (Number.isFinite(nextRetryAtMs) && now < nextRetryAtMs) continue;
 
@@ -1998,108 +1156,52 @@ function doPost(e) {
 
   const claimNextInstruction = (workerId, consumer) => {
     if (autonomyPaused) return null;
-    const lock = LockService.getScriptLock();
-    const locked = lock.tryLock(5000);
-    if (!locked) {
-      addAudit("", "LEASE_LOCK_TIMEOUT", "", workerId, "busy", consumer);
-      return null;
-    }
-
-    try {
-      const rows = sheets.jobs.getDataRange().getValues();
-      // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
-      for (let i = rows.length - 1; i >= 1; i--) {
-        const row = rows[i];
-        const rowWorker = norm(row[2]);
-        const rowMode = norm(row[3]) || "request_arc";
-        const payloadRaw = norm(row[4]);
-        const status = lower(row[5]);
-        if (status !== "pending") continue;
-
-        if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
-
-        const payload = parseJsonSafe(payloadRaw);
-        const wanted = upper(payload.executor || "AUTO");
-        const mine = upper(consumer || "ARC");
-        if (wanted !== "AUTO" && wanted !== mine) continue;
-
-        const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
-        if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
-
-        sheets.jobs.getRange(i + 1, 6).setValue("leased");
-        sheets.jobs.getRange(i + 1, 7).setValue(new Date());
-        if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
-
-        addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
-        if (workerId) {
-          putArcShortMemory(
-            workerId,
-            norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
-            "last_instruction",
-            JSON.stringify({
-              job_id: norm(row[1]),
-              mode: rowMode,
-              target: norm(payload.target),
-              prompt: norm(payload.prompt).slice(0, 500)
-            }),
-            1800,
-            norm(payload.trace_id)
-          );
-        }
-        return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
-      }
-      return null;
-    } finally {
-      lock.releaseLock();
-    }
-  };
-
-  const safeClaimNextInstruction = (workerId, consumer, traceId) => {
-    try {
-      return claimNextInstruction(workerId, consumer);
-    } catch (err) {
-      const detail = (() => {
-        try {
-          if (err && err.stack) return String(err.stack).slice(0, 1200);
-          return String(err || "claim_exception").slice(0, 1200);
-        } catch (_) {
-          return "claim_exception";
-        }
-      })();
-      addAudit(norm(traceId), "JOB_LEASE_EXCEPTION", "", norm(workerId), "error", detail);
-      return null;
-    }
-  };
-
-  const runArcQueueMaintenance = (traceId, workerId, consumer) => {
-    try {
-      recoverStalePendingJobs();
-      requeueExpiredLeases();
-      routePendingChatCommands(false);
-    } catch (err) {
-      const detail = (() => {
-        try {
-          if (err && err.stack) return String(err.stack).slice(0, 1200);
-          return String(err || "queue_maintenance_exception").slice(0, 1200);
-        } catch (_) {
-          return "queue_maintenance_exception";
-        }
-      })();
-      addAudit(norm(traceId), "QUEUE_MAINT_EXCEPTION", "", norm(workerId), "error", norm(consumer) + ":" + detail);
-    }
-  };
-
-  const hasLeasedJobForWorker = (workerId) => {
-    const wid = norm(workerId);
-    if (!wid) return false;
+    
+    // In METRON architecture, heavy maintenance is moved out of the heartbeat loop
+    // to prevent LockService contention. We simply scan for pending jobs.
     const rows = sheets.jobs.getDataRange().getValues();
+    // 新しいジョブを優先。古い詰まりジョブが先頭を占有し続けるのを防ぐ。
     for (let i = rows.length - 1; i >= 1; i--) {
       const row = rows[i];
-      if (lower(row[5]) !== "leased") continue;
-      if (norm(row[2]) !== wid) continue;
-      return true;
+      const rowWorker = norm(row[2]);
+      const rowMode = norm(row[3]) || "request_arc";
+      const payloadRaw = norm(row[4]);
+      const status = lower(row[5]);
+      if (status !== "pending") continue;
+
+      if (rowWorker && (!workerId || rowWorker !== workerId)) continue;
+
+      const payload = parseJsonSafe(payloadRaw);
+      const wanted = upper(payload.executor || "AUTO");
+      const mine = upper(consumer || "ARC");
+      if (wanted !== "AUTO" && wanted !== mine) continue;
+
+      const nextRetryAtMs = new Date(norm(payload.next_retry_at)).getTime();
+      if (Number.isFinite(nextRetryAtMs) && Date.now() < nextRetryAtMs) continue;
+
+      sheets.jobs.getRange(i + 1, 6).setValue("leased");
+      sheets.jobs.getRange(i + 1, 7).setValue(new Date());
+      if (!rowWorker && workerId) sheets.jobs.getRange(i + 1, 3).setValue(workerId);
+
+      addAudit(norm(payload.trace_id), "JOB_LEASED", norm(row[1]), workerId, "leased", mine);
+      if (workerId) {
+        putArcShortMemory(
+          workerId,
+          norm(payload.session_id) || norm(payload.trace_id) || norm(row[1]),
+          "last_instruction",
+          JSON.stringify({
+            job_id: norm(row[1]),
+            mode: rowMode,
+            target: norm(payload.target),
+            prompt: norm(payload.prompt).slice(0, 500)
+          }),
+          1800,
+          norm(payload.trace_id)
+        );
+      }
+      return Object.assign({ mode: rowMode, job_id: norm(row[1]) }, payload);
     }
-    return false;
+    return null;
   };
 
   const findTraceByMissionId = (missionId) => {
@@ -2149,38 +1251,11 @@ function doPost(e) {
   };
 
   const nextFailoverTarget = (currentTarget) => {
-    const t = canonicalTarget(currentTarget);
-    const fallbackTargets = (() => {
-      const seen = {};
-      const out = [];
-      const slots = loadSlotRegistry();
-      slots.forEach((s) => {
-        const target = canonicalTarget(s.target || "");
-        if (!target || target === "all" || !s.enabled || seen[target]) return;
-        seen[target] = true;
-        out.push(target);
-      });
-      slots.forEach((s) => {
-        const target = canonicalTarget(s.target || "");
-        if (!target || target === "all" || seen[target]) return;
-        seen[target] = true;
-        out.push(target);
-      });
-      if (!seen[defaultTarget]) out.push(defaultTarget);
-      return out.filter((x, i, arr) => x && arr.indexOf(x) === i);
-    })();
-    if (adaptiveTargetEnabled) {
-      const picked = pickAdaptiveTarget({ preferred: defaultTarget, exclude: t, forceAdaptive: true });
-      const target = canonicalTarget(picked.target || "");
-      if (target && target !== t) return target;
-    }
-    if (!t) return fallbackTargets[0] || defaultTarget || "gemini";
-    const idx = fallbackTargets.indexOf(t);
-    if (idx >= 0 && fallbackTargets.length > 1) {
-      return fallbackTargets[(idx + 1) % fallbackTargets.length];
-    }
-    const alt = fallbackTargets.find((x) => x !== t);
-    return alt || fallbackTargets[0] || defaultTarget || "gemini";
+    const t = lower(currentTarget);
+    if (t === "chatgpt") return "gemini";
+    if (t === "gemini") return "chatgpt";
+    if (t === "copilot") return "chatgpt";
+    return "gemini";
   };
 
   const maybeSwitchJobTargetForRecovery = (jobRowIndex, row, payload, reasonTag) => {
@@ -2188,12 +1263,12 @@ function doPost(e) {
     const modeName = lower(row[3]);
     if (modeName !== "request_arc") return { switched: false, reason: "mode_not_supported" };
     if (lower(payload.pin_target) === "true") return { switched: false, reason: "target_pinned" };
-    const from = canonicalTarget(payload.target || "");
+    const from = lower(payload.target || "");
     if (!from || from === "all") return { switched: false, reason: "invalid_target" };
+    if (from === "copilot") return { switched: false, reason: "copilot_no_failover" };
     const to = nextFailoverTarget(from);
     if (from === to) return { switched: false, reason: "same_target" };
     payload.target = to;
-    payload.slot_id = resolveSlotForTarget(to, payload.slot_id);
     payload.target_failover_count = (parseInt(norm(payload.target_failover_count) || "0", 10) || 0) + 1;
     payload.target_failover_reason = norm(reasonTag);
     payload.target_failover_at = nowIso();
@@ -2232,7 +1307,7 @@ function doPost(e) {
     const follow = bakuReport.followup;
     if (follow.auto_enqueue !== true) return null;
     const modeName = norm(follow.mode) || "request_arc";
-    const target = resolveOperationalTarget(norm(follow.target) || defaultTarget, { fallback: defaultTarget });
+    const target = lower(norm(follow.target) || "chatgpt");
     const executor = upper(norm(follow.executor) || "ARC");
     const prompt = norm(follow.prompt || "");
     if (!prompt) return null;
@@ -2348,7 +1423,7 @@ function doPost(e) {
     return jsonOut({
       status: "ok",
       role: "gateway",
-      version: "arc-gateway-20.4",
+      version: "arc-gateway-20.1",
       control: "gateway_primary",
       lease_timeout_sec: leaseTimeoutSec,
       pending_timeout_sec: pendingTimeoutSec,
@@ -2372,198 +1447,225 @@ function doPost(e) {
     return jsonOut({ status: "ok" });
   }
 
-  const triggerNextAction = (missionId, traceId) => {
-    // ARC_DONE または METRON_DONE になった直後に連鎖判定を行う
-    const mainRows = sheets.main.getDataRange().getValues();
-    let targetRow = null;
-    let targetRowIndex = -1;
-    for (let i = mainRows.length - 1; i >= 1; i--) {
-      if (norm(mainRows[i][5]) === missionId) {
-        targetRow = mainRows[i];
-        targetRowIndex = i + 1;
-        break;
+  const deployAppScript = (targetScriptId, resultText, traceId) => {
+    try {
+      const token = ScriptApp.getOAuthToken();
+      if (!token) {
+        addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "No OAuth Token available.");
+        return false;
       }
-    }
-    if (!targetRow) return false;
-
-    const status = upper(norm(targetRow[3]));
-    const responseText = norm(targetRow[4]);
-
-    // ARCが完了し、次がMETRON連携の場合の判定
-    if (status === "ARC_DONE" || status === "ARC_ERROR") {
-      // ユーザー入力・またはメタデータに特定宛先の指示（例: [@metron:OS_A]）が含まれているか判定
-      const prompt = norm(targetRow[2]);
-      const match = prompt.match(/\[@metron(?::([a-zA-Z0-9_-]+))?\]/i);
-      if (match) {
-        const targetId = match[1] || "METRON_OS"; // 未指定ならデフォルトOS宛て
-        const msgId = "MT_" + targetRowIndex + "_" + Date.now();
-        const contentContext = `Action: ${status}\nMission: ${missionId}\nResult: ${responseText.slice(0, 1000)}`;
-        sheets.metronQueue.appendRow([new Date(), msgId, targetId, "gateway_chained", contentContext, "pending"]);
-        sheets.main.getRange(targetRowIndex, 4).setValue("ROUTED_METRON");
-        sheets.main.getRange(targetRowIndex, 5).setValue(`Chained to ${targetId} / ` + msgId);
-        addAudit(traceId, "CHAIN_TO_METRON", msgId, "", "pending", missionId);
-        return true;
+      const files = [];
+      const fileRegex = /---\s*FILE:\s*([a-zA-Z0-9_\-\.]+)\s*---\s*```[a-z]*\n([\s\S]*?)\n```/g;
+      let match;
+      while ((match = fileRegex.exec(resultText)) !== null) {
+        const fileName = match[1].trim();
+        const fileContent = match[2];
+        const nameParts = fileName.split('.');
+        if (nameParts.length < 2) continue;
+        const typeStr = nameParts[nameParts.length - 1].toLowerCase();
+        let fileType = "SERVER_JS";
+        if (typeStr === 'html') fileType = "HTML";
+        else if (typeStr === 'json') fileType = "JSON";
+        files.push({
+          name: nameParts.slice(0, -1).join('.'),
+          type: fileType,
+          source: fileContent
+        });
       }
-    }
-
-    // METRON_OS が完了し、次がARC実行の場合
-    if (status === "DONE" && targetRow[1] === "METRON_OS") {
-      // METRON_OS の応答が "[@arc]" などのコマンドを含んでいればARCへ即時ルート
-      if (responseText.indexOf("[@arc]") >= 0 || responseText.indexOf("#arc") >= 0) {
-        // METRON_OSの応答を新たな要求としてルート
-        const chainedRow = [new Date(), "METRON_OS", responseText, "NEW", "", missionId];
-        const res = routeOneChatRow(targetRowIndex, chainedRow);
-        if (res) {
-          addAudit(traceId, "CHAIN_TO_ARC", res.jobId, "", "pending", missionId);
-          return true;
+      if (files.length === 0) {
+        addAudit(traceId, "DEPLOY_SKIP", targetScriptId, "", "warn", "No valid files found for deployment.");
+        return false;
+      }
+      const contentUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/content";
+      const fetchContentRes = UrlFetchApp.fetch(contentUrl, {
+        method: "get",
+        headers: { Authorization: "Bearer " + token },
+        muteHttpExceptions: true
+      });
+      let existingFiles = [];
+      if (fetchContentRes.getResponseCode() === 200) {
+        const contentData = JSON.parse(fetchContentRes.getContentText());
+        existingFiles = contentData.files || [];
+      }
+      const hasManifest = files.some((f) => f.name === 'appsscript');
+      if (!hasManifest) {
+        const existingManifest = existingFiles.find((f) => f.name === 'appsscript');
+        if (existingManifest) {
+          files.push(existingManifest);
         }
       }
+      const putPayload = { files: files };
+      const putRes = UrlFetchApp.fetch(contentUrl, {
+        method: "put",
+        contentType: "application/json",
+        headers: { Authorization: "Bearer " + token },
+        payload: JSON.stringify(putPayload),
+        muteHttpExceptions: true
+      });
+      if (putRes.getResponseCode() >= 300) {
+        addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to PUT code: " + putRes.getContentText());
+        return false;
+      }
+      const versionsUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions";
+      const verRes = UrlFetchApp.fetch(versionsUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: "Bearer " + token },
+        payload: JSON.stringify({ description: "Auto-deployed by METRON at " + new Date().toISOString() }),
+        muteHttpExceptions: true
+      });
+      if (verRes.getResponseCode() >= 300) {
+        addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to create Version: " + verRes.getContentText());
+        return false;
+      }
+      const versionData = JSON.parse(verRes.getContentText());
+      const versionNumber = versionData.versionNumber;
+      const deploymentsUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/deployments";
+      const depsRes = UrlFetchApp.fetch(deploymentsUrl, {
+        method: "get",
+        headers: { Authorization: "Bearer " + token },
+        muteHttpExceptions: true
+      });
+      let currentDeploymentId = null;
+      let deploymentsList = [];
+      if (depsRes.getResponseCode() === 200) {
+        const dData = JSON.parse(depsRes.getContentText());
+        deploymentsList = dData.deployments || [];
+        const existingWebDep = deploymentsList.find((d) => d.deploymentConfig && d.deploymentConfig.versionNumber);
+        if (existingWebDep) {
+          currentDeploymentId = existingWebDep.deploymentId;
+        }
+      }
+      if (currentDeploymentId) {
+        const updateUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/deployments/" + currentDeploymentId;
+        const updatePayload = {
+          deploymentConfig: {
+            versionNumber: versionNumber,
+            description: "Auto-deployed by METRON at " + new Date().toISOString()
+          }
+        };
+        const updateRes = UrlFetchApp.fetch(updateUrl, {
+          method: "put",
+          contentType: "application/json",
+          headers: { Authorization: "Bearer " + token },
+          payload: JSON.stringify(updatePayload),
+          muteHttpExceptions: true
+        });
+        if (updateRes.getResponseCode() >= 300) {
+          addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to update deployment: " + updateRes.getContentText());
+        } else {
+          addAudit(traceId, "DEPLOY_SUCCESS", targetScriptId, "", "ok", "v" + versionNumber + " -> deps:" + currentDeploymentId);
+        }
+      } else {
+        const createPayload = {
+          versionNumber: versionNumber,
+          description: "Initial Auto-deploy by METRON"
+        };
+        const createRes = UrlFetchApp.fetch(deploymentsUrl, {
+          method: "post",
+          contentType: "application/json",
+          headers: { Authorization: "Bearer " + token },
+          payload: JSON.stringify(createPayload),
+          muteHttpExceptions: true
+        });
+        if (createRes.getResponseCode() >= 300) {
+          addAudit(traceId, "DEPLOY_ERROR", targetScriptId, "", "error", "Failed to create deployment: " + createRes.getContentText());
+        } else {
+          const newData = JSON.parse(createRes.getContentText());
+          addAudit(traceId, "DEPLOY_SUCCESS", targetScriptId, "", "ok", "v" + versionNumber + " -> NEW deps:" + newData.deploymentId);
+        }
+      }
+      const verListRes = UrlFetchApp.fetch(versionsUrl, {
+        method: "get",
+        headers: { Authorization: "Bearer " + token },
+        muteHttpExceptions: true
+      });
+      if (verListRes.getResponseCode() === 200) {
+        const vData = JSON.parse(verListRes.getContentText());
+        const allVersions = vData.versions || [];
+        if (allVersions.length > 150) {
+          allVersions.sort((a, b) => a.versionNumber - b.versionNumber);
+          const toDelete = allVersions.slice(0, 20);
+          let deletedCount = 0;
+          for (let i = 0; i < toDelete.length; i++) {
+            const v = toDelete[i];
+            const delUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions/" + v.versionNumber;
+            const delRes = UrlFetchApp.fetch(delUrl, {
+              method: "delete",
+              headers: { Authorization: "Bearer " + token },
+              muteHttpExceptions: true
+            });
+            if (delRes.getResponseCode() < 300) deletedCount++;
+          }
+          addAudit(traceId, "DEPLOY_CLEANUP", targetScriptId, "", "ok", "Deleted " + deletedCount + " old versions.");
+        }
+      }
+      return true;
+    } catch (e) {
+      addAudit(traceId, "DEPLOY_EXCEPTION", targetScriptId, "", "error", e.toString());
+      return false;
     }
-    return false;
   };
 
   if (mode === "route_chat") {
     if (autonomyPaused) return jsonOut({ status: "paused", routed: 0 });
-    const lock = LockService.getScriptLock();
-    const locked = lock.tryLock(5000);
-    if (!locked) return jsonOut({ status: "busy", routed: 0, error: "route_lock_timeout" });
-    try {
-      const strictFresh = lower(norm(data.strict_fresh || "false")) === "true";
-      const routed = routePendingChatCommands(true);
-      if (routed.length > 0) {
-        return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
-      }
-      if (strictFresh) {
-        addAudit(norm(data.trace_id), "ROUTE_CHAT_STRICT_EMPTY", "", "", "ok", "strict_fresh_no_new");
-        return jsonOut({ status: "ok", routed: 0, details: [], source: "empty_strict" });
-      }
-      const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
-      if (recent.length > 0) {
-        addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
-        return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
-      }
-      addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
-      return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
-    } finally {
-      lock.releaseLock();
+    // In METRON architecture, we skip LockService for route_chat to avoid timeouts.
+    // It relies on idempotent row checks within routePendingChatCommands.
+    const routed = routePendingChatCommands(true);
+    if (routed.length > 0) {
+      return jsonOut({ status: "ok", routed: routed.length, details: routed, source: "fresh" });
     }
+    const recent = collectRecentRoutedDetails(data.recent_window_sec, 3);
+    if (recent.length > 0) {
+      addAudit(norm(data.trace_id), "ROUTE_CHAT_RECENT_HIT", "", "", "ok", "count=" + recent.length);
+      return jsonOut({ status: "ok", routed: 0, details: recent, source: "recent" });
+    }
+    addAudit(norm(data.trace_id), "ROUTE_CHAT_EMPTY", "", "", "ok", "no_new_or_recent");
+    return jsonOut({ status: "ok", routed: 0, details: [], source: "empty" });
   }
 
-  if (mode === "metron_submit") {
-    const user = norm(data.user || "metron");
+  if (mode === "mothership_submit") {
+    const user = norm(data.user || "mothership");
     const content = norm(data.content);
     if (!content) return jsonOut({ status: "error", error: "content_required" });
-    const msgId = norm(data.message_id) || ("MT_" + Utilities.getUuid().slice(0, 8));
-    sheets.metronQueue.appendRow([new Date(), msgId, "METRON_OS", "request_metron", content, "pending"]);
-    addAudit(norm(data.trace_id), "METRON_SUBMIT", msgId, "", "pending", user);
+    const msgId = norm(data.message_id) || ("MS_" + Utilities.getUuid().slice(0, 8));
+    sheets.mothership.appendRow([new Date(), msgId, user, content, "pending"]);
+    addAudit(norm(data.trace_id), "MOTHERSHIP_SUBMIT", msgId, "", "pending", user);
     return jsonOut({ status: "ok", message_id: msgId });
   }
 
-  if (mode === "metron_heartbeat") {
-    let workerId = norm(data.worker_id);
-    let isNewAssignedId = false;
-    if (!workerId) {
-      workerId = "MTN_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
-      isNewAssignedId = true;
-    }
-    upsertMetronNode(workerId, data.status || "online", data.version || "");
-    const instruction = claimMetronMessage(workerId);
-    const responseData = { status: "ok" };
-    if (instruction) responseData.instruction = instruction;
-    if (isNewAssignedId) responseData.assigned_id = workerId;
-    return jsonOut(responseData);
+  if (mode === "mothership_heartbeat") {
+    const workerId = norm(data.worker_id);
+    upsertMothershipNode(workerId, data.status || "online", data.version || "");
+    const instruction = claimMothershipMessage(workerId);
+    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
   }
 
-  if (mode === "metron_pull") {
-    let workerId = norm(data.worker_id);
-    let isNewAssignedId = false;
-    if (!workerId) {
-      workerId = "MTN_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
-      isNewAssignedId = true;
-    }
-    const consumer = upper(data.executor || "METRON_OS");
-    
-    // metronNodes に死活報告
-    const ip = norm(data.ip) || "";
-    const port = norm(data.port) || "";
-    const nodeRows = sheets.metronNodes.getDataRange().getValues();
-    let foundNode = -1;
-    for (let i = 1; i < nodeRows.length; i++) {
-        if (norm(nodeRows[i][1]) === workerId) {
-            foundNode = i + 1;
-            break;
-        }
-    }
-    const nodePayload = [new Date(), workerId, "online", data.version || ""];
-    if (foundNode > 0) sheets.metronNodes.getRange(foundNode, 1, 1, nodePayload.length).setValues([nodePayload]);
-    else sheets.metronNodes.appendRow(nodePayload);
-
-    // キューから取得
-    const rows = sheets.metronQueue.getDataRange().getValues();
-    const pending = [];
-    for (let i = 1; i < rows.length; i++) {
-      if (lower(norm(rows[i][5])) === "pending") {
-        pending.push({
-          row: i + 1,
-          message_id: norm(rows[i][1]),
-          target_id: norm(rows[i][2]),
-          mode: norm(rows[i][3]),
-          content: norm(rows[i][4])
-        });
-      }
-    }
-    if (pending.length === 0) {
-      const emptyRes = { status: "ok", instruction: null };
-      if (isNewAssignedId) emptyRes.assigned_id = workerId;
-      return jsonOut(emptyRes);
-    }
-    const job = pending[0];
-    sheets.metronQueue.getRange(job.row, 6).setValue("leased");
-    const jobRes = { status: "ok", instruction: job };
-    if (isNewAssignedId) jobRes.assigned_id = workerId;
-    return jsonOut(jobRes);
+  if (mode === "mothership_pull") {
+    const workerId = norm(data.worker_id);
+    const instruction = claimMothershipMessage(workerId);
+    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "empty" });
   }
 
-  if (mode === "metron_result") {
+  if (mode === "mothership_result") {
     const messageId = norm(data.message_id);
     const output = norm(data.result);
     if (!messageId) return jsonOut({ status: "error", error: "message_id_required" });
-    const ok = completeMetronMessage(messageId, false, norm(data.worker_id));
-    if (output) {
-      sheets.main.appendRow([new Date(), "METRON_OS", output, "DONE", "", messageId]);
-      triggerNextAction(messageId, norm(data.trace_id));
-    }
+    const ok = completeMothershipMessage(messageId, false, norm(data.worker_id));
+    if (output) sheets.main.appendRow([new Date(), "MOTHERSHIP", output, "DONE", "", messageId]);
     return jsonOut({ status: ok ? "ok" : "not_found" });
   }
 
-  if (mode === "metron_error") {
+  if (mode === "mothership_error") {
     const messageId = norm(data.message_id);
-    const output = norm(data.result);
+    const output = norm(data.error || data.data || "mothership_error");
     if (!messageId) return jsonOut({ status: "error", error: "message_id_required" });
-    const ok = completeMetronMessage(messageId, true, norm(data.worker_id));
-    sheets.main.appendRow([new Date(), "METRON_OS", "[ERR] " + output, "ERROR", "", messageId]);
-    triggerNextAction(messageId, norm(data.trace_id));
+    const ok = completeMothershipMessage(messageId, true, norm(data.worker_id));
+    sheets.main.appendRow([new Date(), "MOTHERSHIP", "[ERR] " + output, "ERROR", "", messageId]);
     return jsonOut({ status: ok ? "ok" : "not_found" });
   }
 
   if (mode === "admin_status") {
-    const slots = loadSlotRegistry();
-    const enabledSlots = slots.filter((s) => s.enabled);
-    const adaptivePick = pickAdaptiveTarget({ preferred: defaultTarget, forceAdaptive: true });
-    const adaptiveSlotPick = pickAdaptiveSlot({ forceAdaptive: true });
-    const targetCooldowns = (() => {
-      const keys = {};
-      slots.forEach((s) => {
-        const t = canonicalTarget(s.target || "");
-        if (t) keys[t] = true;
-      });
-      keys[defaultTarget] = true;
-      const out = {};
-      Object.keys(keys).sort().forEach((t) => {
-        out[t] = getTargetCooldownState(t);
-      });
-      return out;
-    })();
     const rows = sheets.jobs.getDataRange().getValues();
     const counts = { pending: 0, leased: 0, done: 0, error: 0, dead: 0, other: 0 };
     for (let i = 1; i < rows.length; i++) {
@@ -2571,17 +1673,9 @@ function doPost(e) {
       if (counts.hasOwnProperty(s)) counts[s]++;
       else counts.other++;
     }
-    const configWarnings = [];
-    const allTargets = listSlotTargets(false);
-    const enabledTargets = listSlotTargets(true);
-    if (allTargets.length === 0) configWarnings.push("slot_target_empty");
-    if (enabledTargets.length === 0) configWarnings.push("slot_target_enabled_empty");
-    if (allTargets.length > 0 && allTargets.indexOf(defaultTarget) < 0) {
-      configWarnings.push("default_target_not_in_slot_registry:" + defaultTarget);
-    }
     return jsonOut({
       status: "ok",
-      gateway_version: "arc-gateway-20.4",
+      gateway_version: "arc-gateway-20.1",
       lease_timeout_sec: leaseTimeoutSec,
       pending_timeout_sec: pendingTimeoutSec,
       max_retry: maxRetry,
@@ -2590,16 +1684,6 @@ function doPost(e) {
       default_route: defaultRoute,
       default_executor: defaultExecutor,
       default_target: defaultTarget,
-      slot_count: slots.length,
-      slot_enabled_count: enabledSlots.length,
-      slots: slots,
-      adaptive_slot_recommended: adaptiveSlotPick.slot_id || "",
-      adaptive_target_enabled: adaptiveTargetEnabled,
-      adaptive_target_window_sec: adaptiveWindowSec,
-      adaptive_target_recommended: adaptivePick.target || defaultTarget,
-      target_cooldown_sec: targetCooldownSec,
-      target_fail_streak_threshold: targetFailStreakThreshold,
-      target_cooldowns: targetCooldowns,
       target_failover_enabled: targetFailoverEnabled,
       require_signature: requireSignature,
       autonomy_paused: autonomyPaused,
@@ -2608,118 +1692,8 @@ function doPost(e) {
       dead_jobs: Math.max(0, sheets.dead.getLastRow() - 1),
       audit_rows: Math.max(0, sheets.audit.getLastRow() - 1),
       mothership_nodes: Math.max(0, sheets.mothershipNodes.getLastRow() - 1),
-      metrics: buildGatewayOpsMetrics(),
-      config_warnings: configWarnings
+      metrics: buildGatewayOpsMetrics()
     });
-  }
-
-  if (mode === "admin_target_scores") {
-    const preferred = canonicalTarget(data.preferred || "") || defaultTarget;
-    const exclude = canonicalTarget(data.exclude || "");
-    const forceAdaptive = lower(norm(data.force_adaptive || "false")) === "true";
-    const windowSec = parseIntSafe(data.window_sec, adaptiveWindowSec);
-    const scores = buildAdaptiveTargetScores(windowSec);
-    const picked = pickAdaptiveTarget({
-      preferred: preferred,
-      exclude: exclude,
-      forceAdaptive: forceAdaptive,
-      windowSec: windowSec
-    });
-    return jsonOut({
-      status: "ok",
-      preferred: preferred,
-      exclude: exclude,
-      adaptive_target_enabled: adaptiveTargetEnabled,
-      target_cooldown_sec: targetCooldownSec,
-      target_fail_streak_threshold: targetFailStreakThreshold,
-      window_sec: clamp(parseIntSafe(windowSec, adaptiveWindowSec), 120, 86400),
-      picked: picked.target || preferred,
-      reason: norm(picked.reason),
-      success_rate: picked.success_rate,
-      avg_latency_sec: picked.avg_latency_sec,
-      scores: scores
-    });
-  }
-
-  if (mode === "admin_slot_scores") {
-    const preferred = normalizeSlotAliasId(data.preferred || "");
-    const exclude = normalizeSlotAliasId(data.exclude || "");
-    const forceAdaptive = lower(norm(data.force_adaptive || "false")) === "true";
-    const windowSec = parseIntSafe(data.window_sec, adaptiveWindowSec);
-    const scores = buildAdaptiveSlotScores(windowSec);
-    const picked = pickAdaptiveSlot({
-      preferred: preferred,
-      exclude: exclude,
-      forceAdaptive: forceAdaptive,
-      windowSec: windowSec
-    });
-    return jsonOut({
-      status: "ok",
-      preferred: preferred,
-      exclude: exclude,
-      window_sec: clamp(parseIntSafe(windowSec, adaptiveWindowSec), 120, 86400),
-      picked: picked.slot_id || preferred || "",
-      reason: norm(picked.reason),
-      success_rate: picked.success_rate,
-      avg_latency_sec: picked.avg_latency_sec,
-      scores: scores
-    });
-  }
-
-  if (mode === "admin_slot_list") {
-    const slots = loadSlotRegistry();
-    return jsonOut({
-      status: "ok",
-      count: slots.length,
-      slots: slots
-    });
-  }
-
-  if (mode === "admin_slot_upsert") {
-    const slots = loadSlotRegistry();
-    const inId = normalizeSlotAliasId(data.slot_id || data.id);
-    if (!inId) return jsonOut({ status: "error", error: "slot_id_required" });
-    const target = canonicalTarget(data.target || "");
-    if (!target || target === "all") return jsonOut({ status: "error", error: "target_required" });
-    const existingIdx = slots.findIndex((s) => normalizeSlotAliasId(s.slot_id) === inId);
-    const base = existingIdx >= 0 ? slots[existingIdx] : {};
-    const merged = normalizeSlotEntry({
-      slot_id: inId,
-      display_name: norm(data.display_name || base.display_name || inId),
-      target: target,
-      enabled: data.hasOwnProperty("enabled") ? data.enabled : (base.enabled !== undefined ? base.enabled : true),
-      priority: data.hasOwnProperty("priority") ? data.priority : (base.priority || 100),
-      login: norm(data.login || base.login || ""),
-      url: norm(data.url || base.url || ""),
-      input_selector: norm(data.input_selector || base.input_selector || ""),
-      send_selector: norm(data.send_selector || base.send_selector || ""),
-      response_selector: norm(data.response_selector || base.response_selector || "")
-    }, existingIdx >= 0 ? existingIdx : slots.length);
-    if (existingIdx >= 0) slots[existingIdx] = merged;
-    else slots.push(merged);
-    slots.sort((a, b) => a.priority - b.priority);
-    saveSlotRegistry(slots);
-    addAudit(norm(data.trace_id), "SLOT_UPSERT", "", "", "ok", merged.slot_id + "->" + merged.target + " enabled=" + merged.enabled);
-    return jsonOut({ status: "ok", slot: merged, count: slots.length });
-  }
-
-  if (mode === "admin_slot_delete") {
-    const slots = loadSlotRegistry();
-    const inId = normalizeSlotAliasId(data.slot_id || data.id);
-    if (!inId) return jsonOut({ status: "error", error: "slot_id_required" });
-    const hardDelete = lower(norm(data.hard_delete || "false")) === "true";
-    const idx = slots.findIndex((s) => normalizeSlotAliasId(s.slot_id) === inId);
-    if (idx < 0) return jsonOut({ status: "not_found", slot_id: inId });
-    let deleted = null;
-    if (hardDelete) {
-      deleted = slots.splice(idx, 1)[0];
-    } else {
-      slots[idx].enabled = false;
-      deleted = slots[idx];
-    }
-    saveSlotRegistry(slots);
-    addAudit(norm(data.trace_id), "SLOT_DELETE", "", "", "ok", inId + " hard=" + hardDelete);
-    return jsonOut({ status: "ok", slot: deleted, count: slots.length, hard_delete: hardDelete });
   }
 
   if (mode === "admin_set_timeouts") {
@@ -2857,7 +1831,6 @@ function doPost(e) {
         leased_at: norm(row[6]),
         trace_id: norm(payload.trace_id),
         target: norm(payload.target),
-        slot_id: norm(payload.slot_id),
         executor: norm(payload.executor),
         retry_count: Number(parseInt(norm(payload.retry_count) || "0", 10) || 0),
         pending_recover_count: Number(parseInt(norm(payload.pending_recover_count) || "0", 10) || 0),
@@ -3111,17 +2084,6 @@ function doPost(e) {
     return jsonOut({ status: "ok", key: norm(data.key), rows: rows, count: rows.length });
   }
 
-  if (mode === "gateway_memory_search" || mode === "memory_search") {
-    const query = norm(data.query || data.q || data.text);
-    if (!query) return jsonOut({ status: "error", error: "query_required" });
-    const rows = searchGatewayLongMemory(query, {
-      limit: data.limit,
-      scan: data.scan,
-      source: data.source
-    });
-    return jsonOut({ status: "ok", query: query, rows: rows, count: rows.length });
-  }
-
   if (mode === "arc_memory_put" || mode === "arc_short_memory_put") {
     cleanupArcShortMemory(500);
     const mem = putArcShortMemory(data.worker_id, data.session_id, data.key, data.value, data.ttl_sec, data.trace_id);
@@ -3136,45 +2098,9 @@ function doPost(e) {
     return jsonOut({ status: "ok", rows: rows, count: rows.length });
   }
 
-  if (mode === "arc_runtime_status") {
-    const runtimeMode = normalizeRuntimeMode(props.getProperty("ARC_RUNTIME_MODE") || "interactive");
-    const updatedAt = norm(props.getProperty("ARC_RUNTIME_MODE_UPDATED_AT") || "");
-    return jsonOut({ status: "ok", runtime_mode: runtimeMode, updated_at: updatedAt });
-  }
-
-  if (mode === "arc_runtime_set" || mode === "arc_set_runtime_mode") {
-    const requested = normalizeRuntimeMode(data.runtime_mode);
-    const traceId = toTraceId(data.trace_id);
-    const requestWorkerId = norm(data.worker_id);
-    const jobId = norm(data.job_id) || ("RUNTIME_" + Utilities.getUuid().slice(0, 8));
-    const enq = enqueueArcJob({
-      jobId: jobId,
-      qid: jobId,
-      target: resolveOperationalTarget(defaultTarget, { fallback: "gemini" }),
-      prompt: "runtime_mode_set",
-      script: "",
-      runtimeMode: requested,
-      mode: "arc_set_runtime_mode",
-      executor: "ARC",
-      user: norm(data.user) || "gateway_runtime",
-      workerId: "",
-      traceId: traceId,
-      retryCount: 0
-    });
-    props.setProperty("ARC_RUNTIME_MODE", requested);
-    props.setProperty("ARC_RUNTIME_MODE_UPDATED_AT", nowIso());
-    addAudit(traceId, "ARC_RUNTIME_SET_QUEUED", enq.jobId, requestWorkerId, "pending", requested);
-    return jsonOut({
-      status: "ok",
-      runtime_mode: requested,
-      job_id: enq.jobId,
-      trace_id: enq.traceId
-    });
-  }
-
   if (mode === "arc_diag_snapshot") {
     const workerId = norm(data.worker_id);
-    const target = resolveOperationalTarget(data.target || defaultTarget, { fallback: defaultTarget });
+    const target = lower(data.target || "copilot");
     const nav = data.navigator && typeof data.navigator === "object" ? data.navigator : {};
     const webgl = data.webgl && typeof data.webgl === "object" ? data.webgl : {};
     const headers = data.headers && typeof data.headers === "object" ? data.headers : {};
@@ -3224,11 +2150,6 @@ function doPost(e) {
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     sheets.results.appendRow([new Date(), missionId, data.target || "", data.prompt || "", result, data.image || ""]);
     const found = findJobRowById(missionId);
-    const resultTarget = canonicalTarget(data.target || (found && found.payload ? found.payload.target : "")) || "";
-    const resultSlot = canonicalSlotId((found && found.payload ? found.payload.slot_id : "") || data.slot_id || "");
-    const mainRef = findMainChatByMissionId(missionId || missionIdRaw);
-    const reqUser = mainRef ? norm(mainRef.user) : "";
-    const reqContent = mainRef ? norm(mainRef.content) : norm(data.prompt);
     if (found && evalSummary) {
       const payload = found.payload || {};
       payload.last_eval_summary = evalSummary.slice(0, 1200);
@@ -3253,35 +2174,26 @@ function doPost(e) {
         traceId
       );
     }
-    if (resultTarget) {
-      markTargetSuccess(resultTarget, traceId);
-    }
-    if (reqUser && result) {
-      const keyBase = "user:" + reqUser + ":" + (resultSlot || resultTarget || "general");
-      const memValue = ("request=" + reqContent + "\nresult=" + result)
-        .replace(/\s+/g, " ")
-        .slice(0, MAX_MEMORY_VALUE);
-      setGatewayLongMemory(
-        keyBase + ":last_success",
-        memValue,
-        "arc_result_auto",
-        traceId,
-        JSON.stringify({ domain: "web_interaction", target: resultTarget, slot: resultSlot, outcome: "success", user: reqUser })
-      );
-      const qTokens = tokenizeForMemory(reqContent);
-      if (qTokens.length > 0) {
-        const topicKey = "topic:" + qTokens[0] + ":" + (resultTarget || "general");
-        setGatewayLongMemory(
-          topicKey,
-          ("user=" + reqUser + " / " + memValue).slice(0, MAX_MEMORY_VALUE),
-          "arc_result_auto",
-          traceId,
-          JSON.stringify({ domain: "knowledge", target: resultTarget, slot: resultSlot, topic: qTokens[0] })
-        );
+    
+    // Check if we need to auto-deploy the result to a GAS project
+    // AppForge or MotherShip sets prompt that contains "スプレッドシート [ {scriptId} ] にバインドされた Apps Script プロジェクト"
+    const reqContent = ""; // Required for variable checking parity
+    const isAppDeployTarget = result.indexOf("--- FILE:") >= 0 && (data.mode === "request_app_deployment" || (found && found.payload && found.payload.mode === "request_app_deployment") || (data.prompt && data.prompt.indexOf("Apps Script プロジェクト") >= 0));
+    if (isAppDeployTarget) {
+      // 抽出対象のScriptIdを推測する。通常 Prompt に "スプレッドシート [ ID ]" が入っているか、
+      // ターゲットとして指定されているかなど。（ARC側のプロンプト抽出要件に基づく）
+      const scriptIdMatch = (data.prompt || "").match(/\[\s*([a-zA-Z0-9_-]{30,})\s*\]/);
+      const targetAppId = scriptIdMatch ? scriptIdMatch[1] : (data.target || "");
+      if (targetAppId && targetAppId.length > 30) {
+         addAudit(traceId, "DEPLOY_START", targetAppId, "", "info", "Starting GAS auto-deployment");
+         const deploySuccess = deployAppScript(targetAppId, result, traceId);
+         if (deploySuccess) {
+            sheets.main.appendRow([new Date(), "SYSTEM", "[Gateway Auto-Deploy] SUCCESS to " + targetAppId, "INFO", "", missionId]);
+         }
       }
     }
+
     addAudit(traceId, "ARC_RESULT", missionId, norm(data.worker_id), "done", norm(data.target));
-    triggerNextAction(missionId, traceId);
     return jsonOut({ status: "ok", trace_id: traceId });
   }
 
@@ -3292,12 +2204,6 @@ function doPost(e) {
     const errData = norm(data.data);
     const traceId = norm(data.trace_id) || findTraceByMissionId(missionId || missionIdRaw);
     const workerId = norm(data.worker_id);
-    const foundJobForTarget = findJobRowById(missionId);
-    const errorTarget = canonicalTarget(data.target || (foundJobForTarget && foundJobForTarget.payload ? foundJobForTarget.payload.target : "")) || "";
-    const errorSlot = canonicalSlotId((foundJobForTarget && foundJobForTarget.payload ? foundJobForTarget.payload.slot_id : "") || data.slot_id || "");
-    const mainRef = findMainChatByMissionId(missionId || missionIdRaw);
-    const reqUser = mainRef ? norm(mainRef.user) : "";
-    const reqContent = mainRef ? norm(mainRef.content) : "";
 
     const recentErr = readRecentRows(sheets.errors, 4, compactScanMax);
     let foundErr = -1;
@@ -3344,33 +2250,12 @@ function doPost(e) {
       );
     }
     if (retry.retried) {
-      if (errorTarget) markTargetFailure(errorTarget, err, errData, traceId);
-      if (reqUser) {
-        setGatewayLongMemory(
-          "user:" + reqUser + ":" + (errorSlot || errorTarget || "general") + ":last_error",
-          ("request=" + reqContent + "\nerror=[" + err + "] " + errData).replace(/\s+/g, " ").slice(0, MAX_MEMORY_VALUE),
-          "arc_error_auto",
-          traceId,
-          JSON.stringify({ domain: "web_interaction", target: errorTarget, slot: errorSlot, outcome: "error", retry: "scheduled" })
-        );
-      }
       addAudit(traceId, "ARC_ERROR_RETRY", missionId, workerId, "pending", "retry=" + retry.retry_count + ",executor=" + retry.executor);
       return jsonOut({ status: "retry_scheduled", trace_id: traceId, retry: retry });
     }
 
     completeArcJob(missionId, "error");
-    if (errorTarget) markTargetFailure(errorTarget, err, errData, traceId);
-    if (reqUser) {
-      setGatewayLongMemory(
-        "user:" + reqUser + ":" + (errorSlot || errorTarget || "general") + ":last_error",
-        ("request=" + reqContent + "\nerror=[" + err + "] " + errData).replace(/\s+/g, " ").slice(0, MAX_MEMORY_VALUE),
-        "arc_error_auto",
-        traceId,
-        JSON.stringify({ domain: "web_interaction", target: errorTarget, slot: errorSlot, outcome: "error" })
-      );
-    }
     addAudit(traceId, "ARC_ERROR", missionId, workerId, "error", err + " / " + retry.reason);
-    triggerNextAction(missionId, traceId);
     return jsonOut({ status: "ok", trace_id: traceId, retry: retry });
   }
 
@@ -3383,12 +2268,7 @@ function doPost(e) {
   if (mode === "arc_heartbeat" || mode === "register_worker") {
     const ip = norm(data.ip);
     const port = norm(data.port);
-    let workerId = norm(data.worker_id) || (ip && port ? (ip + ":" + port) : "");
-    let isNewAssignedId = false;
-    if (!workerId) {
-      workerId = "GWN_" + Utilities.getUuid().replace(/-/g, "").slice(0, 12);
-      isNewAssignedId = true;
-    }
+    const workerId = norm(data.worker_id) || (ip && port ? (ip + ":" + port) : "");
     const consumer = upper(data.executor || "ARC");
     const all = sheets.nodes.getDataRange().getValues();
     let foundRow = -1;
@@ -3474,133 +2354,27 @@ function doPost(e) {
     if (shouldLeaseTouch) {
       touchLeaseFromHeartbeat(workerId, Object.assign({}, data, { progress_signal: progressSignal ? "true" : "false" }));
     }
-    runArcQueueMaintenance(norm(data.trace_id), workerId, consumer);
-    const runningLike =
-      workerStatus === "running" ||
-      workerStatus === "working" ||
-      workerStatus === "processing" ||
-      workerStatus === "waiting" ||
-      workerStatus === "busy";
-    const activeLeaseForWorker = runningLike ? hasLeasedJobForWorker(workerId) : false;
     const canLease =
       workerStatus === "" ||
       workerStatus === "online" ||
       workerStatus === "idle" ||
       workerStatus === "heartbeat" ||
       workerStatus === "success" ||
-      workerStatus === "error" ||
-      (runningLike && !activeLeaseForWorker);
-    const instruction = canLease ? safeClaimNextInstruction(workerId, consumer, norm(data.trace_id)) : null;
+      workerStatus === "error";
+    const instruction = canLease ? claimNextInstruction(workerId, consumer) : null;
     addAudit(norm(data.trace_id), "ARC_HEARTBEAT", "", workerId, "ok", consumer);
-    const responseData = { status: "ok" };
-    if (instruction) responseData.instruction = instruction;
-    if (isNewAssignedId) responseData.assigned_id = workerId;
-    return jsonOut(responseData);
+    return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "ok" });
   }
 
   if (mode === "lease_job") {
     const workerId = norm(data.worker_id);
     const consumer = upper(data.executor || "ARC");
-    runArcQueueMaintenance(norm(data.trace_id), workerId, consumer);
-    const instruction = safeClaimNextInstruction(workerId, consumer, norm(data.trace_id));
+    const instruction = claimNextInstruction(workerId, consumer);
     return jsonOut(instruction ? { status: "ok", instruction: instruction } : { status: "empty" });
   }
 
   if (mode === "arc_consult") {
-    if (!consultEnabled) {
-      return jsonOut({ advice: "", skipped: "disabled" });
-    }
-    return jsonOut({ advice: "", skipped: "empty_policy" });
-  }
-
-  // --- BAKU Phase 3: Salvage & Repair endpoints ---
-  if (mode === "baku_salvage_dead_jobs") {
-    const limit = parseInt(norm(data.limit), 10) || 50;
-    const rows = sheets.dead.getDataRange().getValues();
-    const deadJobs = [];
-    // Start from oldest (row 1 is header)
-    for (let i = 1; i < rows.length && deadJobs.length < limit; i++) {
-        const row = rows[i];
-        if (!row[1]) continue;
-        const payloadStr = norm(row[11]);
-        const payloadObj = parseJsonSafe(payloadStr);
-        deadJobs.push({
-            row_index: i + 1,
-            ts: norm(row[0]),
-            job_id: norm(row[1]),
-            trace_id: norm(row[2]),
-            executor: norm(row[3]),
-            target: norm(row[4]),
-            prompt: norm(row[5]),
-            retry_count: norm(row[6]),
-            error_type: norm(row[7]),
-            error_data: norm(row[8]),
-            failed_worker: norm(row[9]),
-            reason: norm(row[10]),
-            payload: payloadObj
-        });
-    }
-    return jsonOut({ status: "ok", count: deadJobs.length, jobs: deadJobs });
-  }
-
-  if (mode === "baku_archive_dead_jobs") {
-    const jobIds = Array.isArray(data.job_ids) ? data.job_ids : [norm(data.job_ids)];
-    if (!jobIds || jobIds.length === 0 || !jobIds[0]) return jsonOut({ status: "error", error: "job_ids_required" });
-    const rows = sheets.dead.getDataRange().getValues();
-    let deletedCount = 0;
-    // Iterate backwards when deleting rows
-    for (let i = rows.length - 1; i >= 1; i--) {
-        const jId = norm(rows[i][1]);
-        if (jobIds.includes(jId)) {
-            sheets.dead.deleteRow(i + 1);
-            deletedCount++;
-        }
-    }
-    addAudit(norm(data.trace_id), "BAKU_ARCHIVE_DEAD", "", "", "ok", `archived=${deletedCount}`);
-    return jsonOut({ status: "ok", archived: deletedCount });
-  }
-
-  if (mode === "baku_enqueue_arc") {
-    const prompt = norm(data.prompt);
-    if (!prompt) return jsonOut({ status: "error", error: "prompt_required" });
-    const jobId = norm(data.job_id) || ("BAKU_" + Utilities.getUuid().slice(0, 8));
-    const enq = enqueueArcJob({
-      jobId: jobId,
-      qid: jobId,
-      target: resolveOperationalTarget(norm(data.target) || defaultTarget, { fallback: defaultTarget }),
-      prompt: prompt,
-      script: norm(data.script),
-      mode: norm(data.arc_mode) || "request_arc",
-      executor: "ARC",
-      user: norm(data.user) || "baku_repair",
-      workerId: "",
-      traceId: norm(data.trace_id),
-      retryCount: 0
-    });
-    addAudit(enq.traceId, "BAKU_ENQUEUE_ARC", enq.jobId, "", "pending", enq.payload.target);
-    return jsonOut({ status: "ok", job_id: enq.jobId, trace_id: enq.traceId });
-  }
-
-  // --- Phase 4: METRON OS Enqueue Endpoint ---
-  if (mode === "metron_enqueue_arc") {
-    const prompt = norm(data.prompt);
-    if (!prompt) return jsonOut({ status: "error", error: "prompt_required" });
-    const jobId = norm(data.job_id) || ("METRON_" + Utilities.getUuid().slice(0, 8));
-    const enq = enqueueArcJob({
-      jobId: jobId,
-      qid: jobId,
-      target: resolveOperationalTarget(norm(data.target) || defaultTarget, { fallback: defaultTarget }),
-      prompt: prompt,
-      script: norm(data.script),
-      mode: norm(data.arc_mode) || "request_arc",
-      executor: "ARC",
-      user: norm(data.user) || "metron_os_core",
-      workerId: "",
-      traceId: norm(data.trace_id),
-      retryCount: 0
-    });
-    addAudit(enq.traceId, "METRON_ENQUEUE_ARC", enq.jobId, "", "pending", enq.payload.target);
-    return jsonOut({ status: "ok", job_id: enq.jobId, trace_id: enq.traceId });
+    return jsonOut({ advice: "" });
   }
 
   return jsonOut({ status: "ok" });
