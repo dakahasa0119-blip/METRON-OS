@@ -75,8 +75,8 @@ ${TEMPLATE_CSS}
 
   try {
     if (typeof METRON_GATEWAY_BRIDGE !== 'undefined') {
-      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_arc");
-      announce(`AppForge: [${appName}] の生成ジョブをARCに委譲しました。SSID: ${ssId}`, "SYSTEM");
+      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_app_deployment");
+      announce(`AppForge: [${appName}] の生成ジョブをARC(Phase 6 Pipeline)に委譲しました。SSID: ${ssId}`, "SYSTEM");
     }
   } catch (e) {
     announce(`AppForge: ARC委譲に失敗: ${e.message}`, "ERROR");

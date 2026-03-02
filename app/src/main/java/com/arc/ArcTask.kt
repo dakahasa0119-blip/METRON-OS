@@ -16,5 +16,7 @@ sealed class ArcTask {
     
     data class Pipeline(val prompt: String, val missionId: String = "AUTO") : ArcTask()
     
+    data class AppDeployment(val prompt: String, val qid: String, val missionId: String = "AUTO") : ArcTask()
+
     data class VisionRequest(val action: String, val onResult: (Int, Int) -> Unit) : ArcTask()
 }

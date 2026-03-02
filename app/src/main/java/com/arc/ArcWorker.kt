@@ -15,7 +15,8 @@ class ArcWorker(
     val web: WebViewManager,
     private val gateway: GatewayClient,
     private val prefs: Prefs,
-    private val pipelineProvider: () -> AllAiPipeline
+    private val pipelineProvider: () -> AllAiPipeline,
+    private val appDeploymentProvider: (() -> AppDeploymentPipeline)? = null
 ) {
     private data class ScreenDecision(
         val action: String,
@@ -242,6 +243,10 @@ class ArcWorker(
                         emitStatus("PIPE_STEP_DONE")
                         pipelineProvider().onAiResult(result)
                         finishTask(currentDoneCallback)
+                    } else if (qid.startsWith("RESEARCH_") || qid.startsWith("GEN_")) {
+                        emitStatus("DEPLOY_STEP_DONE")
+                        appDeploymentProvider?.invoke()?.onAiResult(result)
+                        finishTask(currentDoneCallback)
                     } else {
                         handleAiResult(result)
                     }
@@ -457,6 +462,19 @@ class ArcWorker(
                 currentDoneCallback = done
                 announceStatus("running")
                 executeAiTask(task)
+            }
+            is ArcTask.AppDeployment -> {
+                currentQid = task.qid
+                currentMissionId = task.missionId
+                currentSlotId = ""
+                emitStatus("APP_DEPLOY_START")
+                announceStatus("running")
+                appDeploymentProvider?.invoke()?.start(task) { 
+                    currentQid = null
+                    currentMissionId = null
+                    announceStatus("idle")
+                    done()
+                } ?: done()
             }
             is ArcTask.VisionRequest -> {
                 currentDoneCallback = done

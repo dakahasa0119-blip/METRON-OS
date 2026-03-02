@@ -33,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: Prefs
     private lateinit var webViewManager: WebViewManager
+    private lateinit var appDeploymentPipeline: AppDeploymentPipeline
     private lateinit var allAiPipeline: AllAiPipeline
     private lateinit var debugHud: DebugHud
 
@@ -225,7 +226,25 @@ class MainActivity : AppCompatActivity() {
                 }
                 debugHud.update("GW: RUNTIME=$normalized")
             }
-            "request_arc" -> {
+            "request_app_deployment" -> {
+            val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
+            val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
+            val prompt = instruction.optString("prompt", "")
+            if (prompt.isNotBlank()) {
+                ensureOperationalForeground("gateway_instruction_request_app_deployment")
+                arcQueue.enqueue(ArcTask.AppDeployment(prompt, qid, missionId = missionId))
+                debugHud.update("GW: DEPLOY_ENQUEUED")
+            } else if (jobId.isNotBlank()) {
+                arcGateway.sendArcError(
+                    qid = jobId,
+                    type = "EMPTY_PROMPT",
+                    data = "gateway_instruction_missing_prompt",
+                    missionId = missionId,
+                    target = "gemini"
+                )
+            }
+        }
+        "request_arc" -> {
                 val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
                 val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
                 val slotId = instruction.optString("slot_id", "").trim()
@@ -388,8 +407,44 @@ class MainActivity : AppCompatActivity() {
                 arcGateway.consultGateway(ctx, prob, img, callback)
             },
             captureBitmap = { onReady ->
-                webViewManager.captureBitmap(onReady)
+            webViewManager.captureBitmap(onReady)
+        }
+    )
+
+    appDeploymentPipeline = AppDeploymentPipeline(
+        prefs = prefs,
+        requestExecution = { target, prompt, missionId, qid ->
+            arcWorker.process(
+                ArcTask.AI(
+                    qid = qid,
+                    target = target.name,
+                    prompt = prompt,
+                    missionId = missionId
+                )
+            ) { }
+        },
+        onFinalResult = { missionId, final, success ->
+            if (success) {
+                arcGateway.sendArcResult(
+                    qid = missionId,
+                    result = final,
+                    missionId = missionId,
+                    target = "gemini",
+                    evalSummary = "app_deployment_done"
+                )
+            } else {
+                arcGateway.sendArcError(
+                    qid = missionId,
+                    type = "APP_DEPLOY_FAILED",
+                    data = final,
+                    missionId = missionId,
+                    target = "gemini"
+                )
             }
+            runOnUiThread { debugHud.update("DEPLOY_DONE") }
+        }
+    )
+}
         )
     }
 
@@ -418,7 +473,7 @@ class MainActivity : AppCompatActivity() {
         }
         syncSlotsFromGateway()
         
-        arcWorker = ArcWorker(webViewManager, arcGateway, prefs) { allAiPipeline }
+        arcWorker = ArcWorker(webViewManager, arcGateway, prefs, { allAiPipeline }, { appDeploymentPipeline })
         arcWorker.onGlobalAiResult = { text ->
             val waiter = smokeWaiter
             if (waiter != null && !waiter.isCompleted) {

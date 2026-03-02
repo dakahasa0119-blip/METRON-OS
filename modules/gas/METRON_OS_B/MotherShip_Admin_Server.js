@@ -92,8 +92,8 @@ ${TEMPLATE_CSS}
 
   try {
     if (typeof METRON_GATEWAY_BRIDGE !== 'undefined') {
-      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_arc");
-      announce(`MotherShip: [${appName}] のアップデートジョブをARCに委譲しました。SSID: ${appId}`, "SYSTEM");
+      METRON_GATEWAY_BRIDGE.enqueueArcJob("gemini", arcPrompt, "", "request_app_deployment");
+      announce(`MotherShip: [${appName}] のアップデートジョブをARC(Phase 6 Pipeline)に委譲しました。SSID: ${appId}`, "SYSTEM");
 
       // ジョブ投下成功時にフラグを暫定クリアする
       sheet.getRange(rowIndex, 6).setValue(getTemplateVersion()); // F列: VERSION
