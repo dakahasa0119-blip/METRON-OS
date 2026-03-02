@@ -5,7 +5,7 @@
  * - BAKU v8.0 の抽出能力と完全同期
  */
 
-const METRON_DNA_ANALYST = (function () {
+var METRON_DNA_ANALYST = (function () {
 
   /** コメントブロックDNA抽出 */
   function extractBlockDNA(source, sourceLabel, dnaList) {

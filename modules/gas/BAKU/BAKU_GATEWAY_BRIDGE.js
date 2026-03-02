@@ -556,7 +556,12 @@ function BAKU_ProcessGatewayJob() {
 }
 
 function BAKU_RunGatewayLoop() {
+  var autoDeployCount = 0;
+  if (typeof BAKU_AutoDeploy !== "undefined") {
+    autoDeployCount = BAKU_AutoDeploy.processDeployQueue();
+  }
   var res = BAKU_GATEWAY.runLoop();
+  res.auto_deploy_processed = autoDeployCount;
   Logger.log(res);
   return res;
 }

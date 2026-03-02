@@ -3375,11 +3375,15 @@ function doPost(e) {
         const scriptIdMatch = (reqContent || data.prompt || "").match(/\[\s*([a-zA-Z0-9_-]{30,})\s*\]/);
         const targetAppId = scriptIdMatch ? scriptIdMatch[1] : (data.target || "");
         if (targetAppId && targetAppId.length > 30) {
-          addAudit(traceId, "DEPLOY_START", targetAppId, "", "info", "Starting GAS auto-deployment");
-          const deploySuccess = deployAppScript(targetAppId, result, traceId);
-          if (deploySuccess && mainRef) {
-            sheets.main.getRange(mainRef.row_index, 5).setValue(norm(mainRef.response) + "\n\n[Gateway Auto-Deploy] SUCCESS to " + targetAppId);
-          }
+          addAudit(traceId, "DEPLOY_QUEUE", targetAppId, "", "info", "Queuing GAS auto-deployment for BAKU");
+          // Instead of synchronous deployAppScript, we queue it to Long Memory for BAKU to pick up
+          const deployPayload = {
+            scriptId: targetAppId,
+            resultContent: result,
+            traceId: traceId,
+            timestamp: Date.now()
+          };
+          setGatewayLongMemory("baku:deploy_queue:" + targetAppId + ":" + Date.now(), JSON.stringify(deployPayload), "arc_result_auto", traceId, "deploy_queue," + targetAppId);
         }
       }
 

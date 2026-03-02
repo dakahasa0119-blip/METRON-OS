@@ -671,7 +671,7 @@ function evaluateProposalsWithAI() {
 
   if (!sheet) {
     sheet = ss.insertSheet("PatchSlots");
-    sheet.appendRow(["Timestamp","Filename","SlotName","Priority","Code","Status","Note"]);
+    sheet.appendRow(["Timestamp", "Filename", "SlotName", "Priority", "Code", "Status", "Note"]);
     return [];
   }
 
@@ -703,7 +703,7 @@ function getStagedProposals() {
 
     if (!sheet) {
       sheet = ss.insertSheet("Forge_Staging");
-      sheet.appendRow(["記録日時","生成物名称","解説","ソースコード","状態","バックアップURL"]);
+      sheet.appendRow(["記録日時", "生成物名称", "解説", "ソースコード", "状態", "バックアップURL"]);
       return [];
     }
 
@@ -755,7 +755,7 @@ function approveStagedProposal(id) {
     try {
       const info = JSON.parse(raw);
       if (now - info.timestamp < TTL) return "SKIPPED";
-    } catch (_) {}
+    } catch (_) { }
   }
   props.setProperty(LOCK_KEY, JSON.stringify({ timestamp: now }));
 
@@ -768,7 +768,7 @@ function approveStagedProposal(id) {
     const forge = ss.getSheetByName("Forge_Staging");
     const patch = ss.getSheetByName("PatchSlots") || (function () {
       const s = ss.insertSheet("PatchSlots");
-      s.appendRow(["Timestamp","Filename","SlotName","Priority","Code","Status","Note"]);
+      s.appendRow(["Timestamp", "Filename", "SlotName", "Priority", "Code", "Status", "Note"]);
       return s;
     })();
 
@@ -816,7 +816,7 @@ function logToMother_(level, message) {
     const ss = SpreadsheetApp.openById(METRON_OS_ID);
     const logSheet = ss.getSheetByName("SystemLog") || (function () {
       const s = ss.insertSheet("SystemLog");
-      s.appendRow(["Timestamp","Level","Message"]);
+      s.appendRow(["Timestamp", "Level", "Message"]);
       return s;
     })();
 

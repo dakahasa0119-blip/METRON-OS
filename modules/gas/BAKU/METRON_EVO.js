@@ -3,7 +3,7 @@
  *  ORCHESTRATOR（思考統括）
  * ============================ */
 
-const METRON_EVO = METRON_EVO || {};
+var METRON_EVO = {};
 
 METRON_EVO.Orchestrator = {
 

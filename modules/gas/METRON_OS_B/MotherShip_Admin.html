@@ -193,7 +193,12 @@
     }).getMotherShipVersion();
 
     // App registry
-    google.script.run.withSuccessHandler(renderApps).getAppRegistryList();
+    function loadAppRegistry() {
+      google.script.run.withSuccessHandler(() => {
+        google.script.run.withSuccessHandler(renderApps).getAppRegistryList();
+      }).checkDeploymentsFromLogs();
+    }
+    loadAppRegistry();
 
     function runSetup() {
       if (!confirm("テンプレートを再登録しますか？")) return;

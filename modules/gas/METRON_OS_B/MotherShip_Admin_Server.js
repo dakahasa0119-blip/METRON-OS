@@ -132,6 +132,55 @@ function getMotherShipLogs() {
   }
   return list;
 }
+
+/**
+ * BAKUからのデプロイ完了通知(DEPLOY_COMPLETE)をログから読み取り、
+ * App_Registry の該当アプリを Active に更新する。
+ * MotherShip_Admin 上のポーリング等で定期的に呼び出される想定。
+ */
+function checkDeploymentsFromLogs() {
+  const ss = SpreadsheetApp.getActive();
+  const logSheet = ss.getSheetByName("App_Logs");
+  const regSheet = ss.getSheetByName("App_Registry");
+
+  if (!logSheet || !regSheet) return { status: "error", error: "sheets_missing" };
+
+  const logs = logSheet.getDataRange().getValues();
+  const registry = regSheet.getDataRange().getValues();
+  let updatedCount = 0;
+
+  // 最近のログを逆順にスキャン（最新100件程度）
+  const scanLimit = Math.max(1, logs.length - 100);
+  for (let i = logs.length - 1; i >= scanLimit; i--) {
+    const msg = String(logs[i][2] || "");
+    if (msg.indexOf("DEPLOY_COMPLETE") >= 0) {
+      // expected format: "[@metron] DEPLOY_COMPLETE <scriptId> <webAppUrl>"
+      const parts = msg.split(" ");
+      const scriptId = parts[2];
+      const webAppUrl = parts[3] || "";
+
+      if (scriptId) {
+        // App_Registry から該当する scriptId を探す (C列: index 2)
+        for (let r = 1; r < registry.length; r++) {
+          if (String(registry[r][2]) === scriptId) {
+            // 現在のフラグ(H列: index 7)を確認し、UPDATE_AVAILABLE などの場合はクリア(稼働中扱い)し、URLを記録する。
+            const currentFlag = registry[r][7];
+            if (currentFlag !== "Active") {
+              regSheet.getRange(r + 1, 8).setValue("Active"); // H列: FLAG
+              // I列（必要に応じてURL保存列を追加している場合）にWebAPPのURLを保存することも可
+              if (regSheet.getMaxColumns() >= 9) {
+                regSheet.getRange(r + 1, 9).setValue(webAppUrl); // I列: URL
+              }
+              updatedCount++;
+            }
+          }
+        }
+      }
+    }
+  }
+  return { status: "ok", updated: updatedCount };
+}
+
 /**
  * 指定アプリのプロファイルを返す
  */

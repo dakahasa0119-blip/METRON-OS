@@ -1,9 +1,9 @@
 /**
  * 🧠 [5] METRON_SWARM
  */
-const METRON_SWARM = {
+var METRON_SWARM = {
   ROLES: { CREATOR: "Gemini", HACKER: "Gemini" },
-  shuffleRoles: function() {
+  shuffleRoles: function () {
     const openAiKey = METRON_PROPS.getOpenAiKey();
     console.log("🔄 知能の布陣を診断中...");
     if (!openAiKey) {
@@ -17,7 +17,7 @@ const METRON_SWARM = {
       console.log(`📡 多重脳稼働：[Creator: ${this.ROLES.CREATOR}] [Hacker: ${this.ROLES.HACKER}]`);
     }
   },
-  generateProvocation: function(rivalName, rivalCode, dna) {
+  generateProvocation: function (rivalName, rivalCode, dna) {
     return `あなたはMETRON OSの主任設計官です。
 現在、${rivalName}が生成した以下のコード案があります。
 【${rivalName}の案】
@@ -29,7 +29,7 @@ ${rivalCode}
 3. 形式: {"files": [{"name": "name", "source": "code"}], "report": "進化の飛躍点"} のJSONのみを出力せよ。
 DNA: ${dna}`;
   },
-  compete: function(dna, error) {
+  compete: function (dna, error) {
     console.log(`⚔️ 知能トーナメント【HACKER】を召喚します...`);
     return METRON_EVO.think(dna, "HACKER", error);
   }

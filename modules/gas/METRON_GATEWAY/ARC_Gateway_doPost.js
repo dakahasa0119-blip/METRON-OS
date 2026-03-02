@@ -817,6 +817,23 @@ function doPost(e) {
     return null;
   };
 
+  const buildGatewayProfileContext = () => {
+    try {
+      const json = props.getProperty("ARC_GATEWAY_PROFILE_JSON");
+      if (!json) return "";
+      const p = JSON.parse(json);
+      let ctx = "\n--- SYSTEM PROFILE ---\n";
+      if (p.identity) ctx += "Identity: " + p.identity + "\n";
+      if (p.environment) ctx += "Environment Context: " + p.environment + "\n";
+      if (p.rules) ctx += "System Rules:\n" + p.rules + "\n";
+      if (p.tone) ctx += "Tone & Format: " + p.tone + "\n";
+      ctx += "----------------------\n";
+      return ctx;
+    } catch (e) {
+      return "";
+    }
+  };
+
   const buildGatewayMemoryContextForRoute = (user, target, slotId, prompt, missionId) => {
     const u = norm(user);
     const t = canonicalTarget(target);
@@ -1669,8 +1686,9 @@ function doPost(e) {
       const memPack = cmd.useMemory
         ? buildGatewayMemoryContextForRoute(user, cmd.target, cmd.slotId, cmd.prompt, resolvedId)
         : { context: "", hit_count: 0, keys: [] };
-      const promptWithMemory = memPack.context
-        ? (memPack.context + "\n【依頼】\n" + cmd.prompt)
+      const profileContext = buildGatewayProfileContext();
+      const promptWithMemory = (profileContext || memPack.context)
+        ? (profileContext + memPack.context + "\n【依頼】\n" + cmd.prompt)
         : cmd.prompt;
       const jobRes = enqueueArcJob({
         // qid と jobId は同一にして、結果報告の突合失敗を防ぐ

@@ -5,7 +5,7 @@
  * - JS識別子チェック
  * - code の最低品質チェック
  */
-const METRON_DNA_VALIDATE = (function () {
+var METRON_DNA_VALIDATE = (function () {
 
   /** JS の識別子として有効かチェック */
   function isValidIdentifier(name) {

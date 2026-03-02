@@ -19,5 +19,9 @@
     "https://www.googleapis.com/auth/script.projects",
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/script.container.ui"
-  ]
+  ],
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE"
+  }
 }
