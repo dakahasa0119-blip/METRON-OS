@@ -10,6 +10,63 @@ import org.json.JSONObject
  */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("arc_settings", Context.MODE_PRIVATE)
+
+    private var _cachedSlotRegistryJson: String? = null
+    private var _cachedSlotRegistryArray: JSONArray? = null
+
+    @Synchronized
+    private fun getSlotRegistryArray(): JSONArray {
+        val raw = gatewaySlotRegistryJson
+        if (raw == _cachedSlotRegistryJson) {
+            _cachedSlotRegistryArray?.let { return it }
+        }
+        return try {
+            val arr = JSONArray(raw)
+            _cachedSlotRegistryJson = raw
+            _cachedSlotRegistryArray = arr
+            arr
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
+
+    private var _cachedTimingHistoryJson: String? = null
+    private var _cachedTimingHistoryArray: JSONArray? = null
+
+    @Synchronized
+    private fun getTimingHistoryArray(): JSONArray {
+        val raw = timingHistory
+        if (raw == _cachedTimingHistoryJson) {
+            _cachedTimingHistoryArray?.let { return it }
+        }
+        return try {
+            val arr = JSONArray(raw)
+            _cachedTimingHistoryJson = raw
+            _cachedTimingHistoryArray = arr
+            arr
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
+
+    private var _cachedContextHistoryJson: String? = null
+    private var _cachedContextHistoryArray: JSONArray? = null
+
+    @Synchronized
+    private fun getContextHistoryArray(): JSONArray {
+        val raw = contextHistory
+        if (raw == _cachedContextHistoryJson) {
+            _cachedContextHistoryArray?.let { return it }
+        }
+        return try {
+            val arr = JSONArray(raw)
+            _cachedContextHistoryJson = raw
+            _cachedContextHistoryArray = arr
+            arr
+        } catch (_: Exception) {
+            JSONArray()
+        }
+    }
     private val copilotMigrationDoneKey = "copilot_slot_claude_migrated_v1"
 
     private fun edit(action: SharedPreferences.Editor.() -> Unit) {
@@ -119,6 +176,7 @@ class Prefs(context: Context) {
         else -> geminiUrl
     }
 
+    @Synchronized
     fun resolveTargetForSlot(slotId: String?, fallbackTarget: String = ""): String {
         val sid = normalizeSlotId(slotId)
         val fallback = normalizeTarget(fallbackTarget)
@@ -127,7 +185,7 @@ class Prefs(context: Context) {
             return normalizeTarget(sid).ifBlank { fallback.ifBlank { "gemini" } }
         }
         return try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getSlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val id = normalizeSlotId(obj.optString("slot_id", ""))
@@ -141,10 +199,12 @@ class Prefs(context: Context) {
         }
     }
 
+    @Synchronized
     fun upsertGatewaySlotBinding(slotId: String?, target: String?, enabled: Boolean? = null) {
         upsertGatewaySlotBinding(slotId, target, enabled, null, null, null, null)
     }
 
+    @Synchronized
     fun upsertGatewaySlotBinding(
         slotId: String?,
         target: String?,
@@ -158,7 +218,7 @@ class Prefs(context: Context) {
         val t = normalizeTarget(target)
         if (sid.isBlank() || t.isBlank()) return
         try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getSlotRegistryArray()
             var idx = -1
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
@@ -192,12 +252,13 @@ class Prefs(context: Context) {
         }
     }
 
+    @Synchronized
     fun resolveUrlForSlot(slotId: String?, fallbackTarget: String): String {
         val sid = normalizeSlotId(slotId)
         val target = resolveTargetForSlot(sid, fallbackTarget)
         if (sid.isBlank()) return getUrlFor(target)
         return try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getSlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 if (normalizeSlotId(obj.optString("slot_id", "")) != sid) continue
@@ -211,13 +272,14 @@ class Prefs(context: Context) {
         }
     }
 
+    @Synchronized
     fun resolveSelectorsForSlot(slotId: String?, fallbackTarget: String): Pair<String, String> {
         val sid = normalizeSlotId(slotId)
         val target = resolveTargetForSlot(sid, fallbackTarget)
         val defaultPair = getSelectorsFor(target)
         if (sid.isBlank()) return defaultPair
         return try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getSlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 if (normalizeSlotId(obj.optString("slot_id", "")) != sid) continue
@@ -259,9 +321,10 @@ class Prefs(context: Context) {
         )
     }
 
+    @Synchronized
     fun applySlotRegistryToLegacyTargets() {
         try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getSlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val sid = normalizeSlotId(obj.optString("slot_id", ""))
@@ -470,6 +533,7 @@ class Prefs(context: Context) {
         return next
     }
 
+    @Synchronized
     fun addTimingSample(
         key: String,
         elapsedMs: Long,
@@ -479,7 +543,7 @@ class Prefs(context: Context) {
     ) {
         if (key.isBlank() || elapsedMs <= 0L) return
         try {
-            val list = JSONArray(timingHistory)
+            val list = getTimingHistoryArray()
             val now = System.currentTimeMillis()
             val item = JSONObject().apply {
                 put("k", key.take(80))
@@ -496,6 +560,7 @@ class Prefs(context: Context) {
         } catch (_: Exception) { }
     }
 
+    @Synchronized
     fun getTimingStats(
         key: String,
         lookbackMs: Long = 24 * 60 * 60_000L,
@@ -504,7 +569,7 @@ class Prefs(context: Context) {
     ): TimingStats? {
         if (key.isBlank()) return null
         return try {
-            val list = JSONArray(timingHistory)
+            val list = getTimingHistoryArray()
             if (list.length() == 0) return null
             val now = System.currentTimeMillis()
             val samples = mutableListOf<Long>()
@@ -541,6 +606,7 @@ class Prefs(context: Context) {
         }
     }
 
+    @Synchronized
     fun addContext(
         q: String,
         a: String,
@@ -549,7 +615,7 @@ class Prefs(context: Context) {
         sessionId: String = ""
     ) {
         try {
-            val list = JSONArray(contextHistory)
+            val list = getContextHistoryArray()
             val now = System.currentTimeMillis()
             val qNorm = q.trim()
             val aNorm = a.trim().take(10000)
@@ -624,6 +690,7 @@ class Prefs(context: Context) {
         )
     }
 
+    @Synchronized
     fun getContextForPrompt(
         prompt: String,
         includeFailures: Boolean = true,
@@ -632,7 +699,7 @@ class Prefs(context: Context) {
     ): String {
         if (summarizedContext.isNotEmpty()) return "\n【現場の記憶 (要約)】\n$summarizedContext\n"
         return try {
-            val list = JSONArray(contextHistory)
+            val list = getContextHistoryArray()
             if (list.length() == 0) return ""
             val now = System.currentTimeMillis()
             val promptTokens = tokenize(prompt)
@@ -709,9 +776,10 @@ class Prefs(context: Context) {
         return m?.groupValues?.getOrNull(1)?.trim()?.uppercase() ?: ""
     }
 
+    @Synchronized
     fun compactContextHistory(maxItems: Int = 80) {
         try {
-            val src = JSONArray(contextHistory)
+            val src = getContextHistoryArray()
             if (src.length() <= 1) return
 
             val merged = JSONArray()
