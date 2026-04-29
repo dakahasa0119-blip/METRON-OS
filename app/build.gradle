@@ -29,6 +29,11 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+
+    // Add missing options for tests
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -42,4 +47,19 @@ dependencies {
 
     // サーバー機能用ライブラリ
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'
+    testImplementation 'io.mockk:mockk:1.13.8'
+    testImplementation 'org.json:json:20231013'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ["--release", "17"]
+    options.fork = true
+    options.forkOptions.jvmArgs += [
+        '--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED',
+        '--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED',
+        '--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED'
+    ]
 }
