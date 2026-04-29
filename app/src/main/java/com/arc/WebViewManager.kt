@@ -41,6 +41,10 @@ class WebViewManager(
         val timezone: String
     )
 
+    companion object {
+        private const val PATCH_TIMEOUT_MS = 15000L
+    }
+
     var webView: WebView? = null
         private set
 
@@ -49,6 +53,7 @@ class WebViewManager(
     private var isMonitoringActive = true
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var isPatchTesting = false
+    private var patchTestJob: Job? = null
     private var resultPollJob: Job? = null
     private var heartbeatMonitorJob: Job? = null
     private var lastInterstitialReportMs: Long = 0L
@@ -75,11 +80,12 @@ class WebViewManager(
      * 自己進化パッチの検証と適用 (安全弁付き)
      */
     fun applyAndVerifyPatch(newJs: String) {
+        patchTestJob?.cancel()
         isPatchTesting = true
-        scope.launch {
+        patchTestJob = scope.launch {
             prefs.dynamicCoreJs = newJs
             webView?.reload()
-            delay(15000)
+            delay(PATCH_TIMEOUT_MS)
             if (isPatchTesting) rollbackCoreJs()
         }
     }
