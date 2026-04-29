@@ -1222,13 +1222,5 @@ class ArcWorker(
         return t.prompt
     }
 
-    private fun looksLikeCodeTask(prompt: String): Boolean {
-        val p = prompt.lowercase()
-        val marks = listOf(
-            "kotlin", "python", "javascript", "typescript", "java", "go", "rust", "c++", "c#", "swift",
-            "コード", "実装", "関数", "class", "method", "algorithm", "api", "sql", "テスト", "unit test"
-        )
-        return marks.any { p.contains(it) }
-    }
     private fun bitmapToBase64(b: Bitmap) = ByteArrayOutputStream().let { o -> b.compress(Bitmap.CompressFormat.JPEG, 70, o); Base64.encodeToString(o.toByteArray(), Base64.NO_WRAP) }
 }
