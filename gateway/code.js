@@ -851,3 +851,11 @@ function EV33_recordTimeline(stage, module, summary, source, notes) {
     console.error("EV33_recordTimeline error:", e);
   }
 }
+
+// Export functions for testing
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    submitGatewayChatBatch,
+    // Add any other functions that need testing here
+  };
+}
