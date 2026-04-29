@@ -166,7 +166,7 @@ class WebViewDiagnosticProbe(
         }
     }
 
-    private fun sha256Hex(text: String): String {
+    internal fun sha256Hex(text: String): String {
         if (text.isBlank()) return ""
         val md = MessageDigest.getInstance("SHA-256")
         val dig = md.digest(text.toByteArray(Charsets.UTF_8))
@@ -185,7 +185,7 @@ class WebViewDiagnosticProbe(
         }
     }
 
-    private fun parseJsJsonString(raw: String): JSONObject {
+    internal fun parseJsJsonString(raw: String): JSONObject {
         if (raw.isBlank() || raw == "null") return JSONObject()
         return try {
             val decoded = JSONObject("{\"v\":$raw}").optString("v", "")
