@@ -478,12 +478,57 @@ function formatDateForFileName_(date) {
  ******************************************************/
 
 function runSystemGuardianDaily() {
-  // TODO: 実際には Web から GAS や Google API の変更情報を取得して解析する想定。
-  // この段階では「フック」として SystemLog に記録だけしておく。
-  logToSystem_(
-    "CONTROL",
-    "SystemGuardian: 仕様変更監視サイクルを実行（将来的にブラウジング＆解析をここに実装）"
-  );
+  try {
+    const urls = [
+      { name: "GAS", url: "https://developers.google.com/apps-script/release-notes" },
+      { name: "Google Workspace Add-ons", url: "https://developers.google.com/workspace/add-ons/release-notes" }
+    ];
+
+    urls.forEach(target => {
+      const response = UrlFetchApp.fetch(target.url, { muteHttpExceptions: true });
+
+      if (response.getResponseCode() !== 200) {
+        logToSystem_("CONTROL", `SystemGuardian: Failed to fetch ${target.name} release notes (HTTP ${response.getResponseCode()})`);
+        return;
+      }
+
+      const html = response.getContentText();
+      const h2Regex = /<h2[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>([\s\S]*?)(?=<h2|$)/gi;
+      let match;
+      let latestNotes = null;
+      let latestDate = null;
+
+      while ((match = h2Regex.exec(html)) !== null) {
+        if (match[1] === "key-takeaways-panel-title") continue;
+
+        latestDate = match[2].trim();
+        const body = match[3];
+
+        const itemRegex = /<(p|li)>([\s\S]*?)<\/\1>/gi;
+        let itemMatch;
+        const changes = [];
+        while ((itemMatch = itemRegex.exec(body)) !== null) {
+           const text = itemMatch[2].replace(/<[^>]+>/g, '').trim().replace(/\s+/g, ' ');
+           if (text) {
+               changes.push(text);
+           }
+        }
+
+        if (changes.length > 0) {
+          latestNotes = changes.join(" | ");
+          break;
+        }
+      }
+
+      if (latestDate && latestNotes) {
+        logToSystem_("CONTROL", `SystemGuardian: ${target.name} Updates found - Date: ${latestDate} - ${latestNotes}`);
+      } else {
+        logToSystem_("CONTROL", `SystemGuardian: 仕様変更監視サイクルを実行（${target.name}リリースノートから変更を検出できませんでした）`);
+      }
+    });
+  } catch (e) {
+    logToSystem_("CONTROL", `SystemGuardian Error: 仕様変更の取得中にエラーが発生しました - ${e.message}`);
+  }
 }
 
 function logToSystem_(type, message) {
