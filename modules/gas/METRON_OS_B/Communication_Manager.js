@@ -14,14 +14,12 @@ function getSS() {
    1. Dispatcher（通信箱）
 ------------------------------------------------------------ */
 function getDispatcherSheet() {
-  const ss = getSS();
-  let sheet = ss.getSheetByName("Dispatcher");
-
+  var ss = getSS();
+  var sheet = ss.getSheetByName("Dispatcher");
   if (!sheet) {
     sheet = ss.insertSheet("Dispatcher");
-    sheet.appendRow(["from", "to", "type", "payload", "timestamp"]);
+    sheet.appendRow(["Timestamp", "Target", "Type", "Payload", "Status"]);
   }
-
   return sheet;
 }
 
@@ -159,4 +157,17 @@ function runMotherShipCommunicationCycle() {
   } finally {
     lock.releaseLock();
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    getSS,
+    getDispatcherSheet,
+    getMotherShipList,
+    dispatchMessagesToMotherShips,
+    deliverToMotherShipInbox,
+    sendFromMotherShip,
+    processMotherShipMessages,
+    runMotherShipCommunicationCycle
+  };
 }
