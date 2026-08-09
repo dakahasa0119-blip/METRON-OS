@@ -179,171 +179,185 @@ class MainActivity : AppCompatActivity() {
         val instrSlotId = instruction.optString("slot_id", "").trim()
         Log.d("ARC_GW_INSTR", "mode=$mode job_id=$jobId slot_id=$instrSlotId")
         when (mode) {
-            "arc_set_ui_mode" -> {
-                val requested = instruction.optString("ui_mode", if (prefs.headlessMode) "ops" else "debug")
-                    .trim()
-                    .lowercase()
-                val headless = requested == "ops" || requested == "headless" || requested == "mini"
-                applyHeadlessMode(headless, "gateway_ui_mode")
-                if (jobId.isNotBlank()) {
-                    arcGateway.sendArcResult(
-                        qid = jobId,
-                        result = "ui_mode_set:${if (headless) "ops" else "debug"}",
-                        missionId = jobId,
-                        target = instruction.optString("target", currentTarget.name)
-                    )
-                }
-                debugHud.update("GW: UI=${if (headless) "ops" else "debug"}")
+            "arc_set_ui_mode" -> handleSetUiModeInstruction(instruction, jobId)
+            "arc_set_runtime_mode" -> handleSetRuntimeModeInstruction(instruction, jobId)
+            "request_app_deployment" -> handleRequestAppDeploymentInstruction(instruction, jobId)
+            "request_arc" -> handleRequestArcInstruction(instruction, jobId)
+            "arc_refresh" -> handleRefreshInstruction(instruction, jobId)
+            "arc_execute_js" -> handleExecuteJsInstruction(instruction, jobId)
+            "arc_screenshot" -> handleScreenshotInstruction(instruction, jobId)
+        }
+    }
+
+    private fun handleSetUiModeInstruction(instruction: JSONObject, jobId: String) {
+        val requested = instruction.optString("ui_mode", if (prefs.headlessMode) "ops" else "debug")
+            .trim()
+            .lowercase()
+        val headless = requested == "ops" || requested == "headless" || requested == "mini"
+        applyHeadlessMode(headless, "gateway_ui_mode")
+        if (jobId.isNotBlank()) {
+            arcGateway.sendArcResult(
+                qid = jobId,
+                result = "ui_mode_set:${if (headless) "ops" else "debug"}",
+                missionId = jobId,
+                target = instruction.optString("target", currentTarget.name)
+            )
+        }
+        debugHud.update("GW: UI=${if (headless) "ops" else "debug"}")
+    }
+
+    private fun handleSetRuntimeModeInstruction(instruction: JSONObject, jobId: String) {
+        val requested = instruction.optString("runtime_mode", Prefs.RUNTIME_MODE_INTERACTIVE)
+            .trim()
+            .lowercase()
+        val normalized = if (requested == Prefs.RUNTIME_MODE_AUTONOMOUS) {
+            Prefs.RUNTIME_MODE_AUTONOMOUS
+        } else {
+            Prefs.RUNTIME_MODE_INTERACTIVE
+        }
+        prefs.runtimeMode = normalized
+        if (instruction.has("bring_to_front_on_execution")) {
+            prefs.bringToFrontOnExecution = instruction.optBoolean("bring_to_front_on_execution", false)
+        }
+        if (instruction.has("keep_screen_awake")) {
+            prefs.keepScreenAwake = instruction.optBoolean("keep_screen_awake", prefs.keepScreenAwake)
+        }
+        if (prefs.shouldKeepScreenAwakeNow()) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        if (jobId.isNotBlank()) {
+            arcGateway.sendArcResult(
+                qid = jobId,
+                result = "runtime_mode_set:$normalized",
+                missionId = jobId,
+                target = instruction.optString("target", currentTarget.name)
+            )
+        }
+        debugHud.update("GW: RUNTIME=$normalized")
+    }
+
+    private fun handleRequestAppDeploymentInstruction(instruction: JSONObject, jobId: String) {
+        val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
+        val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
+        val prompt = instruction.optString("prompt", "")
+        if (prompt.isNotBlank()) {
+            ensureOperationalForeground("gateway_instruction_request_app_deployment")
+            arcQueue.enqueue(ArcTask.AppDeployment(prompt, qid, missionId = missionId))
+            debugHud.update("GW: DEPLOY_ENQUEUED")
+        } else if (jobId.isNotBlank()) {
+            arcGateway.sendArcError(
+                qid = jobId,
+                type = "EMPTY_PROMPT",
+                data = "gateway_instruction_missing_prompt",
+                missionId = missionId,
+                target = "gemini"
+            )
+        }
+    }
+
+    private fun handleRequestArcInstruction(instruction: JSONObject, jobId: String) {
+        val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
+        val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
+        val slotId = instruction.optString("slot_id", "").trim()
+        val requestedTarget = instruction.optString("target", currentTarget.name)
+        val target = prefs.resolveTargetForSlot(slotId, requestedTarget)
+        if (slotId.isNotBlank()) {
+            prefs.upsertGatewaySlotBinding(slotId, requestedTarget)
+        }
+        val prompt = instruction.optString("prompt", "")
+        if (prompt.isNotBlank()) {
+            ensureOperationalForeground("gateway_instruction_request_arc")
+            if (target.equals("ALL", ignoreCase = true)) {
+                arcQueue.enqueue(ArcTask.Pipeline(prompt, missionId = missionId))
+            } else {
+                arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId, slotId = slotId))
             }
-            "arc_set_runtime_mode" -> {
-                val requested = instruction.optString("runtime_mode", Prefs.RUNTIME_MODE_INTERACTIVE)
-                    .trim()
-                    .lowercase()
-                val normalized = if (requested == Prefs.RUNTIME_MODE_AUTONOMOUS) {
-                    Prefs.RUNTIME_MODE_AUTONOMOUS
-                } else {
-                    Prefs.RUNTIME_MODE_INTERACTIVE
-                }
-                prefs.runtimeMode = normalized
-                if (instruction.has("bring_to_front_on_execution")) {
-                    prefs.bringToFrontOnExecution = instruction.optBoolean("bring_to_front_on_execution", false)
-                }
-                if (instruction.has("keep_screen_awake")) {
-                    prefs.keepScreenAwake = instruction.optBoolean("keep_screen_awake", prefs.keepScreenAwake)
-                }
-                if (prefs.shouldKeepScreenAwakeNow()) {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                }
-                if (jobId.isNotBlank()) {
-                    arcGateway.sendArcResult(
-                        qid = jobId,
-                        result = "runtime_mode_set:$normalized",
-                        missionId = jobId,
-                        target = instruction.optString("target", currentTarget.name)
-                    )
-                }
-                debugHud.update("GW: RUNTIME=$normalized")
-            }
-            "request_app_deployment" -> {
-            val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
-            val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
-            val prompt = instruction.optString("prompt", "")
-            if (prompt.isNotBlank()) {
-                ensureOperationalForeground("gateway_instruction_request_app_deployment")
-                arcQueue.enqueue(ArcTask.AppDeployment(prompt, qid, missionId = missionId))
-                debugHud.update("GW: DEPLOY_ENQUEUED")
-            } else if (jobId.isNotBlank()) {
-                arcGateway.sendArcError(
+            val slotNote = if (slotId.isNotBlank()) "[$slotId]" else ""
+            debugHud.update("GW: ENQUEUED$slotNote")
+        } else if (jobId.isNotBlank()) {
+            arcGateway.sendArcError(
+                qid = jobId,
+                type = "EMPTY_PROMPT",
+                data = "gateway_instruction_missing_prompt",
+                missionId = missionId,
+                target = target
+            )
+        }
+    }
+
+    private fun handleRefreshInstruction(instruction: JSONObject, jobId: String) {
+        webViewManager.refreshKeepingSession()
+        if (jobId.isNotBlank()) {
+            arcGateway.sendArcResult(
+                qid = jobId,
+                result = "refresh_done",
+                missionId = jobId,
+                target = instruction.optString("target", currentTarget.name)
+            )
+        }
+        debugHud.update("GW: REFRESH")
+    }
+
+    private fun handleExecuteJsInstruction(instruction: JSONObject, jobId: String) {
+        val script = instruction.optString("script", "")
+        if (script.isNotBlank()) {
+            webViewManager.webView?.post { webViewManager.webView?.evaluateJavascript(script, null) }
+            if (jobId.isNotBlank()) {
+                arcGateway.sendArcResult(
                     qid = jobId,
-                    type = "EMPTY_PROMPT",
-                    data = "gateway_instruction_missing_prompt",
-                    missionId = missionId,
-                    target = "gemini"
+                    result = "js_executed",
+                    missionId = jobId,
+                    target = instruction.optString("target", currentTarget.name),
+                    prompt = instruction.optString("prompt", "")
                 )
             }
+            debugHud.update("GW: JS")
+        } else if (jobId.isNotBlank()) {
+            arcGateway.sendArcError(
+                qid = jobId,
+                type = "EMPTY_SCRIPT",
+                data = "gateway_instruction_missing_script",
+                missionId = jobId,
+                target = instruction.optString("target", currentTarget.name)
+            )
         }
-        "request_arc" -> {
-                val qid = instruction.optString("qid", if (jobId.isNotBlank()) jobId else "gw_${System.currentTimeMillis()}")
-                val missionId = instruction.optString("mission_id", if (jobId.isNotBlank()) jobId else qid)
-                val slotId = instruction.optString("slot_id", "").trim()
-                val requestedTarget = instruction.optString("target", currentTarget.name)
-                val target = prefs.resolveTargetForSlot(slotId, requestedTarget)
-                if (slotId.isNotBlank()) {
-                    prefs.upsertGatewaySlotBinding(slotId, requestedTarget)
-                }
-                val prompt = instruction.optString("prompt", "")
-                if (prompt.isNotBlank()) {
-                    ensureOperationalForeground("gateway_instruction_request_arc")
-                    if (target.equals("ALL", ignoreCase = true)) {
-                        arcQueue.enqueue(ArcTask.Pipeline(prompt, missionId = missionId))
-                    } else {
-                        arcQueue.enqueue(ArcTask.AI(qid, target, prompt, missionId = missionId, slotId = slotId))
-                    }
-                    val slotNote = if (slotId.isNotBlank()) "[$slotId]" else ""
-                    debugHud.update("GW: ENQUEUED$slotNote")
-                } else if (jobId.isNotBlank()) {
-                    arcGateway.sendArcError(
-                        qid = jobId,
-                        type = "EMPTY_PROMPT",
-                        data = "gateway_instruction_missing_prompt",
-                        missionId = missionId,
-                        target = target
-                    )
-                }
+    }
+
+    private fun handleScreenshotInstruction(instruction: JSONObject, jobId: String) {
+        Log.d("ARC_GW_INSTR", "arc_screenshot start job_id=$jobId")
+        ensureOperationalForeground("gateway_instruction_arc_screenshot")
+        val target = instruction.optString("target", currentTarget.name)
+        val mid = if (jobId.isNotBlank()) jobId else "gw_manual"
+        var responded = false
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!responded) {
+                Log.w("ARC_GW_INSTR", "arc_screenshot timeout job_id=$mid")
+                arcGateway.sendArcError(
+                    qid = mid,
+                    type = "SCREENSHOT_TIMEOUT",
+                    data = "capture_bitmap_no_callback",
+                    missionId = mid,
+                    target = target
+                )
+                debugHud.update("GW: SHOT_TIMEOUT")
             }
-            "arc_refresh" -> {
-                webViewManager.refreshKeepingSession()
-                if (jobId.isNotBlank()) {
-                    arcGateway.sendArcResult(
-                        qid = jobId,
-                        result = "refresh_done",
-                        missionId = jobId,
-                        target = instruction.optString("target", currentTarget.name)
-                    )
-                }
-                debugHud.update("GW: REFRESH")
-            }
-            "arc_execute_js" -> {
-                val script = instruction.optString("script", "")
-                if (script.isNotBlank()) {
-                    webViewManager.webView?.post { webViewManager.webView?.evaluateJavascript(script, null) }
-                    if (jobId.isNotBlank()) {
-                        arcGateway.sendArcResult(
-                            qid = jobId,
-                            result = "js_executed",
-                            missionId = jobId,
-                            target = instruction.optString("target", currentTarget.name),
-                            prompt = instruction.optString("prompt", "")
-                        )
-                    }
-                    debugHud.update("GW: JS")
-                } else if (jobId.isNotBlank()) {
-                    arcGateway.sendArcError(
-                        qid = jobId,
-                        type = "EMPTY_SCRIPT",
-                        data = "gateway_instruction_missing_script",
-                        missionId = jobId,
-                        target = instruction.optString("target", currentTarget.name)
-                    )
-                }
-            }
-            "arc_screenshot" -> {
-                Log.d("ARC_GW_INSTR", "arc_screenshot start job_id=$jobId")
-                ensureOperationalForeground("gateway_instruction_arc_screenshot")
-                val target = instruction.optString("target", currentTarget.name)
-                val mid = if (jobId.isNotBlank()) jobId else "gw_manual"
-                var responded = false
-                Handler(Looper.getMainLooper()).postDelayed({
-                    if (!responded) {
-                        Log.w("ARC_GW_INSTR", "arc_screenshot timeout job_id=$mid")
-                        arcGateway.sendArcError(
-                            qid = mid,
-                            type = "SCREENSHOT_TIMEOUT",
-                            data = "capture_bitmap_no_callback",
-                            missionId = mid,
-                            target = target
-                        )
-                        debugHud.update("GW: SHOT_TIMEOUT")
-                    }
-                }, 12_000)
-                webViewManager.captureBitmap { bmp ->
-                    responded = true
-                    Log.d("ARC_GW_INSTR", "arc_screenshot captured job_id=$mid")
-                    val out = java.io.ByteArrayOutputStream()
-                    bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
-                    val b64 = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
-                    arcGateway.sendArcResult(
-                        qid = mid,
-                        result = "screenshot_captured",
-                        image = b64,
-                        missionId = mid,
-                        target = target
-                    )
-                    debugHud.update("GW: SHOT")
-                }
-            }
+        }, 12_000)
+        webViewManager.captureBitmap { bmp ->
+            responded = true
+            Log.d("ARC_GW_INSTR", "arc_screenshot captured job_id=$mid")
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+            val b64 = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+            arcGateway.sendArcResult(
+                qid = mid,
+                result = "screenshot_captured",
+                image = b64,
+                missionId = mid,
+                target = target
+            )
+            debugHud.update("GW: SHOT")
         }
     }
 
