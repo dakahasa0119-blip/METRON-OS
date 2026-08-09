@@ -499,54 +499,85 @@ class ArcWorker(
         cancelActiveJobs()
 
         if (shouldLoad) {
-            if (targetMismatch) {
-                emitStatus("TARGET_MISMATCH:${currentPageTarget}->${target}")
-                Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target slot=$slotId url=$currentUrl")
-            }
-            emitStatus(if (slotId.isBlank()) "LOADING $target" else "LOADING $target[$slotId]")
-            // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
-            web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
-            web.webView?.post { web.webView?.loadUrl(targetUrl) }
-            // 遷移失敗時の保険: 早めに再判定して明示遷移
-            workerScope.launch {
-                val navRetryDelayMs = when {
-                    targetMismatch -> 2500L
-                    task.forceReload -> 3200L
-                    else -> 4500L
-                }
-                delay(navRetryDelayMs)
-                if (isAborted || currentQid != task.qid) return@launch
-                val nowTarget = inferTargetFromUrl(web.currentUrl())
-                if (nowTarget != target) {
-                    Log.w("ARC_TASK", "force nav retry current=$nowTarget requested=$target")
-                    emitStatus("FORCE_NAV_RETRY:$target")
-                    web.webView?.post { web.webView?.loadUrl(targetUrl) }
-                }
-            }
+            handlePageLoad(task, target, slotId, targetUrl, parsedTarget, currentUrl, currentPageTarget, targetMismatch)
         }
 
         val isReconTarget = parsedTarget == AiTarget.MOBILE_BROWSER || parsedTarget == AiTarget.FULL_BROWSER
         if (isReconTarget) {
-            val done = currentDoneCallback
-            val finishRecon = {
-                emitStatus("RECON_READY")
-                finishTask(done)
-            }
-            if (shouldLoad) {
-                val old = web.onPageFinished
-                web.onPageFinished = {
-                    if (!isAborted && currentQid == task.qid) {
-                        web.onPageFinished = old
-                        finishRecon()
-                    }
-                    old()
-                }
-            } else {
-                workerScope.launch { delay(300); if (!isAborted) finishRecon() }
-            }
+            handleReconTarget(task, shouldLoad)
             return
         }
 
+        injectPrompt(task, target, slotId, shouldLoad)
+
+        if (isDriveReferencePrompt(task.prompt)) {
+            emitStatus("LONG_WAIT_MODE:DRIVE_REF")
+        }
+        val runtimeTiming = runtimeTimingFor(target, task.prompt)
+        val timeoutMs = runtimeTiming.timeoutMs
+        emitStatus(
+            "TIMING_MODEL target=$target timeout_ms=$timeoutMs no_progress_ms=${runtimeTiming.noProgressMs} samples=${runtimeTiming.sampleCount} avg_ms=${runtimeTiming.avgMs} p90_ms=${runtimeTiming.p90Ms}"
+        )
+        timeoutJob = startTaskMonitoring(task, target, runtimeTiming)
+    }
+
+    private fun handlePageLoad(
+        task: ArcTask.AI,
+        target: String,
+        slotId: String,
+        targetUrl: String,
+        parsedTarget: AiTarget?,
+        currentUrl: String,
+        currentPageTarget: String,
+        targetMismatch: Boolean
+    ) {
+        if (targetMismatch) {
+            emitStatus("TARGET_MISMATCH:${currentPageTarget}->${target}")
+            Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target slot=$slotId url=$currentUrl")
+        }
+        emitStatus(if (slotId.isBlank()) "LOADING $target" else "LOADING $target[$slotId]")
+        // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
+        web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
+        web.webView?.post { web.webView?.loadUrl(targetUrl) }
+        // 遷移失敗時の保険: 早めに再判定して明示遷移
+        workerScope.launch {
+            val navRetryDelayMs = when {
+                targetMismatch -> 2500L
+                task.forceReload -> 3200L
+                else -> 4500L
+            }
+            delay(navRetryDelayMs)
+            if (isAborted || currentQid != task.qid) return@launch
+            val nowTarget = inferTargetFromUrl(web.currentUrl())
+            if (nowTarget != target) {
+                Log.w("ARC_TASK", "force nav retry current=$nowTarget requested=$target")
+                emitStatus("FORCE_NAV_RETRY:$target")
+                web.webView?.post { web.webView?.loadUrl(targetUrl) }
+            }
+        }
+    }
+
+    private fun handleReconTarget(task: ArcTask.AI, shouldLoad: Boolean) {
+        val done = currentDoneCallback
+        val finishRecon = {
+            emitStatus("RECON_READY")
+            finishTask(done)
+        }
+        if (shouldLoad) {
+            val old = web.onPageFinished
+            web.onPageFinished = {
+                if (!isAborted && currentQid == task.qid) {
+                    web.onPageFinished = old
+                    finishRecon()
+                }
+                old()
+            }
+        } else {
+            workerScope.launch { delay(300); if (!isAborted) finishRecon() }
+        }
+    }
+
+    private fun injectPrompt(task: ArcTask.AI, target: String, slotId: String, shouldLoad: Boolean) {
         val action = {
             if (!isAborted) {
                 emitStatus("INJECTING...")
@@ -561,16 +592,11 @@ class ArcWorker(
         } else {
             workerScope.launch { delay(1000); if(!isAborted) action() }
         }
-        
-        if (isDriveReferencePrompt(task.prompt)) {
-            emitStatus("LONG_WAIT_MODE:DRIVE_REF")
-        }
-        val runtimeTiming = runtimeTimingFor(target, task.prompt)
+    }
+
+    private fun startTaskMonitoring(task: ArcTask.AI, target: String, runtimeTiming: RuntimeTiming): Job {
         val timeoutMs = runtimeTiming.timeoutMs
-        emitStatus(
-            "TIMING_MODEL target=$target timeout_ms=$timeoutMs no_progress_ms=${runtimeTiming.noProgressMs} samples=${runtimeTiming.sampleCount} avg_ms=${runtimeTiming.avgMs} p90_ms=${runtimeTiming.p90Ms}"
-        )
-        timeoutJob = workerScope.launch {
+        return workerScope.launch {
             val startedAt = System.currentTimeMillis()
             var lastSeq = currentStatusSeq()
             var lastProgressAt = startedAt

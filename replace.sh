@@ -1,0 +1,387 @@
+#!/bin/bash
+
+cat << 'DIFF' > patch.diff
+<<<<<<< SEARCH
+    private fun executeAiTask(task: ArcTask.AI) {
+        lastAiTask = task
+        currentAttemptStartedAtMs = System.currentTimeMillis()
+        val target = task.target.lowercase()
+        val slotId = task.slotId.trim().lowercase()
+        val targetUrl = prefs.resolveUrlForSlot(slotId, target)
+        val parsedTarget = Util.parseTarget(target)
+        val currentUrl = web.currentUrl()
+        val currentPageTarget = inferTargetFromUrl(currentUrl)
+        val targetMismatch = currentPageTarget.isNotBlank() && currentPageTarget != target
+        val shouldLoad = lastTarget != target || task.forceReload || targetMismatch
+        lastTarget = target
+        cancelActiveJobs()
+
+        if (shouldLoad) {
+            if (targetMismatch) {
+                emitStatus("TARGET_MISMATCH:${currentPageTarget}->${target}")
+                Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target slot=$slotId url=$currentUrl")
+            }
+            emitStatus(if (slotId.isBlank()) "LOADING $target" else "LOADING $target[$slotId]")
+            // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
+            web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
+            web.webView?.post { web.webView?.loadUrl(targetUrl) }
+            // 遷移失敗時の保険: 早めに再判定して明示遷移
+            workerScope.launch {
+                val navRetryDelayMs = when {
+                    targetMismatch -> 2500L
+                    task.forceReload -> 3200L
+                    else -> 4500L
+                }
+                delay(navRetryDelayMs)
+                if (isAborted || currentQid != task.qid) return@launch
+                val nowTarget = inferTargetFromUrl(web.currentUrl())
+                if (nowTarget != target) {
+                    Log.w("ARC_TASK", "force nav retry current=$nowTarget requested=$target")
+                    emitStatus("FORCE_NAV_RETRY:$target")
+                    web.webView?.post { web.webView?.loadUrl(targetUrl) }
+                }
+            }
+        }
+
+        val isReconTarget = parsedTarget == AiTarget.MOBILE_BROWSER || parsedTarget == AiTarget.FULL_BROWSER
+        if (isReconTarget) {
+            val done = currentDoneCallback
+            val finishRecon = {
+                emitStatus("RECON_READY")
+                finishTask(done)
+            }
+            if (shouldLoad) {
+                val old = web.onPageFinished
+                web.onPageFinished = {
+                    if (!isAborted && currentQid == task.qid) {
+                        web.onPageFinished = old
+                        finishRecon()
+                    }
+                    old()
+                }
+            } else {
+                workerScope.launch { delay(300); if (!isAborted) finishRecon() }
+            }
+            return
+        }
+
+        val action = {
+            if (!isAborted) {
+                emitStatus("INJECTING...")
+                val (inS, sendS) = prefs.resolveSelectorsForSlot(slotId, target)
+                web.injectPromptForcefully(inS, sendS, buildFinalPrompt(task))
+            }
+        }
+
+        if (shouldLoad) {
+            val old = web.onPageFinished
+            web.onPageFinished = { if(!isAborted && currentQid == task.qid) { action(); web.onPageFinished = old }; old() }
+        } else {
+            workerScope.launch { delay(1000); if(!isAborted) action() }
+        }
+
+        if (isDriveReferencePrompt(task.prompt)) {
+            emitStatus("LONG_WAIT_MODE:DRIVE_REF")
+        }
+        val runtimeTiming = runtimeTimingFor(target, task.prompt)
+        val timeoutMs = runtimeTiming.timeoutMs
+        emitStatus(
+            "TIMING_MODEL target=$target timeout_ms=$timeoutMs no_progress_ms=${runtimeTiming.noProgressMs} samples=${runtimeTiming.sampleCount} avg_ms=${runtimeTiming.avgMs} p90_ms=${runtimeTiming.p90Ms}"
+        )
+        timeoutJob = workerScope.launch {
+            val startedAt = System.currentTimeMillis()
+            var lastSeq = currentStatusSeq()
+            var lastProgressAt = startedAt
+            var lastAssistantLen = 0
+            while (isActive) {
+                val nowBeforeWait = System.currentTimeMillis()
+                val tickMs =
+                    if (target == "gemini" && nowBeforeWait - startedAt <= 20_000L) 500L
+                    else 2_000L
+                delay(tickMs)
+                if (isAborted || currentQid != task.qid) return@launch
+
+                val now = System.currentTimeMillis()
+                val elapsed = now - startedAt
+                val seqNow = currentStatusSeq()
+                if (seqNow != lastSeq) {
+                    lastSeq = seqNow
+                    lastProgressAt = now
+                }
+                val noProgressMs = now - lastProgressAt
+
+                if (elapsed >= timeoutMs) {
+                    handleDomError("TIMEOUT", "elapsed_ms=$elapsed")
+                    return@launch
+                }
+
+                if (elapsed >= 12_000L) {
+                    val bot = detectBotWallQuick()
+                    if (bot.decision == BotDecision.BOT_BLOCKED) {
+                        handleDomError("BOT_BLOCKED", bot.detailString())
+                        return@launch
+                    }
+                }
+
+                val signal = probeProgressQuick()
+                val generatingNow = signal.generating
+                if (target == "gemini" && elapsed >= 7_000L && signal.marker.isNotBlank()) {
+                    val errType = BotDetectionEngine.classifyGeminiErrorType(signal.marker)
+                    if (!errType.isNullOrBlank()) {
+                        handleDomError(errType, signal.marker)
+                        return@launch
+                    }
+                }
+                if (signal.generating) {
+                    lastProgressAt = now
+                }
+                if (signal.assistantLen > lastAssistantLen + 8) {
+                    lastAssistantLen = signal.assistantLen
+                    lastProgressAt = now
+                } else if (signal.assistantLen > lastAssistantLen) {
+                    lastAssistantLen = signal.assistantLen
+                }
+
+                if (elapsed >= 15_000L) {
+                    val currentT = inferTargetFromUrl(web.currentUrl())
+                    if (currentT.isNotBlank() && currentT != target) {
+                        handleDomError("TARGET_STALL:${currentT}->${target}", web.currentUrl())
+                        return@launch
+                    }
+                }
+
+                if (elapsed >= 6_000L) {
+                    val urlNow = web.currentUrl()
+                    if (isLoginRequiredUrl(target, urlNow)) {
+                        handleDomError("LOGIN_REQUIRED", urlNow)
+                        return@launch
+                    }
+                }
+
+                val dynamicNoProgressMs = dynamicNoProgressLimitMs(
+                    target = target,
+                    prompt = task.prompt,
+                    baseMs = runtimeTiming.noProgressMs,
+                    elapsedMs = elapsed,
+                    generating = generatingNow,
+                    assistantLen = lastAssistantLen,
+                    timeoutMs = timeoutMs
+                )
+                if (noProgressMs >= dynamicNoProgressMs) {
+                    val bot = detectBotWallQuick()
+                    if (bot.decision == BotDecision.BOT_BLOCKED) {
+                        handleDomError("BOT_BLOCKED", bot.detailString())
+                        return@launch
+                    }
+                    handleDomError("STALL_NO_PROGRESS", "no_status_change_ms=$noProgressMs")
+                    return@launch
+                }
+            }
+        }
+    }
+=======
+    private fun executeAiTask(task: ArcTask.AI) {
+        lastAiTask = task
+        currentAttemptStartedAtMs = System.currentTimeMillis()
+        val target = task.target.lowercase()
+        val slotId = task.slotId.trim().lowercase()
+        val targetUrl = prefs.resolveUrlForSlot(slotId, target)
+        val parsedTarget = Util.parseTarget(target)
+        val currentUrl = web.currentUrl()
+        val currentPageTarget = inferTargetFromUrl(currentUrl)
+        val targetMismatch = currentPageTarget.isNotBlank() && currentPageTarget != target
+        val shouldLoad = lastTarget != target || task.forceReload || targetMismatch
+        lastTarget = target
+        cancelActiveJobs()
+
+        if (shouldLoad) {
+            handlePageLoad(task, target, slotId, targetUrl, parsedTarget, currentUrl, currentPageTarget, targetMismatch)
+        }
+
+        val isReconTarget = parsedTarget == AiTarget.MOBILE_BROWSER || parsedTarget == AiTarget.FULL_BROWSER
+        if (isReconTarget) {
+            handleReconTarget(task, shouldLoad)
+            return
+        }
+
+        injectPrompt(task, target, slotId, shouldLoad)
+
+        if (isDriveReferencePrompt(task.prompt)) {
+            emitStatus("LONG_WAIT_MODE:DRIVE_REF")
+        }
+        val runtimeTiming = runtimeTimingFor(target, task.prompt)
+        val timeoutMs = runtimeTiming.timeoutMs
+        emitStatus(
+            "TIMING_MODEL target=$target timeout_ms=$timeoutMs no_progress_ms=${runtimeTiming.noProgressMs} samples=${runtimeTiming.sampleCount} avg_ms=${runtimeTiming.avgMs} p90_ms=${runtimeTiming.p90Ms}"
+        )
+        timeoutJob = startTaskMonitoring(task, target, runtimeTiming)
+    }
+
+    private fun handlePageLoad(
+        task: ArcTask.AI,
+        target: String,
+        slotId: String,
+        targetUrl: String,
+        parsedTarget: AiTarget?,
+        currentUrl: String,
+        currentPageTarget: String,
+        targetMismatch: Boolean
+    ) {
+        if (targetMismatch) {
+            emitStatus("TARGET_MISMATCH:${currentPageTarget}->${target}")
+            Log.w("ARC_TASK", "target mismatch current=$currentPageTarget requested=$target slot=$slotId url=$currentUrl")
+        }
+        emitStatus(if (slotId.isBlank()) "LOADING $target" else "LOADING $target[$slotId]")
+        // ここで reload すると旧ページの onPageFinished で誤注入が起きるため、URL遷移側に一本化する
+        web.applyPersona(parsedTarget ?: AiTarget.GEMINI, reloadPage = false)
+        web.webView?.post { web.webView?.loadUrl(targetUrl) }
+        // 遷移失敗時の保険: 早めに再判定して明示遷移
+        workerScope.launch {
+            val navRetryDelayMs = when {
+                targetMismatch -> 2500L
+                task.forceReload -> 3200L
+                else -> 4500L
+            }
+            delay(navRetryDelayMs)
+            if (isAborted || currentQid != task.qid) return@launch
+            val nowTarget = inferTargetFromUrl(web.currentUrl())
+            if (nowTarget != target) {
+                Log.w("ARC_TASK", "force nav retry current=$nowTarget requested=$target")
+                emitStatus("FORCE_NAV_RETRY:$target")
+                web.webView?.post { web.webView?.loadUrl(targetUrl) }
+            }
+        }
+    }
+
+    private fun handleReconTarget(task: ArcTask.AI, shouldLoad: Boolean) {
+        val done = currentDoneCallback
+        val finishRecon = {
+            emitStatus("RECON_READY")
+            finishTask(done)
+        }
+        if (shouldLoad) {
+            val old = web.onPageFinished
+            web.onPageFinished = {
+                if (!isAborted && currentQid == task.qid) {
+                    web.onPageFinished = old
+                    finishRecon()
+                }
+                old()
+            }
+        } else {
+            workerScope.launch { delay(300); if (!isAborted) finishRecon() }
+        }
+    }
+
+    private fun injectPrompt(task: ArcTask.AI, target: String, slotId: String, shouldLoad: Boolean) {
+        val action = {
+            if (!isAborted) {
+                emitStatus("INJECTING...")
+                val (inS, sendS) = prefs.resolveSelectorsForSlot(slotId, target)
+                web.injectPromptForcefully(inS, sendS, buildFinalPrompt(task))
+            }
+        }
+
+        if (shouldLoad) {
+            val old = web.onPageFinished
+            web.onPageFinished = { if(!isAborted && currentQid == task.qid) { action(); web.onPageFinished = old }; old() }
+        } else {
+            workerScope.launch { delay(1000); if(!isAborted) action() }
+        }
+    }
+
+    private fun startTaskMonitoring(task: ArcTask.AI, target: String, runtimeTiming: RuntimeTiming): Job {
+        val timeoutMs = runtimeTiming.timeoutMs
+        return workerScope.launch {
+            val startedAt = System.currentTimeMillis()
+            var lastSeq = currentStatusSeq()
+            var lastProgressAt = startedAt
+            var lastAssistantLen = 0
+            while (isActive) {
+                val nowBeforeWait = System.currentTimeMillis()
+                val tickMs =
+                    if (target == "gemini" && nowBeforeWait - startedAt <= 20_000L) 500L
+                    else 2_000L
+                delay(tickMs)
+                if (isAborted || currentQid != task.qid) return@launch
+
+                val now = System.currentTimeMillis()
+                val elapsed = now - startedAt
+                val seqNow = currentStatusSeq()
+                if (seqNow != lastSeq) {
+                    lastSeq = seqNow
+                    lastProgressAt = now
+                }
+                val noProgressMs = now - lastProgressAt
+
+                if (elapsed >= timeoutMs) {
+                    handleDomError("TIMEOUT", "elapsed_ms=$elapsed")
+                    return@launch
+                }
+
+                if (elapsed >= 12_000L) {
+                    val bot = detectBotWallQuick()
+                    if (bot.decision == BotDecision.BOT_BLOCKED) {
+                        handleDomError("BOT_BLOCKED", bot.detailString())
+                        return@launch
+                    }
+                }
+
+                val signal = probeProgressQuick()
+                val generatingNow = signal.generating
+                if (target == "gemini" && elapsed >= 7_000L && signal.marker.isNotBlank()) {
+                    val errType = BotDetectionEngine.classifyGeminiErrorType(signal.marker)
+                    if (!errType.isNullOrBlank()) {
+                        handleDomError(errType, signal.marker)
+                        return@launch
+                    }
+                }
+                if (signal.generating) {
+                    lastProgressAt = now
+                }
+                if (signal.assistantLen > lastAssistantLen + 8) {
+                    lastAssistantLen = signal.assistantLen
+                    lastProgressAt = now
+                } else if (signal.assistantLen > lastAssistantLen) {
+                    lastAssistantLen = signal.assistantLen
+                }
+
+                if (elapsed >= 15_000L) {
+                    val currentT = inferTargetFromUrl(web.currentUrl())
+                    if (currentT.isNotBlank() && currentT != target) {
+                        handleDomError("TARGET_STALL:${currentT}->${target}", web.currentUrl())
+                        return@launch
+                    }
+                }
+
+                if (elapsed >= 6_000L) {
+                    val urlNow = web.currentUrl()
+                    if (isLoginRequiredUrl(target, urlNow)) {
+                        handleDomError("LOGIN_REQUIRED", urlNow)
+                        return@launch
+                    }
+                }
+
+                val dynamicNoProgressMs = dynamicNoProgressLimitMs(
+                    target = target,
+                    prompt = task.prompt,
+                    baseMs = runtimeTiming.noProgressMs,
+                    elapsedMs = elapsed,
+                    generating = generatingNow,
+                    assistantLen = lastAssistantLen,
+                    timeoutMs = timeoutMs
+                )
+                if (noProgressMs >= dynamicNoProgressMs) {
+                    val bot = detectBotWallQuick()
+                    if (bot.decision == BotDecision.BOT_BLOCKED) {
+                        handleDomError("BOT_BLOCKED", bot.detailString())
+                        return@launch
+                    }
+                    handleDomError("STALL_NO_PROGRESS", "no_status_change_ms=$noProgressMs")
+                    return@launch
+                }
+            }
+        }
+    }
+>>>>>>> REPLACE
+DIFF
