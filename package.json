@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "rewire": "^9.0.1"
+  }
+}
