@@ -218,9 +218,10 @@ class WebViewManager(
               const visitRoots = (root) => {
                 if (!root || !root.querySelectorAll) return;
                 roots.push(root);
-                const all = root.querySelectorAll('*');
-                for (const el of all) {
-                  if (el && el.shadowRoot) visitRoots(el.shadowRoot);
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                let el;
+                while ((el = walker.nextNode())) {
+                  if (el.shadowRoot) visitRoots(el.shadowRoot);
                 }
               };
               visitRoots(document);
@@ -353,9 +354,10 @@ class WebViewManager(
                 const visitRoots = (root) => {
                   if (!root || !root.querySelectorAll) return;
                   roots.push(root);
-                  const all = root.querySelectorAll('*');
-                  for (const el of all) {
-                    if (el && el.shadowRoot) visitRoots(el.shadowRoot);
+                  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                  let el;
+                  while ((el = walker.nextNode())) {
+                    if (el.shadowRoot) visitRoots(el.shadowRoot);
                   }
                 };
                 visitRoots(document);
@@ -762,9 +764,10 @@ class WebViewManager(
                 const visitRoots = (root, out) => {
                   if (!root || !root.querySelectorAll) return;
                   out.push(root);
-                  const all = root.querySelectorAll('*');
-                  for (const el of all) {
-                    if (el && el.shadowRoot) visitRoots(el.shadowRoot, out);
+                  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                  let el;
+                  while ((el = walker.nextNode())) {
+                    if (el.shadowRoot) visitRoots(el.shadowRoot, out);
                   }
                 };
 
