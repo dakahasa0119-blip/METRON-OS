@@ -5,7 +5,6 @@ package com.arc
 // それらを統合管理するための共通ロジックや、不足している定義のみを扱います。
 
 import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
 
