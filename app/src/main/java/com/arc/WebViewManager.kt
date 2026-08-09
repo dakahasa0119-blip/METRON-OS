@@ -206,114 +206,7 @@ class WebViewManager(
     }
 
     private fun detectAccessInterstitial(view: WebView?, callback: (Boolean, String) -> Unit) {
-        val js = """
-            (function() {
-              const remember = (mark) => {
-                try {
-                  window.__arcLastBotWallMark = String(mark || 'unknown');
-                  window.__arcLastBotWallAt = Date.now();
-                } catch (_) {}
-              };
-              const roots = [];
-              const visitRoots = (root) => {
-                if (!root || !root.querySelectorAll) return;
-                roots.push(root);
-                const all = root.querySelectorAll('*');
-                for (const el of all) {
-                  if (el && el.shadowRoot) visitRoots(el.shadowRoot);
-                }
-              };
-              visitRoots(document);
-
-              let mergedText = '';
-              try {
-                const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
-                mergedText += bodyText + '\n';
-              } catch (_) {}
-              for (const r of roots) {
-                try {
-                  const t = (r && r.textContent) ? r.textContent : '';
-                  if (t) mergedText += t + '\n';
-                } catch (_) {}
-              }
-              const text = mergedText;
-              const lower = mergedText.toLowerCase();
-              const robotTextMarks = [
-                'i am not a robot',
-                'verify you are human',
-                'verify you are not a robot',
-                'human verification',
-                'prove you are human',
-                '私はロボットではありません',
-                'ロボットではありません',
-                '人間であることを確認'
-              ];
-              const challengeTextMarks = [
-                'captcha',
-                'recaptcha',
-                'turnstile',
-                'cloudflare challenge',
-                'challenge.cloudflare.com'
-              ];
-              try {
-                for (const r of roots) {
-                  const iframe = r.querySelector(
-                    'iframe[src*="challenge.cloudflare.com"],iframe[src*="challenges.cloudflare.com"],iframe[src*="recaptcha"],iframe[title*="captcha" i],iframe[title*="challenge" i],iframe[id*="cf-chl" i],iframe[name*="cf-chl" i]'
-                  );
-                  if (iframe) {
-                    remember("iframe_challenge");
-                    return JSON.stringify({ blocked: true, mark: 'iframe_challenge', source: 'scan' });
-                  }
-                }
-              } catch (_) {}
-              try {
-                for (const r of roots) {
-                  const cbs = r.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
-                  for (const cb of cbs) {
-                    const host = cb.closest && cb.closest('label,div,section,form');
-                    const cbAria = ((cb.getAttribute && (cb.getAttribute('aria-label') || cb.getAttribute('title'))) || '').toLowerCase();
-                    const near = ((host && (host.innerText || host.textContent)) ? (host.innerText || host.textContent) : '').toLowerCase();
-                    if (
-                      cbAria.indexOf('robot') >= 0 ||
-                      cbAria.indexOf('captcha') >= 0 ||
-                      cbAria.indexOf('human') >= 0 ||
-                      near.indexOf('ロボット') >= 0 ||
-                      near.indexOf('私はロボットではありません') >= 0 ||
-                      near.indexOf('i am not a robot') >= 0 ||
-                      near.indexOf('verify you are human') >= 0 ||
-                      near.indexOf('captcha') >= 0
-                    ) {
-                      remember("robot_checkbox");
-                      return JSON.stringify({ blocked: true, mark: 'robot_checkbox', source: 'scan' });
-                    }
-                  }
-                }
-              } catch (_) {}
-              try {
-                for (const r of roots) {
-                  const widget = r.querySelector(
-                    '[class*="captcha" i],[id*="captcha" i],[class*="turnstile" i],[id*="turnstile" i],[data-sitekey]'
-                  );
-                  if (widget) {
-                    remember("captcha_widget");
-                    return JSON.stringify({ blocked: true, mark: 'captcha_widget', source: 'scan' });
-                  }
-                }
-              } catch (_) {}
-              const hasRobotText = robotTextMarks.some((mark) =>
-                lower.indexOf(mark.toLowerCase()) >= 0 || text.indexOf(mark) >= 0
-              );
-              const hasChallengeText = challengeTextMarks.some((mark) =>
-                lower.indexOf(mark.toLowerCase()) >= 0 || text.indexOf(mark) >= 0
-              );
-              if (hasRobotText && hasChallengeText) {
-                remember("text_challenge");
-                return JSON.stringify({ blocked: true, mark: 'text_challenge', source: 'scan' });
-              }
-              return JSON.stringify({ blocked: false, mark: '' });
-            })();
-        """.trimIndent()
-        view?.evaluateJavascript(js) { raw ->
+        view?.evaluateJavascript(DETECT_ACCESS_INTERSTITIAL_JS) { raw ->
             val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
             val blocked = parsed.contains("\"blocked\":true")
             val mark = Regex("\"mark\":\"([^\"]*)\"").find(parsed)?.groupValues?.getOrNull(1) ?: ""
@@ -334,75 +227,7 @@ class WebViewManager(
     }
 
     fun detectGeminiError(callback: (BotSignal) -> Unit) {
-        val js = """
-            (function() {
-              try {
-                try {
-                  const cachedMark = window.arc && window.arc.__lastGeminiErrorMark
-                    ? String(window.arc.__lastGeminiErrorMark)
-                    : '';
-                  const cachedAt = window.arc && window.arc.__lastGeminiErrorAt
-                    ? Number(window.arc.__lastGeminiErrorAt)
-                    : 0;
-                  const ageMs = Date.now() - cachedAt;
-                  if (cachedMark && cachedAt > 0 && ageMs >= 0 && ageMs <= 45000) {
-                    return JSON.stringify({ blocked: true, mark: cachedMark, source: 'cache' });
-                  }
-                } catch (_) {}
-                const roots = [];
-                const visitRoots = (root) => {
-                  if (!root || !root.querySelectorAll) return;
-                  roots.push(root);
-                  const all = root.querySelectorAll('*');
-                  for (const el of all) {
-                    if (el && el.shadowRoot) visitRoots(el.shadowRoot);
-                  }
-                };
-                visitRoots(document);
-
-                let mergedText = '';
-                try {
-                  const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
-                  mergedText += bodyText + '\n';
-                } catch (_) {}
-                for (const r of roots) {
-                  try {
-                    const t = (r && r.textContent) ? r.textContent : '';
-                    if (t) mergedText += t + '\n';
-                  } catch (_) {}
-                }
-
-                const text = mergedText || '';
-                const lower = text.toLowerCase();
-                const codeRegexes = [
-                  /エラーが発生しました\s*[（(]\s*(\d+)\s*[)）]/,
-                  /error\s*occurred\s*[（(]\s*(\d+)\s*[)）]/i
-                ];
-                for (let i = 0; i < codeRegexes.length; i++) {
-                  const m = text.match(codeRegexes[i]) || lower.match(codeRegexes[i]);
-                  if (m && m[1]) {
-                    return JSON.stringify({ blocked: true, mark: 'code:' + String(m[1]), source: 'scan' });
-                  }
-                }
-                const marks = [
-                  'something went wrong',
-                  'problem generating response',
-                  'temporarily unavailable',
-                  'network error'
-                ];
-                for (let i = 0; i < marks.length; i++) {
-                  const m = marks[i];
-                  if (text.indexOf(m) >= 0 || lower.indexOf(m.toLowerCase()) >= 0) {
-                    return JSON.stringify({ blocked: true, mark: 'generic:' + m, source: 'scan' });
-                  }
-                }
-                return JSON.stringify({ blocked: false, mark: '' });
-              } catch (_) {
-                return JSON.stringify({ blocked: false, mark: '' });
-              }
-            })();
-        """.trimIndent()
-        webView?.evaluateJavascript(js) { raw ->
+        webView?.evaluateJavascript(DETECT_GEMINI_ERROR_JS) { raw ->
             val parsed = (raw ?: "").trim().trim('"').replace("\\\"", "\"")
             val blocked = parsed.contains("\"blocked\":true")
             val mark = Regex("\"mark\":\"([^\"]*)\"").find(parsed)?.groupValues?.getOrNull(1) ?: ""
@@ -1087,5 +912,184 @@ class WebViewManager(
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)
+    }
+
+    companion object {
+        private val DETECT_ACCESS_INTERSTITIAL_JS = """
+            (function() {
+              const remember = (mark) => {
+                try {
+                  window.__arcLastBotWallMark = String(mark || 'unknown');
+                  window.__arcLastBotWallAt = Date.now();
+                } catch (_) {}
+              };
+              const roots = [];
+              const visitRoots = (root) => {
+                if (!root || !root.querySelectorAll) return;
+                roots.push(root);
+                const all = root.querySelectorAll('*');
+                for (const el of all) {
+                  if (el && el.shadowRoot) visitRoots(el.shadowRoot);
+                }
+              };
+              visitRoots(document);
+
+              let mergedText = '';
+              try {
+                const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+                mergedText += bodyText + '\n';
+              } catch (_) {}
+              for (const r of roots) {
+                try {
+                  const t = (r && r.textContent) ? r.textContent : '';
+                  if (t) mergedText += t + '\n';
+                } catch (_) {}
+              }
+              const text = mergedText;
+              const lower = mergedText.toLowerCase();
+              const robotTextMarks = [
+                'i am not a robot',
+                'verify you are human',
+                'verify you are not a robot',
+                'human verification',
+                'prove you are human',
+                '私はロボットではありません',
+                'ロボットではありません',
+                '人間であることを確認'
+              ];
+              const challengeTextMarks = [
+                'captcha',
+                'recaptcha',
+                'turnstile',
+                'cloudflare challenge',
+                'challenge.cloudflare.com'
+              ];
+              try {
+                for (const r of roots) {
+                  const iframe = r.querySelector(
+                    'iframe[src*="challenge.cloudflare.com"],iframe[src*="challenges.cloudflare.com"],iframe[src*="recaptcha"],iframe[title*="captcha" i],iframe[title*="challenge" i],iframe[id*="cf-chl" i],iframe[name*="cf-chl" i]'
+                  );
+                  if (iframe) {
+                    remember("iframe_challenge");
+                    return JSON.stringify({ blocked: true, mark: 'iframe_challenge', source: 'scan' });
+                  }
+                }
+              } catch (_) {}
+              try {
+                for (const r of roots) {
+                  const cbs = r.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
+                  for (const cb of cbs) {
+                    const host = cb.closest && cb.closest('label,div,section,form');
+                    const cbAria = ((cb.getAttribute && (cb.getAttribute('aria-label') || cb.getAttribute('title'))) || '').toLowerCase();
+                    const near = ((host && (host.innerText || host.textContent)) ? (host.innerText || host.textContent) : '').toLowerCase();
+                    if (
+                      cbAria.indexOf('robot') >= 0 ||
+                      cbAria.indexOf('captcha') >= 0 ||
+                      cbAria.indexOf('human') >= 0 ||
+                      near.indexOf('ロボット') >= 0 ||
+                      near.indexOf('私はロボットではありません') >= 0 ||
+                      near.indexOf('i am not a robot') >= 0 ||
+                      near.indexOf('verify you are human') >= 0 ||
+                      near.indexOf('captcha') >= 0
+                    ) {
+                      remember("robot_checkbox");
+                      return JSON.stringify({ blocked: true, mark: 'robot_checkbox', source: 'scan' });
+                    }
+                  }
+                }
+              } catch (_) {}
+              try {
+                for (const r of roots) {
+                  const widget = r.querySelector(
+                    '[class*="captcha" i],[id*="captcha" i],[class*="turnstile" i],[id*="turnstile" i],[data-sitekey]'
+                  );
+                  if (widget) {
+                    remember("captcha_widget");
+                    return JSON.stringify({ blocked: true, mark: 'captcha_widget', source: 'scan' });
+                  }
+                }
+              } catch (_) {}
+              const hasRobotText = robotTextMarks.some((mark) =>
+                lower.indexOf(mark.toLowerCase()) >= 0 || text.indexOf(mark) >= 0
+              );
+              const hasChallengeText = challengeTextMarks.some((mark) =>
+                lower.indexOf(mark.toLowerCase()) >= 0 || text.indexOf(mark) >= 0
+              );
+              if (hasRobotText && hasChallengeText) {
+                remember("text_challenge");
+                return JSON.stringify({ blocked: true, mark: 'text_challenge', source: 'scan' });
+              }
+              return JSON.stringify({ blocked: false, mark: '' });
+            })();
+        """.trimIndent()
+
+        private val DETECT_GEMINI_ERROR_JS = """
+            (function() {
+              try {
+                try {
+                  const cachedMark = window.arc && window.arc.__lastGeminiErrorMark
+                    ? String(window.arc.__lastGeminiErrorMark)
+                    : '';
+                  const cachedAt = window.arc && window.arc.__lastGeminiErrorAt
+                    ? Number(window.arc.__lastGeminiErrorAt)
+                    : 0;
+                  const ageMs = Date.now() - cachedAt;
+                  if (cachedMark && cachedAt > 0 && ageMs >= 0 && ageMs <= 45000) {
+                    return JSON.stringify({ blocked: true, mark: cachedMark, source: 'cache' });
+                  }
+                } catch (_) {}
+                const roots = [];
+                const visitRoots = (root) => {
+                  if (!root || !root.querySelectorAll) return;
+                  roots.push(root);
+                  const all = root.querySelectorAll('*');
+                  for (const el of all) {
+                    if (el && el.shadowRoot) visitRoots(el.shadowRoot);
+                  }
+                };
+                visitRoots(document);
+
+                let mergedText = '';
+                try {
+                  const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+                  mergedText += bodyText + '\n';
+                } catch (_) {}
+                for (const r of roots) {
+                  try {
+                    const t = (r && r.textContent) ? r.textContent : '';
+                    if (t) mergedText += t + '\n';
+                  } catch (_) {}
+                }
+
+                const text = mergedText || '';
+                const lower = text.toLowerCase();
+                const codeRegexes = [
+                  /エラーが発生しました\s*[（(]\s*(\d+)\s*[)）]/,
+                  /error\s*occurred\s*[（(]\s*(\d+)\s*[)）]/i
+                ];
+                for (let i = 0; i < codeRegexes.length; i++) {
+                  const m = text.match(codeRegexes[i]) || lower.match(codeRegexes[i]);
+                  if (m && m[1]) {
+                    return JSON.stringify({ blocked: true, mark: 'code:' + String(m[1]), source: 'scan' });
+                  }
+                }
+                const marks = [
+                  'something went wrong',
+                  'problem generating response',
+                  'temporarily unavailable',
+                  'network error'
+                ];
+                for (let i = 0; i < marks.length; i++) {
+                  const m = marks[i];
+                  if (text.indexOf(m) >= 0 || lower.indexOf(m.toLowerCase()) >= 0) {
+                    return JSON.stringify({ blocked: true, mark: 'generic:' + m, source: 'scan' });
+                  }
+                }
+                return JSON.stringify({ blocked: false, mark: '' });
+              } catch (_) {
+                return JSON.stringify({ blocked: false, mark: '' });
+              }
+            })();
+        """.trimIndent()
     }
 }
