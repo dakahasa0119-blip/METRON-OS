@@ -88,17 +88,38 @@ object Util {
         else -> null
     }
 
+    private var cachedIpAddress: String? = null
+    private var lastIpFetchTime: Long = 0
+    private const val IP_CACHE_DURATION_MS = 300_000L // 5 minutes
+
     fun getLocalIpAddress(): String {
+        val now = System.currentTimeMillis()
+        synchronized(this) {
+            if (cachedIpAddress != null && (now - lastIpFetchTime < IP_CACHE_DURATION_MS)) {
+                return cachedIpAddress!!
+            }
+        }
+
+        var result = "unknown"
         try {
             val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
             for (networkInterface in interfaces) {
                 val addresses = Collections.list(networkInterface.inetAddresses)
                 for (address in addresses) {
-                    if (!address.isLoopbackAddress && address.hostAddress?.indexOf(':') ?: 0 < 0) return address.hostAddress ?: "unknown"
+                    if (!address.isLoopbackAddress && address.hostAddress?.indexOf(':') ?: 0 < 0) {
+                        result = address.hostAddress ?: "unknown"
+                        break
+                    }
                 }
+                if (result != "unknown") break
             }
         } catch (e: Exception) { }
-        return "unknown"
+
+        synchronized(this) {
+            cachedIpAddress = result
+            lastIpFetchTime = now
+        }
+        return result
     }
 
     fun escapeJs(text: String?): String = text?.replace("\\", "\\\\")?.replace("\"", "\\\"")?.replace("'", "\\'")?.replace("\n", "\\n")?.replace("\r", "") ?: ""
