@@ -1,0 +1,27 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "node scripts/test_gateway_claim.js && node scripts/test_getLocalSetting.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakahasa0119-blip/METRON-OS.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/dakahasa0119-blip/METRON-OS/issues"
+  },
+  "homepage": "https://github.com/dakahasa0119-blip/METRON-OS#readme",
+  "dependencies": {
+    "rewire": "^9.0.1"
+  }
+}

@@ -40,15 +40,10 @@ function setLocalSetting(key, value) {
  * ローカル設定を取得
  */
 function getLocalSetting(key, defaultValue) {
-  const ss = SpreadsheetApp.getActive();
-  const sheet = ss.getSheetByName(SETTINGS_SHEET);
-  if (!sheet) return defaultValue;
+  var p = PropertiesService.getScriptProperties().getProperty(key);
+  return p ? p : defaultValue;
+}
 
-  const values = sheet.getDataRange().getValues();
-  for (let i = 1; i < values.length; i++) {
-    if (values[i][0] === key) {
-      return values[i][1];
-    }
-  }
-  return defaultValue;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { getLocalSetting, writeLocalLog, setLocalSetting };
 }

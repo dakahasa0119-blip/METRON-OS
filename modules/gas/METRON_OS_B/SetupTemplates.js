@@ -407,17 +407,8 @@ function setLocalSetting(key, value) {
 }
 
 function getLocalSetting(key, defaultValue) {
-  const ss = SpreadsheetApp.getActive();
-  const sheet = ss.getSheetByName(SETTINGS_SHEET);
-  if (!sheet) return defaultValue;
-
-  const values = sheet.getDataRange().getValues();
-  for (let i = 1; i < values.length; i++) {
-    if (values[i][0] === key) {
-      return values[i][1];
-    }
-  }
-  return defaultValue;
+  var p = PropertiesService.getScriptProperties().getProperty(key);
+  return p ? p : defaultValue;
 }
   `);
 
