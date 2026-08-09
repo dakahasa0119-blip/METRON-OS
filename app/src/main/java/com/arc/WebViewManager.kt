@@ -113,7 +113,7 @@ class WebViewManager(
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             userAgentString = currentUA 
             setSupportMultipleWindows(false)
             setGeolocationEnabled(false)
