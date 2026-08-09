@@ -1303,7 +1303,7 @@ function doPost(e) {
 
     let route = defaultRoute;
     if (has("#arc") || has("@arc") || has("[arc]") || has("#proxy") || has("#baku") || has("@baku")) route = "ARC";
-    if (has("#mother") || has("@mother") || has("#metron") || has("#osb")) route = "MOTHERSHIP";
+    if (has("#mother") || has("@mother") || has("#metron") || has("#osb") || has("[@metron]")) route = "MOTHERSHIP";
 
     let executor = defaultExecutor;
     if (has("#baku") || has("@baku")) executor = "BAKU";
@@ -2542,9 +2542,17 @@ function doPost(e) {
     // ARCが完了し、次がMOTHERSHIP連携の場合（例：特定の応答接頭辞やモードなどから判定）
     // 現状はシンプルな「MOTHERSHIPに自律評価を依頼する」サンプル実装
     if (status === "ARC_DONE" || status === "ARC_ERROR") {
-      // TODO: 本来はプロンプトのメタデータやBAKUからの指示（followup）に依存させる
-      // 今回はイベント駆動検証のため、"[@metron]" が含まれていればMOTHERSHIPへ渡す
-      if (norm(targetRow[2]).indexOf("[@metron]") >= 0) {
+      const requestText = norm(targetRow[2]);
+      const cmdTags = parseCommandTags(requestText);
+      const bakuReport = parseBakuStructuredReport(responseText);
+      const bakuFollowupRoute = bakuReport && bakuReport.followup ? upper(norm(bakuReport.followup.route)) : "";
+      const bakuFollowupExecutor = bakuReport && bakuReport.followup ? upper(norm(bakuReport.followup.executor)) : "";
+      const isMothershipRoute =
+        cmdTags.route === "MOTHERSHIP" ||
+        bakuFollowupRoute === "MOTHERSHIP" ||
+        bakuFollowupExecutor === "MOTHERSHIP";
+
+      if (isMothershipRoute) {
         const msgId = "MS_" + targetRowIndex + "_" + Date.now();
         const contentContext = `Action: ${status}\nMission: ${missionId}\nResult: ${responseText.slice(0, 1000)}`;
         sheets.mothership.appendRow([new Date(), msgId, "gateway_chained", contentContext, "pending"]);
