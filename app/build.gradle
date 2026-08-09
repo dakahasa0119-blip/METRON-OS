@@ -29,6 +29,9 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -42,4 +45,8 @@ dependencies {
 
     // サーバー機能用ライブラリ
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
+
+    // Test deps
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'
 }

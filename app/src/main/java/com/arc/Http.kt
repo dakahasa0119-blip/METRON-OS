@@ -6,6 +6,8 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.pow
 
 /**
@@ -23,7 +25,9 @@ object Http {
         
         for (attempt in 1..maxRetries) {
             try {
-                return executePost(urlStr, json)
+                return withContext(Dispatchers.IO) {
+                    executePost(urlStr, json)
+                }
             } catch (e: Exception) {
                 lastException = e
                 Log.w("Http", "Attempt $attempt failed: ${e.message}")
