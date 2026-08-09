@@ -407,7 +407,11 @@ class MainActivity : AppCompatActivity() {
                 arcGateway.consultGateway(ctx, prob, img, callback)
             },
             captureBitmap = { onReady ->
-            webViewManager.captureBitmap(onReady)
+            webViewManager.captureBitmap { bmp ->
+                val out = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+                onReady(android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP))
+            }
         }
     )
 

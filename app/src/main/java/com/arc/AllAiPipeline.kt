@@ -1,11 +1,6 @@
 package com.arc
 
-import android.graphics.Bitmap
-import android.util.Base64
 import kotlinx.coroutines.*
-import java.io.ByteArrayOutputStream
-import java.util.*
-import org.json.JSONObject
 import kotlin.math.max
 
 /**
@@ -20,7 +15,7 @@ class AllAiPipeline(
     private val hallucinationPipeline: HallucinationPipeline,
     private val requestVisionSolve: (action: String, onSolved: (Int, Int) -> Unit) -> Unit,
     private val consultGateway: (context: String, problem: String, image: String?, callback: (String) -> Unit) -> Unit,
-    private val captureBitmap: (onReady: (Bitmap) -> Unit) -> Unit
+    private val captureBitmap: (onReady: (String?) -> Unit) -> Unit
 ) {
     private data class EvalRubric(
         val codeTask: Boolean,
@@ -185,10 +180,8 @@ class AllAiPipeline(
     private suspend fun fetchVisualGatewayAdvice() {
         val imageB64 = withContext(Dispatchers.Main) {
             val d = CompletableDeferred<String?>()
-            captureBitmap { bmp ->
-                val out = ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.JPEG, 70, out)
-                d.complete(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP))
+            captureBitmap { b64 ->
+                d.complete(b64)
             }
             d.await()
         }
