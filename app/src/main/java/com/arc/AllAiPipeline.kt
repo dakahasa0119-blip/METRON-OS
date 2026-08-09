@@ -6,7 +6,6 @@ import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.util.*
 import org.json.JSONObject
-import kotlin.math.max
 
 /**
  * 司令部(ArcWorker)と神経系を完全に統合し、全工程をフルログ管理する最強の知能ユニット (v24.0 - Neural Orchestrated)
@@ -460,7 +459,7 @@ class AllAiPipeline(
                     }
                 }
             }
-        val requiredTerms = baseReq.distinct().take(max(4, baseReq.size))
+        val requiredTerms = baseReq.distinct().take(kotlin.math.max(4, baseReq.size))
         return EvalRubric(
             codeTask = codeTask,
             requiredTerms = requiredTerms,
