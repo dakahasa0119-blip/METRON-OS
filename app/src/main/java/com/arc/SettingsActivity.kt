@@ -49,6 +49,14 @@ class SettingsActivity : AppCompatActivity() {
      * 🚀 Zero-Touch Setup (全自動環境構築) の UI ロジック
      */
     private fun setupAutoProvisioning() {
+        setupTestConnectionButton()
+        setupAutoSetupButton()
+        setupLoginGuideButton()
+        setupPresetButtons()
+        setupSyncSlotRegistryButton()
+    }
+
+    private fun setupTestConnectionButton() {
         // 🌐 接続テストボタン (Handshake)
         binding.btnTestConnection.setOnClickListener {
             val url = binding.gasUrl.text.toString().trim()
@@ -75,7 +83,9 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
+    }
 
+    private fun setupAutoSetupButton() {
         // 🛠️ 全自動セットアップボタン
         binding.btnAutoSetup.setOnClickListener {
             val url = binding.gasUrl.text.toString().trim()
@@ -108,7 +118,9 @@ class SettingsActivity : AppCompatActivity() {
                 }
             }
         }
+    }
 
+    private fun setupLoginGuideButton() {
         binding.btnLoginGuide.setOnClickListener {
             saveCommonPrefs()
             AlertDialog.Builder(this)
@@ -125,7 +137,9 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 .show()
         }
+    }
 
+    private fun setupPresetButtons() {
         binding.btnApplyRecommended.setOnClickListener {
             applyRecommendedPresetToForm()
             saveCommonPrefs()
@@ -136,7 +150,9 @@ class SettingsActivity : AppCompatActivity() {
             saveCommonPrefs()
             Toast.makeText(this, getString(R.string.toast_claude_preset_applied), Toast.LENGTH_SHORT).show()
         }
+    }
 
+    private fun setupSyncSlotRegistryButton() {
         binding.btnSyncSlotRegistry.setOnClickListener {
             saveCommonPrefs()
             val notes = prefs.runStartupMigrations()
