@@ -135,7 +135,7 @@ function logEvent(message) {
 }
   `);
 
- /**
+ updateTemplate("TEMPLATE_DATA", `/**
  * ============================================================
  *  App_Data.gs（UI_Fields に基づく動的データ管理）
  * ============================================================
@@ -294,6 +294,7 @@ function updateDashboard() {
   dashSheet.getRange(3, 2).setValue(new Date());
 }
 
+`);
   // --- App_Integration.gs ---
   updateTemplate("TEMPLATE_INTEGRATION", `
 /**
