@@ -109,27 +109,32 @@ class WebViewManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             cm.setAcceptThirdPartyCookies(wv, true)
         }
-        wv.settings.apply { 
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            userAgentString = currentUA 
-            setSupportMultipleWindows(false)
-            setGeolocationEnabled(false)
-            loadsImagesAutomatically = true
-            javaScriptCanOpenWindowsAutomatically = false
-            setSupportZoom(false)
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            allowFileAccess = false
-            allowContentAccess = false
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                safeBrowsingEnabled = true
-            }
-        }
+        configureWebSettings(wv)
         
-        wv.webViewClient = object : WebViewClient() {
+        wv.webViewClient = createWebViewClient()
+
+        setupJavascriptInterface(wv)
+    }
+
+    @SuppressLint("JavascriptInterface")
+    private fun setupJavascriptInterface(wv: WebView) {
+        wv.addJavascriptInterface(JsBridge(
+            { r -> onAiResult(r) },
+            { t, d -> onDomErrorCallback(t, d) },
+            { onAutoDom(it) },
+            {
+                lastHeartbeat = System.currentTimeMillis()
+                if (isPatchTesting) {
+                    isPatchTesting = false
+                    Log.d("ARC_EVOLUTION", "Verified.")
+                }
+            },
+            { onPicked(it) }, { onGenerationDone?.invoke() }, { }
+        ), "AndroidBridge")
+    }
+
+    private fun createWebViewClient(): WebViewClient {
+        return object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 cachedUrl = url ?: ""
                 if (shouldApplyStealth(url)) applyAntiBotScripts(view)
@@ -189,20 +194,29 @@ class WebViewManager(
                 }
             }
         }
-        
-        wv.addJavascriptInterface(JsBridge(
-            { r -> onAiResult(r) }, 
-            { t, d -> onDomErrorCallback(t, d) }, 
-            { onAutoDom(it) }, 
-            { 
-                lastHeartbeat = System.currentTimeMillis()
-                if (isPatchTesting) {
-                    isPatchTesting = false
-                    Log.d("ARC_EVOLUTION", "Verified.")
-                }
-            }, 
-            { onPicked(it) }, { onGenerationDone?.invoke() }, { }
-        ), "AndroidBridge")
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebSettings(wv: WebView) {
+        wv.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            userAgentString = currentUA
+            setSupportMultipleWindows(false)
+            setGeolocationEnabled(false)
+            loadsImagesAutomatically = true
+            javaScriptCanOpenWindowsAutomatically = false
+            setSupportZoom(false)
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            allowFileAccess = false
+            allowContentAccess = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                safeBrowsingEnabled = true
+            }
+        }
     }
 
     private fun detectAccessInterstitial(view: WebView?, callback: (Boolean, String) -> Unit) {
