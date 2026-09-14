@@ -478,12 +478,32 @@ function formatDateForFileName_(date) {
  ******************************************************/
 
 function runSystemGuardianDaily() {
-  // TODO: 実際には Web から GAS や Google API の変更情報を取得して解析する想定。
-  // この段階では「フック」として SystemLog に記録だけしておく。
-  logToSystem_(
-    "CONTROL",
-    "SystemGuardian: 仕様変更監視サイクルを実行（将来的にブラウジング＆解析をここに実装）"
-  );
+  try {
+    const url = "https://developers.google.com/apps-script/release-notes";
+    const response = UrlFetchApp.fetch(url);
+    const html = response.getContentText();
+
+    const sections = html.split('<h2');
+    if (sections.length > 2) {
+      const latestSection = '<h2' + sections[2].split(/<h2|<section/)[0];
+      const dateMatch = latestSection.match(/>([^<]+)<\/h2>/);
+
+      if (dateMatch) {
+        const dateStr = dateMatch[1].trim();
+        const contentMatch = latestSection.match(/<\/h2>([\s\S]*?)$/);
+        const text = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().substring(0, 200) : "詳細なし";
+
+        logToSystem_(
+          "CONTROL",
+          "SystemGuardian: 最新のGASリリースノートを取得しました。 [" + dateStr + "] " + text + "..."
+        );
+        return;
+      }
+    }
+    logToSystem_("CONTROL", "SystemGuardian: 仕様変更監視サイクルを実行（リリースノートのパースに失敗）");
+  } catch (e) {
+    logToSystem_("ERROR", "SystemGuardian: リリースノート取得エラー - " + e.message);
+  }
 }
 
 function logToSystem_(type, message) {
