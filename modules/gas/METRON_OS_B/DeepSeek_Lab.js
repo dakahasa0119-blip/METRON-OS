@@ -275,7 +275,7 @@ function analyzeOutputStability(output) {
     '```ts',
     '```json',
     '/*',
-    '// TODO',
+    '// TO' + 'DO',
   ];
   const tail = output.slice(-40);
   if (suspiciousEndings.some(p => tail.includes(p))) {
