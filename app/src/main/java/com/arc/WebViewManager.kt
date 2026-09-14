@@ -759,17 +759,21 @@ class WebViewManager(
                 const clickedSet = new Set();
                 let clicked = false;
 
-                const visitRoots = (root, out) => {
-                  if (!root || !root.querySelectorAll) return;
-                  out.push(root);
-                  const all = root.querySelectorAll('*');
-                  for (const el of all) {
-                    if (el && el.shadowRoot) visitRoots(el.shadowRoot, out);
+                const nodesToProcess = [];
+                const visit = (root) => {
+                  if (!root) return;
+                  const walker = document.createTreeWalker(root, 1 /* NodeFilter.SHOW_ELEMENT */);
+                  let el = walker.currentNode;
+                  while (el) {
+                    if (el.shadowRoot) visit(el.shadowRoot);
+                    const tag = el.tagName ? el.tagName.toLowerCase() : '';
+                    if (tag === 'button' || tag === 'label' || (el.hasAttribute && el.hasAttribute('aria-label')) || (el.getAttribute && (el.getAttribute('role') === 'button' || el.getAttribute('role') === 'checkbox' || (tag === 'input' && el.getAttribute('type') === 'checkbox')))) {
+                      nodesToProcess.push({ el: el, root: root });
+                    }
+                    el = walker.nextNode();
                   }
                 };
-
-                const roots = [];
-                visitRoots(document, roots);
+                visit(document);
 
                 const clickOnce = (el) => {
                   if (!el) return false;
@@ -782,9 +786,7 @@ class WebViewManager(
                   } catch (_) { return false; }
                 };
 
-                for (const root of roots) {
-                  const nodes = Array.from(root.querySelectorAll('button,[role="button"],[aria-label],label,input[type="checkbox"],[role="checkbox"]'));
-                  for (const el of nodes) {
+                for (const { el, root } of nodesToProcess) {
                     const t = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().toLowerCase();
                     const type = (el.getAttribute('type') || '').toLowerCase();
                     const isCheckbox = type === 'checkbox' || el.getAttribute('role') === 'checkbox';

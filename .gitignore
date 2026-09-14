@@ -22,3 +22,4 @@ Thumbs.db
 # ARC health watch runtime
 .arc_health_watch.pid
 .arc_health_watch.log
+node_modules/
