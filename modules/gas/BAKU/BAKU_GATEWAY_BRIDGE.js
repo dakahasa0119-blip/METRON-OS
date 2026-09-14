@@ -23,7 +23,6 @@ var BAKU_GATEWAY = BAKU_GATEWAY || {
   ensureRecommendedDefaults_: function () {
     var p = this.getProps_();
     var defaults = {
-      GATEWAY_WEBAPP_URL: "https://script.google.com/macros/s/AKfycbyTZSv_X625o7T27_hQQ6eP_BztvrBDLx6kU_8cVLcmbvjWnhNYGFA2e8Wo7E0m7A/exec",
       BAKU_USE_SIGNATURE: "false",
       BAKU_ALLOW_REBUILD: "false",
       BAKU_MAX_LOOP_JOBS: "6"
