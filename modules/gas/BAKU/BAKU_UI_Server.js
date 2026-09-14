@@ -8,7 +8,7 @@ function doGet(e) {
     return template.evaluate()
         .setTitle('BAKU Universal Salvage Engine')
         .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }
 
 /**
