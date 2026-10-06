@@ -478,12 +478,58 @@ function formatDateForFileName_(date) {
  ******************************************************/
 
 function runSystemGuardianDaily() {
-  // TODO: 実際には Web から GAS や Google API の変更情報を取得して解析する想定。
-  // この段階では「フック」として SystemLog に記録だけしておく。
-  logToSystem_(
-    "CONTROL",
-    "SystemGuardian: 仕様変更監視サイクルを実行（将来的にブラウジング＆解析をここに実装）"
-  );
+  const feeds = [
+    { name: "Google Workspace Updates", url: "https://workspaceupdates.googleblog.com/feeds/posts/default?alt=rss" },
+    { name: "Google Developers Blog", url: "https://developers.googleblog.com/feeds/posts/default?alt=rss" }
+  ];
+
+  let foundUpdates = false;
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - 3); // within last 3 days
+
+  for (const feed of feeds) {
+    try {
+      const response = UrlFetchApp.fetch(feed.url, { muteHttpExceptions: true });
+      if (response.getResponseCode() !== 200) continue;
+      const xmlText = response.getContentText();
+
+      const entryRegex = /<(?:item|entry)>([\s\S]*?)<\/(?:item|entry)>/gi;
+      let match;
+      while ((match = entryRegex.exec(xmlText)) !== null) {
+        const content = match[1];
+        const titleMatch = content.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const linkMatch = content.match(/<link[^>]*rel=['"]alternate['"][^>]*href=['"]([^'"]+)['"]/i)
+                        || content.match(/<link[^>]*href=['"]([^'"]+)['"]/i)
+                        || content.match(/<link>([\s\S]*?)<\/link>/i);
+        const pubMatch = content.match(/<(?:pubDate|published|updated)>([\s\S]*?)<\/(?:pubDate|published|updated)>/i);
+
+        if (titleMatch && linkMatch && pubMatch) {
+            let title = titleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").trim();
+            let link = linkMatch[1].trim();
+            let pubDate = new Date(pubMatch[1].trim());
+
+            if (pubDate > cutoffDate) {
+               foundUpdates = true;
+               const sourceText = `Feed: ${feed.name}\nDate: ${pubDate}\nURL: ${link}`;
+               registerEvolutionProposal({
+                 target: "SystemGuardian",
+                 fileName: `Update: ${title.substring(0, 40)}`,
+                 sourceCode: sourceText,
+                 status: "NEW"
+               });
+            }
+        }
+      }
+    } catch (e) {
+       logToSystem_("ERROR", `SystemGuardian failed to fetch ${feed.name}: ${e.message}`);
+    }
+  }
+
+  if (foundUpdates) {
+    logToSystem_("CONTROL", "SystemGuardian: 仕様変更監視サイクルを実行し、新規アップデートを登録しました。");
+  } else {
+    logToSystem_("CONTROL", "SystemGuardian: 仕様変更監視サイクルを実行（新規アップデートなし）");
+  }
 }
 
 function logToSystem_(type, message) {
@@ -572,6 +618,7 @@ function getOrCreateForgeDoc_(folder, fileName) {
 function runEvolutionPipeline() {
   ensureMetronDriveStructure();
   runSelfImprovementV2();
+  runSystemGuardianDaily();
   // 将来的には Proposal のマージや Forge 実行などをここに追加する
   announce("EvolutionPipeline の1サイクルを実行しました。", "SYSTEM");
 }
