@@ -4,27 +4,59 @@
  * This library is deliberately conservative and is NOT a security scanner.
  */
 
-/** Find matching braces, skipping JS comments and quoted strings. Regex literals are not parsed. */
-export function findMatchingBrace(source, opening) {
-  if (source[opening] !== "{") return -1;
-  let depth = 0, quote = "", escaped = false, comment = "";
-  for (let i = opening; i < source.length; i++) {
+/**
+ * Mask strings and comments while preserving character offsets.
+ * Conservative range extraction only; NOT a full JS parser.
+ * Regular-expression literals and template interpolation are unsupported.
+ */
+function maskNonCode(source) {
+  const out = source.split("");
+  let mode = "code", escaped = false;
+  const tick = String.fromCharCode(96);
+  for (let i = 0; i < source.length; i++) {
     const c = source[i], n = source[i + 1];
-    if (comment === "line") { if (c === "\n") comment = ""; continue; }
-    if (comment === "block") { if (c === "*" && n === "/") { i++; comment = ""; } continue; }
-    if (quote) {
-      if (escaped) { escaped = false; continue; }
-      if (c === "\\") { escaped = true; continue; }
-      if (c === quote) quote = "";
+    if (mode === "line") {
+      if (c === "\n") mode = "code";
+      else out[i] = " ";
       continue;
     }
-    if (c === "/" && n === "/") { comment = "line"; i++; continue; }
-    if (c === "/" && n === "*") { comment = "block"; i++; continue; }
-    if (c === "'" || c === '"' || c === "`") { quote = c; continue; }
-    if (c === "{") depth++;
-    if (c === "}" && --depth === 0) return i;
+    if (mode === "block") {
+      out[i] = " ";
+      if (c === "*" && n === "/") { out[++i] = " "; mode = "code"; }
+      continue;
+    }
+    if (mode === "single" || mode === "double" || mode === "template") {
+      out[i] = " ";
+      if (escaped) { escaped = false; continue; }
+      if (c === "\\") { escaped = true; continue; }
+      if ((mode === "single" && c === "'") || (mode === "double" && c === '"') ||
+          (mode === "template" && c === tick)) mode = "code";
+      continue;
+    }
+    if (c === "/" && n === "/") { out[i] = " "; out[++i] = " "; mode = "line"; continue; }
+    if (c === "/" && n === "*") { out[i] = " "; out[++i] = " "; mode = "block"; continue; }
+    if (c === "'" || c === '"' || c === tick) {
+      out[i] = " ";
+      mode = c === "'" ? "single" : c === '"' ? "double" : "template";
+    }
+  }
+  return out.join("");
+}
+
+function matchMaskedBrace(mask, opening) {
+  if (mask[opening] !== "{") return -1;
+  let depth = 0;
+  for (let i = opening; i < mask.length; i++) {
+    if (mask[i] === "{") depth++;
+    else if (mask[i] === "}" && --depth === 0) return i;
   }
   return -1;
+}
+
+/** Find matching braces while ignoring quoted/commented contents. */
+export function findMatchingBrace(source, opening) {
+  if (typeof source !== "string" || source[opening] !== "{") return -1;
+  return matchMaskedBrace(maskNonCode(source), opening);
 }
 
 /** Extract named function declarations and classes with source ranges. Best-effort, not an AST parser. */
@@ -32,10 +64,11 @@ export function extractCards(source, { sourceName = "unknown" } = {}) {
   if (typeof source !== "string") throw new TypeError("source must be text");
   const regex = /\b(function\s+([a-zA-Z_$][\w$]*)\s*\([^)]*\)\s*\{|class\s+([a-zA-Z_$][\w$]*)\s*\{|([a-zA-Z_$][\w$]*)\s*:\s*function\s*\([^)]*\)\s*\{|(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>\s*\{)/g;
   const cards = [];
-  for (const match of source.matchAll(regex)) {
+  const mask = maskNonCode(source);
+  for (const match of mask.matchAll(regex)) {
     const start = match.index;
     const begin = start + match[0].lastIndexOf("{");
-    const end = findMatchingBrace(source, begin);
+    const end = matchMaskedBrace(mask, begin);
     if (end < begin) continue;
     const name = match[2] || match[3] || match[4] || match[5];
     if (cards.some(card => card.start <= start && start < card.end)) continue;
