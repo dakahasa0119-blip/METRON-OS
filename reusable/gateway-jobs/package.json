@@ -6,11 +6,13 @@
   "main": "./job-state.mjs",
   "exports": {
     ".": "./job-state.mjs",
-    "./checkpoint": "./checkpoint.mjs"
+    "./checkpoint": "./checkpoint.mjs",
+    "./persistent": "./persistent-gateway.mjs"
   },
   "files": [
     "job-state.mjs",
     "checkpoint.mjs",
+    "persistent-gateway.mjs",
     "README.md",
     "LICENSE"
   ],
