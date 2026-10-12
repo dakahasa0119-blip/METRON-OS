@@ -30,18 +30,18 @@ export function findMatchingBrace(source, opening) {
 /** Extract named function declarations and classes with source ranges. Best-effort, not an AST parser. */
 export function extractCards(source, { sourceName = "unknown" } = {}) {
   if (typeof source !== "string") throw new TypeError("source must be text");
-  const regex = /\b(function\s+([a-zA-Z_$][\w$]*)\s*\([^)]*\)\s*\{|class\s+([a-zA-Z_$][\w$]*)\s*\{)/g;
+  const regex = /\b(function\s+([a-zA-Z_$][\w$]*)\s*\([^)]*\)\s*\{|class\s+([a-zA-Z_$][\w$]*)\s*\{|([a-zA-Z_$][\w$]*)\s*:\s*function\s*\([^)]*\)\s*\{|(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>\s*\{)/g;
   const cards = [];
   for (const match of source.matchAll(regex)) {
     const start = match.index;
     const begin = start + match[0].lastIndexOf("{");
     const end = findMatchingBrace(source, begin);
     if (end < begin) continue;
-    const name = match[2] || match[3];
+    const name = match[2] || match[3] || match[4] || match[5];
     if (cards.some(card => card.start <= start && start < card.end)) continue;
     cards.push({
       id: sourceName + ":" + name + ":" + start,
-      name, kind: match[2] ? "function" : "class",
+      name, kind: match[2] ? "function" : match[3] ? "class" : match[4] ? "object-method" : "arrow-function",
       sourceName, start, end: end + 1,
       code: source.slice(start, end + 1)
     });
