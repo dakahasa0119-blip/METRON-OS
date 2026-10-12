@@ -14,7 +14,7 @@ Verified locally on Windows with Node.js v24.18.0, npm CLI and installed Google 
 
 | Evidence | Result | Meaning |
 | --- | --- | --- |
-| Node tests | **17 passed, 0 failed, 0 skipped** | Current isolated reference methods behave as the included tests require |
+| Node tests | **17 passed, 0 failed, 0 skipped** (prior validation round) | Current isolated reference methods behave as the included tests require |
 | Chromium DOM picker integration | **Passed** | A real browser selected an element in an open Shadow Root and returned its selector; click interception, Escape and manual lock behaved as expected |
 | Historical BAKU extraction fixtures | **Passed** | Extractor recovered ten preselected named fragments from two published legacy BAKU JavaScript files |
 | Synthetic BAKU review labels | **Passed** | Eight manually labelled simple examples matched expected pattern flags |
@@ -42,3 +42,10 @@ Each `reusable/<package>/` directory is independently npm-packable and contains 
 1. Connect an authorized Android test device or isolated emulator and measure the original WebView + picker path with screenshots, regression cases and explicit selector-role mapping.
 2. Build a labelled set of historical BAKU failures and expected safe outcomes. Evaluate false positives, false negatives, quarantine behavior and rollback **without touching production GAS**.
 3. Persist Gateway state in a durable store, then test lease expiry, worker crashes, idempotency and restart recovery across two processes.
+
+## 2026-10-13: robustness regression round
+
+- **23 / 23 tests passed, with 0 failed and 0 skipped** on the GitHub Actions Linux runner, including the real Chromium picker test and all four independent package installation checks. See the pull request and its exact workflow run for reproducibility.
+- ARC `findDeep` now evaluates all matches instead of allowing a hidden first match to conceal visible alternatives; Shadow DOM traversal remains supported. The picker now recognizes the relevant ancestor for its `input`, `send`, or `response` role, so a click on a nested icon can choose the containing button. Captured pointer-down and click events are suppressed during picking.
+- BAKU's lightweight extractor masks strings and comments before finding named fragments and matching braces. The simple review-pattern detector also ignores comments and quoted literal text. Regression tests cover phantom declarations, quoted braces, real code calls, truncated fragments and existing historical-source expectations.
+- **Limits:** This is still a best-effort scanner, not a complete JS parser. Regex literals, complex template interpolation, unusual syntax and dynamic behavior can defeat parsing or review flags. There is no measured precision for autonomous code repair. No Android device-level test was run in this round. A registry package publication is not claimed.

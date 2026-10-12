@@ -14,16 +14,25 @@ export function isOperable(element) {
 }
 
 export function findDeep(root, selector, { operableOnly = true, maxDepth = 12 } = {}) {
-  if (!root || !selector || typeof root.querySelector !== "function") return null;
+  if (!root || !selector || typeof root.querySelectorAll !== "function") return null;
   const seen = new Set();
   function search(node, depth) {
     if (!node || depth > maxDepth || seen.has(node)) return null;
     seen.add(node);
-    let direct;
-    try { direct = node.querySelector(selector); } catch { return null; }
-    if (direct && (!operableOnly || isOperable(direct))) return direct;
-    let elements;
-    try { elements = node.querySelectorAll("*"); } catch { return null; }
+    let matches, elements;
+    try {
+      matches = node.querySelectorAll(selector);
+      elements = node.querySelectorAll("*");
+    } catch { return null; }
+    // A hidden first match must not mask a visible later match.
+    for (const candidate of matches) {
+      if (!operableOnly || isOperable(candidate)) return candidate;
+    }
+    // Preserve support for DOM-like adapters that expose querySelector only.
+    if (!matches.length && typeof node.querySelector === "function") {
+      const direct = node.querySelector(selector);
+      if (direct && (!operableOnly || isOperable(direct))) return direct;
+    }
     for (const element of elements) {
       if (element.shadowRoot) {
         const found = search(element.shadowRoot, depth + 1);
@@ -122,20 +131,48 @@ export class SelectorMemory {
  * Intercepts the selected click so the page's original action is not triggered.
  * Returns a cancel handle; Escape cancels. Does not inject into third-party frames.
  */
+function choosePickerElement(event, role) {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+  const elements = path.filter(node => node && (typeof node.matches === "function" || typeof node.tagName === "string"));
+  const selectors = {
+    input: 'textarea, input, [contenteditable="true"], [role="textbox"]',
+    send: 'button, [role="button"], input[type="submit"]',
+    resp: '[data-message-author-role="assistant"], article, [role="article"]',
+    response: '[data-message-author-role="assistant"], article, [role="article"]'
+  };
+  const predicate = selectors[role] || "";
+  if (predicate) {
+    for (const element of elements) {
+      try { if (element.matches(predicate)) return element; } catch { /* ignore invalid selector */ }
+    }
+  }
+  return elements[0] || null;
+}
+
+/**
+ * Start a one-click element picker in an authorized page.
+ * The role determines which ancestor to select from composedPath, so clicking
+ * an SVG/icon inside a button maps to its parent button.
+ * Click/pointerdown is intercepted to avoid running the page's action.
+ */
 export function startPicker(doc, { role = "input", onPick, onCancel = () => {} } = {}) {
   if (!doc?.addEventListener || typeof onPick !== "function") throw new Error("document and onPick required");
   let active = true;
   const stop = () => {
     if (!active) return;
     active = false;
+    doc.removeEventListener("pointerdown", suppress, true);
     doc.removeEventListener("click", click, true);
     doc.removeEventListener("keydown", keydown, true);
   };
-  const click = event => {
-    const element = event.composedPath?.()[0] || event.target;
-    event.preventDefault();
+  const suppress = event => {
+    if (event.cancelable !== false) event.preventDefault();
     event.stopImmediatePropagation?.();
     event.stopPropagation?.();
+  };
+  const click = event => {
+    suppress(event);
+    const element = choosePickerElement(event, role);
     const selector = stableSelector(element);
     if (!selector) return; // keep picker active so user can try another element
     stop();
@@ -143,10 +180,11 @@ export function startPicker(doc, { role = "input", onPick, onCancel = () => {} }
   };
   const keydown = event => {
     if (event.key !== "Escape") return;
-    event.preventDefault();
+    if (event.cancelable !== false) event.preventDefault();
     stop();
     onCancel();
   };
+  doc.addEventListener("pointerdown", suppress, true);
   doc.addEventListener("click", click, true);
   doc.addEventListener("keydown", keydown, true);
   return { cancel: () => { if (active) { stop(); onCancel(); } }, get active() { return active; } };
