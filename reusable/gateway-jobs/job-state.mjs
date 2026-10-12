@@ -44,9 +44,7 @@ export class JobQueue {
     job.expiresAt = null;
     return true;
   }
-  fail(id, lease, error) {
-    const job = this.jobs.get(id);
-    if (!this.isLeaseValid(job, lease)) return false;
+  #recordFailure(job, error) {
     job.attempts++;
     job.error = String(error);
     job.worker = null;
@@ -57,14 +55,20 @@ export class JobQueue {
       job.state = "pending";
       job.nextReadyAt = this.now() + this.backoffMs * (2 ** (job.attempts - 1));
     }
+  }
+  fail(id, lease, error) {
+    const job = this.jobs.get(id);
+    if (!this.isLeaseValid(job, lease)) return false;
+    this.#recordFailure(job, error);
     return true;
   }
   recoverExpired() {
     let recovered = 0;
     for (const job of this.jobs.values()) {
       if (job.state !== "leased" || this.now() < job.expiresAt) continue;
-      const lease = { worker: job.worker, version: job.leaseVersion };
-      if (this.fail(job.id, lease, "lease_expired")) recovered++;
+      // Recovery is an internal transition, not a stale external worker ACK.
+      this.#recordFailure(job, "lease_expired");
+      recovered++;
     }
     return recovered;
   }
