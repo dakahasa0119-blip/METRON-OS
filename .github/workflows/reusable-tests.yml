@@ -22,5 +22,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Run standalone unit tests
+      - name: Require desktop Chromium for integration test
+        shell: bash
+        run: command -v google-chrome || command -v google-chrome-stable || command -v chromium
+      - name: Run unit, historical-source and Chromium integration tests
         run: node --test reusable/tests/*.test.mjs
+      - name: Validate independently distributable packages
+        shell: bash
+        run: |
+          root=$(mktemp -d)
+          for pkg in arc-dom baku-dna gateway-jobs mothership; do
+            echo "Packing $pkg"
+            npm pack --pack-destination "$root" --silent "./reusable/$pkg"
+          done
+          npm install --prefix "$root" --ignore-scripts --no-audit --no-fund "$root"/*.tgz
+          cat > "$root/consumer.mjs" <<'EOF'
+          import { findDeep } from "metron-reference-arc-dom";
+          import { extractCards } from "metron-reference-baku-dna";
+          import { JobQueue } from "metron-reference-gateway-jobs";
+          import { newPatch } from "metron-reference-mothership-workflow";
+          if ([findDeep, extractCards, JobQueue, newPatch].some(x => typeof x !== "function")) {
+            throw new Error("package entrypoint could not be imported");
+          }
+          console.log("FOUR_PACKAGES_IMPORT_PASS");
+          EOF
+          node "$root/consumer.mjs"

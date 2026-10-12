@@ -1,13 +1,13 @@
 # METRON reusable building blocks / 再利用コンポーネント
 
-**Status:** experimental reference code. All source files here are dependency-free ES modules; Node.js 20+ is sufficient for their unit tests.
+**Status:** experimental reference code. Each of the four folders is a dependency-free ES-module package with its own package.json, README and MIT LICENSE. Node.js 20+ is supported.
 
 ## Directory
 
 | Module | Exports / use | Limits |
 | --- | --- | --- |
 | `arc-dom/selector-kit.mjs` | `findDeep`, `stableSelector`, `SelectorMemory`, `startPicker` | Open shadow roots only; works inside authorized DOM context; click picker is a new standalone implementation, not proof the old Android picker was complete |
-| `baku-dna/code-cards.mjs` | `extractCards`, `inspectCard`, `composeCards` | Best-effort JavaScript lexical scanner; regex literals, templates and advanced syntax can defeat extraction. **Not a static security analyzer** |
+| `baku-dna/code-cards.mjs` | `extractCards`, `inspectCard`, `composeCards` | Best-effort JavaScript lexical scanner supporting common object-method and arrow-function forms; regex literals, templates and advanced syntax can defeat extraction. **Not a static security analyzer** |
 | `gateway-jobs/job-state.mjs` | `JobQueue`, `ExpiringMemory` | In-memory single-process state machine, no durable storage, locks, transport, authentication or distributed exactly-once guarantees |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
 
@@ -17,7 +17,7 @@
 node --test reusable/tests/*.test.mjs
 ```
 
-The tests use synthetic values and mocks. The toolkit is not yet validated against live browser UIs, live Apps Script, multiple machines or long-running production workloads.
+Tests include synthetic fixtures, selected archived BAKU source, and a real Chromium DOM/Shadow DOM picker integration test when Chromium is available. This is **not** Android validation or validation against live AI-service interfaces, Apps Script, multiple machines or long-running production workloads. See [validation report](VALIDATION.md).
 
 ## Usage example
 
@@ -41,6 +41,10 @@ console.log(extractCards("function hello() { return 1; }"));
 const staged = transitionPatch(newPatch("p1", "function hello() {}"), "stage");
 console.log(staged.state);
 ```
+
+## Pack each module separately
+
+Run `npm pack --dry-run ./reusable/arc-dom` (or `baku-dna`, `gateway-jobs`, `mothership`) from the repository root. Real tarballs can be generated with `npm pack`; no npm registry publication or API credentials are required for local packing. These package names have **not** been registered or published to npm. The package-specific README and LICENSE are included in every tarball.
 
 ## Licensing
 

@@ -23,3 +23,11 @@ These claims distinguish **design**, **source exists**, **observable historical 
 ## Reproducibility
 
 New standalone modules are under `reusable/` with isolated tests. These prove only the documented local behavior; reproducing the complete historical system requires independent access to Apps Script deployments, Android runtime and authorized original logs.
+
+## 2026-10-13 reusable toolkit verification (separate from the historical runtime)
+
+The four portable reference components were packaged independently as npm-compatible tarballs and successfully installed/imported in a clean temporary consumer folder on Windows. The shared tests passed 17/17, including a real desktop Chromium DOM/Shadow DOM picker test and selected archived BAKU source extraction checks.
+
+These findings prove the **new reference modules** can be packaged and demonstrate their documented narrow behaviors. They are **not** evidence that the old Android ARC picker worked end-to-end, that BAKU repaired unknown faults reliably, or that METRON's four historic systems were fully integrated.
+
+Full details and commands: [Reusable toolkit validation](../reusable/VALIDATION.md).

@@ -1,0 +1,31 @@
+{
+  "name": "metron-reference-baku-dna",
+  "version": "0.1.0",
+  "description": "Portable BAKU named source fragment extraction and dependency ordering (experimental)",
+  "type": "module",
+  "main": "./code-cards.mjs",
+  "exports": {
+    ".": "./code-cards.mjs"
+  },
+  "files": [
+    "code-cards.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "metron",
+    "research",
+    "reference-implementation",
+    "baku-dna"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakahasa0119-blip/METRON-OS.git",
+    "directory": "reusable/baku-dna"
+  },
+  "private": false
+}
