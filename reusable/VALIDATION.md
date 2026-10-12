@@ -19,6 +19,7 @@ Verified locally on Windows with Node.js v24.18.0, npm CLI and installed Google 
 | Historical BAKU extraction fixtures | **Passed** | Extractor recovered ten preselected named fragments from two published legacy BAKU JavaScript files |
 | Synthetic BAKU review labels | **Passed** | Eight manually labelled simple examples matched expected pattern flags |
 | npm package dry-run | **4 / 4 succeeded** | Packages include entrypoint, `package.json`, `README.md`, `LICENSE` |
+| Actual npm tarball installation | **4 / 4 succeeded** | Four `.tgz` packages installed in a separate temporary consumer folder and imported by their package names |
 | Android device/E2E | **Not tested** | `adb devices` showed no connected devices; old ARC application's picker routing has not been proven end-to-end |
 | Historic BAKU autonomous repair precision | **Not measured** | Script/source examples and synthetic pattern matching do not establish repair success on unseen failures |
 
