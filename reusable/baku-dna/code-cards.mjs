@@ -84,7 +84,7 @@ export function extractCards(source, { sourceName = "unknown" } = {}) {
 
 /** Flag code needing manual review; never interpret an empty flag list as safety approval. */
 export function inspectCard(card) {
-  const code = String(card?.code || "");
+  const code = maskNonCode(String(card?.code || ""));
   const patterns = {
     "dynamic-evaluation": /\beval\s*\(|\bnew\s+Function\s*\(/,
     "network-access": /\b(?:UrlFetchApp\.fetch|fetch)\s*\(/,
