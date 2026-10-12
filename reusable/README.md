@@ -8,7 +8,8 @@
 | --- | --- | --- |
 | `arc-dom/selector-kit.mjs` | `findDeep`, `stableSelector`, `SelectorMemory`, `startPicker` | Open shadow roots only; works inside authorized DOM context; click picker is a new standalone implementation, not proof the old Android picker was complete |
 | `baku-dna/code-cards.mjs` | `extractCards`, `inspectCard`, `composeCards` | Best-effort JavaScript lexical scanner supporting common object-method and arrow-function forms; regex literals, templates and advanced syntax can defeat extraction. **Not a static security analyzer** |
-| `gateway-jobs/job-state.mjs` | `JobQueue`, `ExpiringMemory` | In-memory single-process state machine, no durable storage, locks, transport, authentication or distributed exactly-once guarantees |
+| `gateway-jobs/job-state.mjs` | `JobQueue`, `ExpiringMemory`, snapshots | Pure single-process queue and expiring memory; no transport, authentication or exactly-once remote effects |
+| `gateway-jobs/persistent-gateway.mjs` | `PersistentGateway`, file checkpoints | Node.js single-writer atomic JSON persistence and restart/lease recovery; **no multi-process lock** |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
 
 ## Running tests
@@ -45,6 +46,11 @@ console.log(staged.state);
 ## Pack each module separately
 
 Run `npm pack --dry-run ./reusable/arc-dom` (or `baku-dna`, `gateway-jobs`, `mothership`) from the repository root. Real tarballs can be generated with `npm pack`; no npm registry publication or API credentials are required for local packing. These package names have **not** been registered or published to npm. The package-specific README and LICENSE are included in every tarball.
+
+
+## Local four-component continuity demo
+
+Run `node reusable/examples/local-continuity-demo.mjs` to exercise ARC selector memory, BAKU fragment extraction, MotherShip patch-state verification and Gateway checkpoint recovery together using **synthetic data only**. The demo does not access external AI services, Android or live Google Apps Script. See [validation](VALIDATION.md).
 
 ## Licensing
 
