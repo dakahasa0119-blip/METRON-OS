@@ -22,5 +22,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Run standalone unit tests
+      - name: Run unit, historical-source and Chromium integration tests
         run: node --test reusable/tests/*.test.mjs
+      - name: Validate independently distributable packages
+        shell: bash
+        run: |
+          for pkg in arc-dom baku-dna gateway-jobs mothership; do
+            echo "Validating $pkg"
+            npm pack --dry-run "./reusable/$pkg"
+          done
