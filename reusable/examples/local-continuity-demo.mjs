@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { SelectorMemory } from "../arc-dom/selector-kit.mjs";
 import { extractCards, inspectCard } from "../baku-dna/code-cards.mjs";
@@ -83,6 +84,6 @@ export function runLocalContinuityDemo() {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL("file://" + process.argv[1].replace(/\\/g, "/")).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   console.log(JSON.stringify(runLocalContinuityDemo(), null, 2));
 }
