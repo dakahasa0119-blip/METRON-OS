@@ -1,14 +1,18 @@
 {
   "name": "metron-reference-gateway-jobs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable Gateway leased job state machine and expiring session memory (experimental)",
   "type": "module",
   "main": "./job-state.mjs",
   "exports": {
-    ".": "./job-state.mjs"
+    ".": "./job-state.mjs",
+    "./checkpoint": "./checkpoint.mjs",
+    "./persistent": "./persistent-gateway.mjs"
   },
   "files": [
     "job-state.mjs",
+    "checkpoint.mjs",
+    "persistent-gateway.mjs",
     "README.md",
     "LICENSE"
   ],
