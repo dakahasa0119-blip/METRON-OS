@@ -49,3 +49,18 @@ Each `reusable/<package>/` directory is independently npm-packable and contains 
 - ARC `findDeep` now evaluates all matches instead of allowing a hidden first match to conceal visible alternatives; Shadow DOM traversal remains supported. The picker now recognizes the relevant ancestor for its `input`, `send`, or `response` role, so a click on a nested icon can choose the containing button. Captured pointer-down and click events are suppressed during picking.
 - BAKU's lightweight extractor masks strings and comments before finding named fragments and matching braces. The simple review-pattern detector also ignores comments and quoted literal text. Regression tests cover phantom declarations, quoted braces, real code calls, truncated fragments and existing historical-source expectations.
 - **Limits:** This is still a best-effort scanner, not a complete JS parser. Regex literals, complex template interpolation, unusual syntax and dynamic behavior can defeat parsing or review flags. There is no measured precision for autonomous code repair. No Android device-level test was run in this round. A registry package publication is not claimed.
+
+## 2026-10-13: restart-recovery and local continuity reference
+
+Gateway's **new Node.js reference implementation** gained versioned `JobQueue` and `ExpiringMemory` snapshots, an atomic JSON checkpoint adapter and a `PersistentGateway` wrapper that persists each state transition. Test coverage includes an actual **fresh Node.js process** loading the state after an expired worker lease, refusing stale results, re-leasing the recovered job, and preserving unexpired memory. Corrupt checkpoint content fails closed instead of resetting job state.
+
+This is deliberately a **single-writer** implementation. There is no distributed lock, durable database transaction, remote-worker exactly-once execution, automatic external side-effect deduplication, or hardened encryption. Crash/power-loss guarantees depend on the underlying filesystem; JSON checkpoints must not contain secrets unless the storage environment is secured.
+
+The new [local continuity demo](examples/local-continuity-demo.mjs) runs a synthetic fixture through all four portable reference modules (ARC selector memory, BAKU extraction, MotherShip patch-state workflow, Gateway lease and persisted memory), including restart recovery. It uses only hard-coded fixture code in the local Node.js `vm` smoke test. Node.js `vm` is not a security sandbox, and the demo must never execute untrusted source.
+
+```sh
+node reusable/examples/local-continuity-demo.mjs
+node --test reusable/tests/*.test.mjs
+```
+
+**Scope of proof:** successful portable reference workflows only. No historical Apps Script deployment, live external AI session, Android device, multi-PC federation, or P2P village consensus was exercised. The old METRON suite still has no independently verified complete four-system E2E run.
