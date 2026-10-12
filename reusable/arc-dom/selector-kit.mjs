@@ -161,7 +161,7 @@ export function startPicker(doc, { role = "input", onPick, onCancel = () => {} }
     doc.removeEventListener("keydown", keydown, true);
   };
   const suppress = event => {
-    if (event.cancelable) event.preventDefault();
+    if (event.cancelable !== false) event.preventDefault();
     event.stopImmediatePropagation?.();
     event.stopPropagation?.();
   };
@@ -175,7 +175,7 @@ export function startPicker(doc, { role = "input", onPick, onCancel = () => {} }
   };
   const keydown = event => {
     if (event.key !== "Escape") return;
-    if (event.cancelable) event.preventDefault();
+    if (event.cancelable !== false) event.preventDefault();
     stop();
     onCancel();
   };
