@@ -1,0 +1,31 @@
+{
+  "name": "metron-reference-gateway-jobs",
+  "version": "0.1.0",
+  "description": "Portable Gateway leased job state machine and expiring session memory (experimental)",
+  "type": "module",
+  "main": "./job-state.mjs",
+  "exports": {
+    ".": "./job-state.mjs"
+  },
+  "files": [
+    "job-state.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "metron",
+    "research",
+    "reference-implementation",
+    "gateway-jobs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakahasa0119-blip/METRON-OS.git",
+    "directory": "reusable/gateway-jobs"
+  },
+  "private": false
+}
