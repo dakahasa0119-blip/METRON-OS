@@ -1,0 +1,31 @@
+{
+  "name": "metron-reference-arc-dom",
+  "version": "0.1.0",
+  "description": "Portable ARC selector discovery, debouncing and interactive picker (experimental)",
+  "type": "module",
+  "main": "./selector-kit.mjs",
+  "exports": {
+    ".": "./selector-kit.mjs"
+  },
+  "files": [
+    "selector-kit.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "metron",
+    "research",
+    "reference-implementation",
+    "arc-dom"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakahasa0119-blip/METRON-OS.git",
+    "directory": "reusable/arc-dom"
+  },
+  "private": false
+}
