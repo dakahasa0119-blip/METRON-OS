@@ -1,0 +1,26 @@
+name: Reusable toolkit tests
+
+on:
+  push:
+    paths:
+      - "reusable/**"
+      - ".github/workflows/reusable-tests.yml"
+  pull_request:
+    paths:
+      - "reusable/**"
+      - ".github/workflows/reusable-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Run standalone unit tests
+        run: node --test reusable/tests/*.test.mjs
