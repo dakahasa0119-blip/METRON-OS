@@ -28,15 +28,19 @@ test("ARC picker works in real Chromium DOM and open Shadow DOM", { skip: !findC
       const assert = (condition, label) => { if (!condition) throw new Error(label); };
       const host = document.getElementById("host");
       const shadow = host.attachShadow({ mode: "open" });
-      shadow.innerHTML = "<button id='send-button' aria-label='Send message'>Send</button>";
+      shadow.innerHTML = "<button id='send-button' aria-label='Send message'><svg><circle id='icon' r='2'></circle></svg>Send</button>" +
+         "<input class='test-query' style='display:none' /><input class='test-query' />";
       const button = shadow.querySelector("button");
       assert(findDeep(document, "#send-button") === button, "cannot traverse Shadow DOM");
       assert(stableSelector(button) === "#send-button", "selector for Shadow DOM button");
+      assert(findDeep(document, ".test-query") === shadow.querySelectorAll(".test-query")[1], "hidden match must not mask visible later match");
       const notes = [];
       button.addEventListener("click", () => notes.push("site-action"));
       let picked = null;
       startPicker(document, { role: "send", onPick: p => { picked = p; } });
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
+      const icon = shadow.getElementById("icon");
+      icon.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true }));
+      icon.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
       assert(picked && picked.selector === "#send-button" && picked.role === "send", "picker result");
       assert(notes.length === 0, "site action not intercepted");
       let cancelled = false;
