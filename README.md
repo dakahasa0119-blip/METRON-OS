@@ -34,6 +34,18 @@ The four reusable components can now be packed **individually** using npm pack f
 
 Round-two verification includes a real desktop Chromium DOM/Shadow DOM picker test, historical BAKU-source extraction fixtures, and independent npm package dry-runs. This does **not** verify the old Android ARC picker or autonomous BAKU repair. See the [validation report](reusable/VALIDATION.md) and [packaging guide](reusable/README.md).
 
+## Gateway restart recovery and local integration example
+
+The reference Gateway now offers **single-writer JSON checkpointing**, state restoration across Node.js processes, and stale-lease fencing. Its reference code can be used from `metron-reference-gateway-jobs/persistent`; no multi-process locking or remote exactly-once semantics are claimed.
+
+A **local synthetic continuity demo** combines all four reusable reference modules without calling an AI API or touching the historical runtime:
+
+```sh
+node reusable/examples/local-continuity-demo.mjs
+```
+
+The [validation report](reusable/VALIDATION.md) distinguishes this new test from the **not-yet-verified** fully integrated legacy MotherShip–Gateway–BAKU–ARC system.
+
 ## Historic development / 開発経緯
 
 - **December 2025:** earlier Yume Engine/Yume System work: AI-driven application generation, staged development, transport scheduling test data, chunked code transfer, and early self-update experiments.
