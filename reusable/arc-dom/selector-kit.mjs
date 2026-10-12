@@ -28,6 +28,11 @@ export function findDeep(root, selector, { operableOnly = true, maxDepth = 12 } 
     for (const candidate of matches) {
       if (!operableOnly || isOperable(candidate)) return candidate;
     }
+    // Preserve support for DOM-like adapters that expose querySelector only.
+    if (!matches.length && typeof node.querySelector === "function") {
+      const direct = node.querySelector(selector);
+      if (direct && (!operableOnly || isOperable(direct))) return direct;
+    }
     for (const element of elements) {
       if (element.shadowRoot) {
         const found = search(element.shadowRoot, depth + 1);
@@ -128,7 +133,7 @@ export class SelectorMemory {
  */
 function choosePickerElement(event, role) {
   const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
-  const elements = path.filter(node => node && typeof node.matches === "function");
+  const elements = path.filter(node => node && (typeof node.matches === "function" || typeof node.tagName === "string"));
   const selectors = {
     input: 'textarea, input, [contenteditable="true"], [role="textbox"]',
     send: 'button, [role="button"], input[type="submit"]',
