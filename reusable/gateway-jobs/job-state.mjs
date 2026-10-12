@@ -34,7 +34,7 @@ export class JobQueue {
     return null;
   }
   isLeaseValid(job, lease) {
-    return job && job.state === "leased" && lease?.worker === job.worker && lease?.version === job.leaseVersion;
+    return !!(job && job.state === "leased" && Number.isFinite(job.expiresAt) && this.now() < job.expiresAt && lease?.worker === job.worker && lease?.version === job.leaseVersion);
   }
   complete(id, lease, result) {
     const job = this.jobs.get(id);
@@ -72,6 +72,41 @@ export class JobQueue {
     const job = this.jobs.get(id);
     return job ? structuredClone(job) : null;
   }
+  /** Portable JSON snapshot; persist after every transition for crash recovery. */
+  snapshot() {
+    return {
+      schemaVersion: 1,
+      config: { leaseMs: this.leaseMs, maxRetries: this.maxRetries, backoffMs: this.backoffMs },
+      jobs: Array.from(this.jobs.values()).map(record => structuredClone(record))
+    };
+  }
+  /** Caller must ensure this is the sole writer to the backing store. */
+  static restore(snapshot, { now = () => Date.now() } = {}) {
+    if (!snapshot || snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.jobs)) {
+      throw new Error("unsupported or corrupt job snapshot");
+    }
+    const conf = snapshot.config;
+    if (!conf || !Number.isFinite(conf.leaseMs) || conf.leaseMs <= 0 ||
+        !Number.isInteger(conf.maxRetries) || conf.maxRetries < 0 ||
+        !Number.isFinite(conf.backoffMs) || conf.backoffMs < 0) {
+      throw new Error("invalid job snapshot configuration");
+    }
+    const queue = new JobQueue({ ...conf, now });
+    const validStates = new Set(["pending", "leased", "done", "dead"]);
+    for (const raw of snapshot.jobs) {
+      if (!raw || typeof raw.id !== "string" || !raw.id.trim() || queue.jobs.has(raw.id) ||
+          !validStates.has(raw.state) || !Number.isInteger(raw.attempts) || raw.attempts < 0 ||
+          !Number.isSafeInteger(raw.leaseVersion) || raw.leaseVersion < 0 ||
+          !Number.isFinite(raw.nextReadyAt) ||
+          (raw.state === "leased" && (typeof raw.worker !== "string" || !raw.worker ||
+            !Number.isFinite(raw.expiresAt))) ) {
+        throw new Error("invalid or duplicate job snapshot record");
+      }
+      queue.jobs.set(raw.id, structuredClone(raw));
+    }
+    queue.recoverExpired();
+    return queue;
+  }
 }
 
 /** Ephemeral per-worker/session notes with TTL, analogous to ARC_SHORT_MEMORY. */
@@ -91,5 +126,24 @@ export class ExpiringMemory {
     if (!item) return null;
     if (this.now() >= item.expiresAt) { this.items.delete(key); return null; }
     return structuredClone(item.value);
+  }
+  snapshot() {
+    return { schemaVersion: 1, defaultTtlMs: this.defaultTtlMs,
+      items: Array.from(this.items, ([key, entry]) => [key, structuredClone(entry)]) };
+  }
+  static restore(snapshot, { now = () => Date.now() } = {}) {
+    if (!snapshot || snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.items) ||
+        !Number.isFinite(snapshot.defaultTtlMs) || snapshot.defaultTtlMs <= 0) {
+      throw new Error("unsupported or corrupt memory snapshot");
+    }
+    const mem = new ExpiringMemory({ now, defaultTtlMs: snapshot.defaultTtlMs });
+    for (const pair of snapshot.items) {
+      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" ||
+          mem.items.has(pair[0]) || !pair[1] || !Number.isFinite(pair[1].expiresAt)) {
+        throw new Error("invalid or duplicate memory snapshot record");
+      }
+      if (pair[1].expiresAt > now()) mem.items.set(pair[0], structuredClone(pair[1]));
+    }
+    return mem;
   }
 }
