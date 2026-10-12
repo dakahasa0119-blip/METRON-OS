@@ -28,6 +28,12 @@ These components evolved separately. **Their full end-to-end integration is not 
 
 Run `node --test reusable/tests/*.test.mjs` (Node.js 20+). These are **small reference implementations extracted/reworked from the ideas**, not drop-in replacements for the original Android/GAS runtimes. Their synthetic unit tests do not prove production safety.
 
+## Reusable packages and new validation
+
+The four reusable components can now be packed **individually** using npm pack from their respective folders. This does **not** imply they are published on the npm registry. Each package includes its own package metadata, README and MIT license.
+
+Round-two verification includes a real desktop Chromium DOM/Shadow DOM picker test, historical BAKU-source extraction fixtures, and independent npm package dry-runs. This does **not** verify the old Android ARC picker or autonomous BAKU repair. See the [validation report](reusable/VALIDATION.md) and [packaging guide](reusable/README.md).
+
 ## Historic development / 開発経緯
 
 - **December 2025:** earlier Yume Engine/Yume System work: AI-driven application generation, staged development, transport scheduling test data, chunked code transfer, and early self-update experiments.
