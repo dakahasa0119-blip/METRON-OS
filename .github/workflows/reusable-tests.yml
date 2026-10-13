@@ -15,19 +15,36 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Require desktop Chromium for integration test
+      - name: Require desktop Chromium for integration test (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         run: command -v google-chrome || command -v google-chrome-stable || command -v chromium
+      - name: Require desktop Chromium for integration test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $browsers = @(
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          )
+          if (-not ($browsers | Where-Object { Test-Path $_ })) {
+            throw "No supported Chromium browser is available on the runner"
+          }
       - name: Run unit, historical-source and Chromium integration tests
         run: node --test reusable/tests/*.test.mjs
       - name: Validate independently distributable packages
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           root=$(mktemp -d)
