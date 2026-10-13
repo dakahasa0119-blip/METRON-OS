@@ -82,7 +82,9 @@ node --test reusable/tests/*.test.mjs
 - Added standalone checked BAKU/Gateway code artifact envelopes and
   advisory-only routing, **not** original GAS migration.
 - Windows Node v24.18.0 with local real Chromium:
-  **45 tests passed, 0 failed, 0 skipped** (nine new tests).
+  **47 tests passed, 0 failed, 0 skipped** (eleven new tests).
+- Two additional Unicode tests reject malformed UTF-8 and lone surrogates rather than silently replacing text.
+- Gateway package v0.3.0 dry-runs successfully with both new module subpaths included.
 - Safety limits: an artifact checksum is *not* a signature or capability
   token, and classification is heuristic. No live Drive or AI provider was
   contacted; no historical METRON integration or autonomous repair claim.
