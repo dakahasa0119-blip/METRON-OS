@@ -61,8 +61,9 @@ jobs:
           import { createChunkedArtifact, verifyChunkedArtifact } from "metron-reference-gateway-jobs/chunk-envelope";
           import { adviseGatewayRoute } from "metron-reference-gateway-jobs/mediation-advice";
           import { preflightRepairRequest } from "metron-reference-gateway-jobs/repair-preflight";
+          import { snapshotDigest, reviewRepairSnapshots } from "metron-reference-gateway-jobs/snapshot-diff";
           import { newPatch } from "metron-reference-mothership-workflow";
-          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, newPatch].some(x => typeof x !== "function")) {
+          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, newPatch].some(x => typeof x !== "function")) {
             throw new Error("package entrypoint could not be imported");
           }
           console.log("FOUR_PACKAGES_IMPORT_PASS");
