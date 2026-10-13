@@ -88,3 +88,9 @@ node --test reusable/tests/*.test.mjs
 - Safety limits: an artifact checksum is *not* a signature or capability
   token, and classification is heuristic. No live Drive or AI provider was
   contacted; no historical METRON integration or autonomous repair claim.
+
+## 2026-10-14: Gateway repair-intake preflight
+
+- Added `preflightRepairRequest` as a **separate, pure reference adapter** based on the constraint-presence and critical-scope ideas in archived `gateway_baku_intake_module.gs`.
+- Six synthetic regression cases cover required fields, exact and directory protections, traversal/absolute paths, critical-topic review and ignored fake approval flags.
+- Only declared paths are inspected; there is **no real diff matching, filesystem path resolution, source execution or permission grant**. `ready_for_review` cannot approve a patch or authorize operations.
