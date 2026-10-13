@@ -21,4 +21,4 @@ The module reports held-out denominators and Wilson 95% intervals for local-fix 
 
 ## Current result and explicit limitation
 
-The first **seven tests** of the new evaluator are synthetic accounting and leakage tests. They do not give a repair hit rate for BAKU, so issue #100 remains open until a genuine frozen, sufficiently diverse and independently evaluated historical or realistic failure corpus has been completed. The present effort improves measurement integrity, **not** BAKU's code repair algorithm.
+The first **eight tests** of the new evaluator are synthetic accounting and leakage tests. They do not give a repair hit rate for BAKU, so issue #100 remains open until a genuine frozen, sufficiently diverse and independently evaluated historical or realistic failure corpus has been completed. The present effort improves measurement integrity, **not** BAKU's code repair algorithm.
