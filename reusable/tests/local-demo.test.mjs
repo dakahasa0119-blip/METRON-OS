@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { runLocalContinuityDemo } from "../examples/local-continuity-demo.mjs";
 
 test("four-component continuity reference runs without network calls", () => {
@@ -13,8 +14,8 @@ test("four-component continuity reference runs without network calls", () => {
 });
 
 test("demo works as a standalone command", () => {
-  const file = new URL("../examples/local-continuity-demo.mjs", import.meta.url);
-  const result = spawnSync(process.execPath, [file.pathname],
+  const file = fileURLToPath(new URL("../examples/local-continuity-demo.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [file],
     { encoding: "utf8", timeout: 15000 });
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
