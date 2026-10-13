@@ -84,6 +84,10 @@
       if (event.key === "Escape") {
         suppress(event);
         cancel();
+        if (global.AndroidBridge &&
+            typeof global.AndroidBridge.onPicked === "function") {
+          global.AndroidBridge.onPicked("");
+        }
       }
     };
     active = { down:down, click:click, key:key };
