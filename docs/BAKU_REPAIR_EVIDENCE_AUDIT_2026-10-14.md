@@ -44,6 +44,34 @@ The two `clean` records have `Result=ok`, `CompileBeforeOk=Y`, `CompileAfterOk=Y
 
 Neither pair proves durable deployment, application behavior after restart, absence of regression, original-user acceptance, or ability to repair previously unseen faults. No verified repair-success rate should be computed without independent readback/functional tests and deduplicated held-out incident labels.
 
+## Follow-up to the two internally recorded repaired cases (2026-10-14 review)
+
+A narrower read-only forensic pass matched the two rows with
+`RepairState=repaired` in `BAKU_REPAIR_EVIDENCE` and
+`BAKU_REPAIR_METRICS`, then inspected subsequent metric rows bearing
+the same original CardId. Individual CardIds, queue identifiers and source
+excerpts are intentionally not republished.
+
+| Evidence field | Repaired record A | Repaired record B |
+| --- | ---: | ---: |
+| Event date (JST) | 2026-03-13 | 2026-03-13 |
+| Reported code length before → after | 325 → 571 | 276 → 422 |
+| Compile before → after | N → Y | N → Y |
+| Code changed / local verdict | Y / effective_fix | Y / effective_fix |
+| Subsequent records against the **same CardId** | 6 | 6 |
+| Distinct *other* subsequent QueueIds | 1 | 1 |
+| Final status of those subsequent queues | unresolved_exhausted | unresolved_exhausted |
+
+This supports a real, recorded source modification and syntax/compile
+improvement within the historical pipeline for two cases. The later same-card
+exhaustions are **not proof of regression**: distinct QueueIds may refer to
+different symptoms, sources, tasks or evaluation rules, and the available
+records do not link the precise changes to a follow-up independent acceptance
+test. Conversely, the two positive rows do not prove durable production
+repair. An actual performance study must label distinct fault identities,
+match a candidate's source hash and trace, and perform after-restart
+functional/regression testing independently.
+
 ## Reproduction without giving the public project private source data
 
 The [independent repair-audit classifier](../reusable/baku-dna/repair-audit.mjs) can summarize parsed rows using the original column keys while counting a QueueId once. Its associated tests are *synthetic* and include false-positive positive states and missing evidence. The classifier never calls the Drive API or installs code. It deliberately returns `deployedRepairSuccesses: null`; a `candidateLocalFixes` counter is **not a deployed repair-success count**.
