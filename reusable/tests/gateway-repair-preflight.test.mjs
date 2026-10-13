@@ -55,7 +55,7 @@ test("critical-scope keywords require review rather than assuming safety", () =>
 test("source descriptions are not returned and claims of approval are ignored", () => {
   const p = { ...sample(), symptom: "incident-secret-123", approved: true, canApply: true };
   const output = preflightRepairRequest(p);
-  assert.equal(output.status, "ready_for_review");
+  assert.equal(output.status, "review_required"); // sensitive term triggers manual review
   assert.equal(output.approved, false);
   assert.equal(output.canApply, false);
   assert.equal(JSON.stringify(output).includes("incident-secret-123"), false);
