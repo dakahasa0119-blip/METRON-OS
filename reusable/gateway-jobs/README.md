@@ -268,3 +268,26 @@ fabricated by a compromised signing host, that a sandbox was isolated, that
 replay state was durably recorded, or that deployment is authorized. This
 package has no trust-root lifecycle, identity provisioning, revocation,
 persistent nonce ledger, trusted CI connector or deployment actions.
+
+## Persistent single-writer signed receipt replay ledger
+
+The `persistent-receipts` subpath builds on the existing atomic JSON
+checkpoint adapter. `PersistentReceiptVerifier(file).verifyOnce(receipts,
+trust)` verifies a complete 4-category signed bundle, writes the consumed
+challenge into its checkpoint, **then** returns `status: "verified"`. A
+failed write returns `blocked`, not success. Restarting a verifier from the
+same valid checkpoint rejects replay.
+
+```js
+import { PersistentReceiptVerifier } from "metron-reference-gateway-jobs/persistent-receipts";
+const gate = new PersistentReceiptVerifier("./private-ledger/receipts.json");
+const outcome = gate.verifyOnce(signedReceipts, pinnedVerifierTrust);
+```
+
+Exactly **one trusted process** may write this file. No inter-process locks,
+distributed consensus, key issuance, replay timeout pruning, database
+transaction or secure identity provisioning are included. A 10,000-entry cap
+blocks additional receipts instead of silently clearing history. Ledger state
+and signing keys must be protected outside a public checkout. A completely
+signed bundle still does not prove that the signer really executed tests;
+these helpers never apply or deploy code.
