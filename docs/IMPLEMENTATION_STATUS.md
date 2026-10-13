@@ -9,10 +9,12 @@ These claims distinguish **design**, **source exists**, **observable historical 
 | MotherShip evolution | `Core_Evolution_Engine.js`, `METRON_GATEWAY_BRIDGE.js` | Staged candidates and timeline state transitions | One code path marks `PATCH_APPLIED` after asking ARC to apply; no readback proof at that point. The portable workflow module fixes this conceptual distinction |
 | Gateway → ARC | `gateway/ARC_Gateway_doPost.js`, routing docs, `ARC_JOBS`/`ARC_RESULTS` | 4,222 job rows included 1,364 done and 2,252 pending when counted during research; archived result bodies | Not an E2E success-rate measurement: many queued jobs remained unresolved or were duplicated |
 | ARC AutoDom | `app/src/main/assets/arc_core.js`, `AutoDom.kt` | Source implementing selectors, Shadow DOM traversal and two-observation gating | Only source-level verification; original Android picker has UI/result callbacks but its full mode-handling path was not established |
-| BAKU code salvage | `modules/gas/BAKU/BAKU_SalvageEngine.js` | Extracts function/class DNA; builds cards/decks; canary, quarantine and canonical update paths | Historic BAKU repair evidence had 2,904 unresolved records among 2,908 examined; 575 API HTTP-200 update records referred to the same script target and do not mean 575 distinct faults were resolved |
+| BAKU code salvage | `modules/gas/BAKU/BAKU_SalvageEngine.js` | Extracts function/class DNA; builds cards/decks; canary, quarantine and canonical update paths | 2,908 evidence rows include 2,904 marked unresolved, but 487 distinct QueueIds target only five CardIds. Final per-queue metric states: 482 exhausted, 2 repaired, 2 clean/no-change, 1 unresolved. The two repaired states reflect internally recorded compile/code-change improvement, not independently proven production fixes. See [BAKU audit](BAKU_REPAIR_EVIDENCE_AUDIT_2026-10-14.md). Separately, 575 API HTTP-200 update records referred to the same script target and are not 575 distinct fixes |
 | Fully autonomous P2P AI villages | Original METRON Gist | Design and component analogues | Not independently demonstrated or deployed end-to-end |
 
 For the 2026-10-14 follow-up distinguishing two physical MotherShip spreadsheet files from tab-local routing, see [MotherShip cross-sheet evidence](MOTHERSHIP_CROSS_SHEET_EVIDENCE_2026-10-14.md). Both files contain historic message rows; cross-file forwarding remains unverified.
+
+See also the [2026-10-14 BAKU repair-outcome audit](BAKU_REPAIR_EVIDENCE_AUDIT_2026-10-14.md), which deduplicates retry attempts by QueueId and describes the limits of the recorded positive states.
 
 ## Reading the evidence responsibly
 
