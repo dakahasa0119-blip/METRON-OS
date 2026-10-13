@@ -8,7 +8,7 @@ Six GAS modules existed in the verified 2026-09-28 cloud-source archive but were
 | --- | --- | --- |
 | `gateway_admin_module.gs` | Recent-window job/error/audit summaries, stale lease indicators | Keep as historical reference; production metric validity requires normalized denominators and audit evidence |
 | `gateway_baku_external_code_module.gs` | Manifest-triggered multi-chunk BAKU source reconstruction and code inbox | **New:** independent all-or-nothing chunk envelope with SHA-256 and byte checks |
-| `gateway_baku_intake_module.gs` | External repair-intake constraints, preserve/prohibit rules, critical-scope signals, candidate submission | Future research: isolated policy validator; no live repair/deploy or auth duplication |
+| `gateway_baku_intake_module.gs` | External repair-intake constraints, preserve/prohibit rules, critical-scope signals, candidate submission | **New follow-up:** pure repair scope preflight, still no live repair/deploy/auth mechanism |
 | `gateway_mediation_module.gs` | Intent keyword classification and route recommendations | **New:** advisory-only classifier, with no execution or grant of authorization |
 | `gateway_queue_modules.gs` | Enqueue/dedupe, chat routing cursor, worker lease, control-first dispatch, maintenance | Existing `JobQueue`/`PersistentGateway` implement related generic mechanisms; archived GAS behavior not ported unchanged |
 | `gateway_result_error_module.gs` | Error retry policy, worker pinning, retry backoff, marking terminal | Existing `JobQueue` already covers retry/backoff/dead-letter primitives; no direct source transplant |
@@ -29,3 +29,12 @@ Six GAS modules existed in the verified 2026-09-28 cloud-source archive but were
 A self-declared SHA-256 checksum detects mismatches against that manifest, not malicious replacement of both manifest and payload. Production use needs an authenticated, uniquely bound manifest, replay prevention, confidential storage, sender/receiver permissions, exact-once side-effect protection, independent functional verification and rollback. No such system-level guarantees are claimed here.
 
 The archived code and cloud-vs-Git comparison reflect historical snapshots at different dates. Neither this review nor these new reference modules proves the complete legacy METRON OS–Gateway–BAKU–ARC pipeline operated end-to-end. Original GAS projects, private Google Sheets and Android deployments were not modified.
+
+## Subsequent repair-intake scope preflight
+
+The `reusable/gateway-jobs/repair-preflight.mjs` follow-up validates
+user/developer-supplied *declared* constraints and affected paths, blocks
+protected-path overlap, and flags security terms for manual review. It does not
+interpret the program, apply changes, authenticate users or validate runtime
+effects. All statuses require an independent trusted host to verify real diffs,
+test behavior, record approval and control writes.
