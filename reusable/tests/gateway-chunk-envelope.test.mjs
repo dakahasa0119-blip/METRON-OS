@@ -60,7 +60,7 @@ test("empty artifacts and strict byte/chunk budgets remain deterministic", () =>
 });
 
 test("invalid lone-surrogate input is not silently replaced", () => {
-  assert.throws(() => packet("bad\\uD800text"), /valid Unicode/);
+  assert.throws(() => packet("bad" + String.fromCharCode(0xd800) + "text"), /valid Unicode/);
 });
 
 test("matching forged digest cannot smuggle invalid UTF-8 bytes", async () => {
