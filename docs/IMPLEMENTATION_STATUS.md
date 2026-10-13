@@ -12,6 +12,8 @@ These claims distinguish **design**, **source exists**, **observable historical 
 | BAKU code salvage | `modules/gas/BAKU/BAKU_SalvageEngine.js` | Extracts function/class DNA; builds cards/decks; canary, quarantine and canonical update paths | Historic BAKU repair evidence had 2,904 unresolved records among 2,908 examined; 575 API HTTP-200 update records referred to the same script target and do not mean 575 distinct faults were resolved |
 | Fully autonomous P2P AI villages | Original METRON Gist | Design and component analogues | Not independently demonstrated or deployed end-to-end |
 
+For the 2026-10-14 follow-up distinguishing two physical MotherShip spreadsheet files from tab-local routing, see [MotherShip cross-sheet evidence](MOTHERSHIP_CROSS_SHEET_EVIDENCE_2026-10-14.md). Both files contain historic message rows; cross-file forwarding remains unverified.
+
 ## Reading the evidence responsibly
 
 - Existing Google Sheets often reserve thousands of empty rows: reserved rows ≠ observations.
