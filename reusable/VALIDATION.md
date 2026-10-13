@@ -125,3 +125,16 @@ node --test reusable/tests/*.test.mjs
   correct permissions, safe code execution, successful repair, or actual GAS
   deployment. The host must control the root and prove it represents the
   complete intended source inventory.
+
+## 2026-10-14: digest-bound evidence consistency gate
+
+- Added `assessRepairEvidence`, correlating a reviewed candidate and later
+  readback digest, pinned rollback digest and four separately named check
+  receipts (compile, unit, regression, smoke).
+- Seven synthetic tests reject missing/failed/duplicate/stale receipts and
+  fake approval flags. **Windows/Chromium Node suite: 77/77 pass**, no
+  failures or skipped cases.
+- Receipts here are **self-reported JSON inputs**, not signed independent
+  test attestations. The gate NEVER approves or applies a candidate. The
+  trusted caller must independently run tests, verify receipt authenticity,
+  confirm rollback materials and obtain explicit deployment authorization.

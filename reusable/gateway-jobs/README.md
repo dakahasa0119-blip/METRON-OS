@@ -201,3 +201,33 @@ Use immutable disposable clones/containers and a trusted actor to pin the
 baseline **outside** the patch writer's control. Comparing two snapshots and
 readback digests cannot establish test passing, behavioral correctness,
 authorization, secure code or live deployment.
+
+## Repair evidence consistency gate (not a deployment approval)
+
+`assessRepairEvidence` groups file-scope review, independently re-read
+candidate digest, compilation/unit/regression/smoke results and rollback
+reference into **one digest-bound evidence packet**:
+
+```js
+import { assessRepairEvidence } from "metron-reference-gateway-jobs/repair-evidence";
+const assessed = assessRepairEvidence({
+  review, readback,
+  rollbackDigest: review.baseDigest,
+  checks: [
+    {kind:"compile",status:"passed",candidateDigest:review.candidateDigest,exitCode:0,passed:1,failed:0,runnerLabel:"trusted-ci"},
+    {kind:"unit",status:"passed",candidateDigest:review.candidateDigest,exitCode:0,passed:4,failed:0,runnerLabel:"trusted-ci"},
+    {kind:"regression",status:"passed",candidateDigest:review.candidateDigest,exitCode:0,passed:4,failed:0,runnerLabel:"trusted-ci"},
+    {kind:"smoke",status:"passed",candidateDigest:review.candidateDigest,exitCode:0,passed:1,failed:0,runnerLabel:"trusted-ci"}
+  ]
+});
+console.log(assessed.status); // review_required; NEVER approved
+```
+
+The gate rejects missing, duplicate, failed or digest-mismatched evidence;
+`canApply=false`, `canDeploy=false` and `approved=false` **always**.
+**Critical caveat:** These test receipts are ordinary caller-supplied objects.
+The module does **not** validate digital signatures, actually launch tests,
+attest runner isolation, determine correctness, prove rollback availability or
+grant permission. A malicious patch process could fabricate receipts. Only
+a separate trusted host that ran the checks and independently approved the
+operation could make such an operational determination.

@@ -1,6 +1,6 @@
 {
   "name": "metron-reference-gateway-jobs",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Portable Gateway leased job state machine and expiring session memory (experimental)",
   "type": "module",
   "main": "./job-state.mjs",
@@ -13,7 +13,8 @@
     "./repair-preflight": "./repair-preflight.mjs",
     "./snapshot-diff": "./snapshot-diff.mjs",
     "./worktree-reader": "./worktree-reader.mjs",
-    "./worktree-review": "./worktree-review.mjs"
+    "./worktree-review": "./worktree-review.mjs",
+    "./repair-evidence": "./repair-evidence.mjs"
   },
   "files": [
     "job-state.mjs",
@@ -25,6 +26,7 @@
     "snapshot-diff.mjs",
     "worktree-reader.mjs",
     "worktree-review.mjs",
+    "repair-evidence.mjs",
     "README.md",
     "LICENSE"
   ],
