@@ -58,8 +58,10 @@ jobs:
           import { extractCards } from "metron-reference-baku-dna";
           import { auditRepairOutcomes } from "metron-reference-baku-dna/repair-audit";
           import { JobQueue } from "metron-reference-gateway-jobs";
+          import { createChunkedArtifact, verifyChunkedArtifact } from "metron-reference-gateway-jobs/chunk-envelope";
+          import { adviseGatewayRoute } from "metron-reference-gateway-jobs/mediation-advice";
           import { newPatch } from "metron-reference-mothership-workflow";
-          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, newPatch].some(x => typeof x !== "function")) {
+          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, newPatch].some(x => typeof x !== "function")) {
             throw new Error("package entrypoint could not be imported");
           }
           console.log("FOUR_PACKAGES_IMPORT_PASS");
