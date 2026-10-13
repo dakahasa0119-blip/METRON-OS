@@ -72,6 +72,22 @@ class WebViewManager(
     }
 
     /**
+     * User-initiated selector picker. Never starts automatically.
+     * The script attaches temporary capture listeners to the active page.
+     */
+    fun beginSelectorPicker(role: String) {
+        if (role !in setOf("input", "send", "resp")) return
+        val page = webView ?: return
+        val source = try {
+            context.assets.open("selector_picker.js").bufferedReader().use { it.readText() }
+        } catch (e: Exception) {
+            Log.e("ARC_PICKER", "Cannot load local picker asset", e)
+            return
+        }
+        page.evaluateJavascript(source + "\nwindow.MetronSelectorPicker.start('" + role + "');", null)
+    }
+
+    /**
      * 自己進化パッチの検証と適用 (安全弁付き)
      */
     fun applyAndVerifyPatch(newJs: String) {
