@@ -27,13 +27,19 @@ function validate(records) {
   for(const c of records) {
     if(!c || !validId(c.incidentId) || !validId(c.familyId) ||
        !validId(c.oracleVersion) || !SPLITS.has(c.split) ||
-       !TRUTH.has(c.truth) || !DECISIONS.has(c.decision) ||
-       !SOURCE.has(c.annotationSource)) fail("invalid_benchmark_case");
+       !TRUTH.has(c.truth) || !SOURCE.has(c.annotationSource))
+       fail("invalid_benchmark_case");
     if(ids.has(c.incidentId)) fail("duplicate_incident");
     ids.add(c.incidentId);
     if(families.has(c.familyId)&&families.get(c.familyId)!==c.split)
       fail("family_split_leakage");
     families.set(c.familyId,c.split);
+
+  }
+}
+function validateDecisions(records) {
+  for (const c of records) {
+    if (!DECISIONS.has(c.decision)) fail("invalid_benchmark_decision");
     if(c.decision==="propose") {
       if(!c.checks || typeof c.checks!=="object" || Array.isArray(c.checks) ||
          Object.keys(c.checks).length!==CHECKS.length ||
@@ -84,6 +90,7 @@ function wilson(numerator,denominator) {
  */
 export function evaluateHeldoutIncidents(records,{expectedLabelDigest}={}) {
   validate(records);
+  validateDecisions(records);
   if(typeof expectedLabelDigest!=="string"||!/^[0-9a-f]{64}$/.test(expectedLabelDigest))
     fail("pinned_label_digest_required");
   const actual=fingerprintIncidentLabels(records);
