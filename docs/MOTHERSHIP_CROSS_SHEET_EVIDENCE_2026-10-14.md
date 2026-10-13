@@ -42,6 +42,8 @@ This is more specific than comparing the two Dispatcher logs alone: the archived
 - **Not yet independently verified:** The exact historical cross-spreadsheet forwarding function, successful end-to-end transmission, or whether a different source revision / Gateway / trigger performed the forwarding.
 - **Not disproven:** A separate A-to-B transport may have existed outside the preserved code path. Absence of a matching function in the investigated snapshot is not evidence of historical nonexistence.
 
+The later archived Gateway snapshot contains additional cloud-only source modules not present in the historical Git snapshot. Their preservation and initial static scan are documented in the [Gateway source gap inventory](GATEWAY_CLOUD_SOURCE_GAP_2026-10-14.md). These files did not supply proof of cross-file MotherShip transport in the scoped scan.
+
 ## What would establish historical sheet-to-sheet transport?
 
 A read-only artifact linking **source spreadsheet ID -> send action -> destination spreadsheet ID -> destination row or ACK**, preferably with a unique message/trace identifier and independently recorded timestamps. Historical Apps Script revisions, trigger history, deployment versions, or an archived Gateway forwarding script may contain this evidence. Repeated `hello` rows or similarly named tabs alone are insufficient.
