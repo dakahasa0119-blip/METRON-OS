@@ -57,6 +57,7 @@ jobs:
           import { findDeep } from "metron-reference-arc-dom";
           import { extractCards } from "metron-reference-baku-dna";
           import { auditRepairOutcomes } from "metron-reference-baku-dna/repair-audit";
+          import { fingerprintIncidentLabels, evaluateHeldoutIncidents } from "metron-reference-baku-dna/heldout-benchmark";
           import { JobQueue } from "metron-reference-gateway-jobs";
           import { createChunkedArtifact, verifyChunkedArtifact } from "metron-reference-gateway-jobs/chunk-envelope";
           import { adviseGatewayRoute } from "metron-reference-gateway-jobs/mediation-advice";
@@ -69,7 +70,7 @@ jobs:
           import { PersistentReceiptVerifier } from "metron-reference-gateway-jobs/persistent-receipts";
           import { newPatch } from "metron-reference-mothership-workflow";
           import { newMailbox, receiveMailboxMessage } from "metron-reference-mothership-workflow/mailbox";
-          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, readTextWorktree, reviewRepairWorktrees, verifyWorktreeReadback, assessRepairEvidence, signCheckReceipt, verifyCheckBundle, assessSignedRepairEvidence, PersistentReceiptVerifier, newPatch, newMailbox, receiveMailboxMessage].some(x => typeof x !== "function")) {
+          if ([findDeep, extractCards, auditRepairOutcomes, fingerprintIncidentLabels, evaluateHeldoutIncidents, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, readTextWorktree, reviewRepairWorktrees, verifyWorktreeReadback, assessRepairEvidence, signCheckReceipt, verifyCheckBundle, assessSignedRepairEvidence, PersistentReceiptVerifier, newPatch, newMailbox, receiveMailboxMessage].some(x => typeof x !== "function")) {
             throw new Error("package entrypoint could not be imported");
           }
           console.log("FOUR_PACKAGES_IMPORT_PASS");
