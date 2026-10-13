@@ -15,6 +15,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import com.arc.databinding.ActivityMainBinding
 import org.json.JSONObject
 import kotlinx.coroutines.*
@@ -38,6 +39,32 @@ class MainActivity : AppCompatActivity() {
     private lateinit var debugHud: DebugHud
 
     private var currentTarget: AiTarget = AiTarget.GEMINI
+    private var pendingPickerMode: String? = null
+    private val validPickerModes = setOf(
+        "gemini_input", "gemini_send", "gemini_resp",
+        "chatgpt_input", "chatgpt_send", "chatgpt_resp",
+        "copilot_input", "copilot_send", "copilot_resp"
+    )
+    private val settingsPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode != RESULT_OK) return@registerForActivityResult
+            val mode = result.data?.getStringExtra("PICKER_MODE")
+                ?: return@registerForActivityResult
+            if (mode !in validPickerModes) return@registerForActivityResult
+            pendingPickerMode = mode
+            val selectedTarget = when (mode.substringBefore("_")) {
+                "gemini" -> AiTarget.GEMINI
+                "chatgpt" -> AiTarget.CHATGPT
+                "copilot" -> AiTarget.COPILOT
+                else -> return@registerForActivityResult
+            }
+            if (currentTarget == selectedTarget) {
+                webViewManager.beginSelectorPicker(mode.substringAfterLast("_"))
+            } else {
+                // Picker is armed only after this target's page finishes loading.
+                switchAiTarget(selectedTarget)
+            }
+        }
     private val mainScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var heartbeatJob: Job? = null
     private var verificationDialog: AlertDialog? = null
@@ -116,6 +143,9 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     debugHud.update("PAGE_READY")
                     allAiPipeline.onPageFinished()
+                    pendingPickerMode?.let { mode ->
+                        webViewManager.beginSelectorPicker(mode.substringAfterLast("_"))
+                    }
                 }
             },
             onLoginBlocked = { blockedUrl ->
@@ -577,7 +607,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.settingsButton.setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
+            settingsPickerLauncher.launch(Intent(this, SettingsActivity::class.java))
         }
 
         updateRunModeUi()
@@ -1020,14 +1050,22 @@ class MainActivity : AppCompatActivity() {
      * 🛡️ [復旧] セレクタピッカーの結果を保存する
      */
     private fun savePickedSelector(selector: String) {
-        if (selector.isBlank()) return
-        when (currentTarget) {
-            AiTarget.GEMINI -> prefs.geminiInputSelector = selector
-            AiTarget.CHATGPT -> prefs.chatGptInputSelector = selector
-            AiTarget.COPILOT -> prefs.copilotInputSelector = selector
-            else -> {}
+        val mode = pendingPickerMode ?: return
+        pendingPickerMode = null
+        // Empty means the user cancelled via Escape; retain existing choices.
+        if (selector.isBlank() || selector.length > 240) return
+        when (mode) {
+            "gemini_input" -> prefs.geminiInputSelector = selector
+            "gemini_send" -> prefs.geminiSendSelector = selector
+            "gemini_resp" -> prefs.geminiResponseSelector = selector
+            "chatgpt_input" -> prefs.chatGptInputSelector = selector
+            "chatgpt_send" -> prefs.chatGptSendSelector = selector
+            "chatgpt_resp" -> prefs.chatGptResponseSelector = selector
+            "copilot_input" -> prefs.copilotInputSelector = selector
+            "copilot_send" -> prefs.copilotSendSelector = selector
+            "copilot_resp" -> prefs.copilotResponseSelector = selector
         }
-        debugHud.update("PICKED: $selector")
+        debugHud.update("PICKED: $mode")
     }
 
     override fun onResume() {
