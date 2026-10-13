@@ -40,6 +40,8 @@ The reference Gateway now offers **single-writer JSON checkpointing**, state res
 
 A **local synthetic continuity demo** combines all four reusable reference modules without calling an AI API or touching the historical runtime:
 
+A separate [two-MotherShip relay demonstration](reusable/examples/two-mothership-relay.mjs) now exercises message delivery through the reference Gateway across two distinct persisted JSON inbox files, including crash/retry deduplication. This is synthetic, **not** proof of the historic two-spreadsheet route.
+
 ```sh
 node reusable/examples/local-continuity-demo.mjs
 ```
