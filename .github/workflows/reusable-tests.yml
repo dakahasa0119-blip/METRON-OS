@@ -56,9 +56,10 @@ jobs:
           cat > "$root/consumer.mjs" <<'EOF'
           import { findDeep } from "metron-reference-arc-dom";
           import { extractCards } from "metron-reference-baku-dna";
+          import { auditRepairOutcomes } from "metron-reference-baku-dna/repair-audit";
           import { JobQueue } from "metron-reference-gateway-jobs";
           import { newPatch } from "metron-reference-mothership-workflow";
-          if ([findDeep, extractCards, JobQueue, newPatch].some(x => typeof x !== "function")) {
+          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, newPatch].some(x => typeof x !== "function")) {
             throw new Error("package entrypoint could not be imported");
           }
           console.log("FOUR_PACKAGES_IMPORT_PASS");
