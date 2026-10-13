@@ -96,3 +96,17 @@ node --test reusable/tests/*.test.mjs
 - Windows 11, Node.js v24.18.0, real Chromium: **53 tests passed, 0 failed, 0 skipped** (six new tests).
 - Gateway v0.4.0 package dry-run succeeded with its dedicated `repair-preflight.mjs` subpath included.
 - Only declared paths are inspected; there is **no real diff matching, filesystem path resolution, source execution or permission grant**. `ready_for_review` cannot approve a patch or authorize operations.
+
+## 2026-10-14: actual supplied snapshot / declared scope comparison
+
+- New deterministic `snapshotDigest` and `reviewRepairSnapshots` require
+  caller-supplied before/after inventories and an independently pinned
+  baseline digest. Validate the exact set of changed paths including adds and
+  deletes and exclude protected scope.
+- Eight synthetic tests cover unexpected changes, protected overlap, empty
+  diffs, stale baseline, alias/path attacks, oversized or malformed inventories,
+  security-topic review and no source-content output.
+- **Windows real-Chromium Node suite: 61/61 pass, 0 fail, 0 skip**.
+- The verifier does **not** independently read the on-disk filesystem. If the
+  supplying process is malicious or omits files, comparison cannot detect it;
+  a trusted host must obtain snapshots and validate readback separately.

@@ -119,3 +119,45 @@ dependencies require independent checks. `preserveContracts` and
 `prohibitedChanges` are checked for presence, **not automatically enforced**.
 Never interpret `ready_for_review` as a secure approval or a license to deploy.
 The returned `canApply` and `approved` are always `false`.
+
+## Cross-check declared paths against actual supplied file snapshots
+
+The `snapshot-diff` subpath compares **in-memory complete text-file inventories**
+before and after a candidate change. It pins the before inventory to a trusted
+SHA-256 inventory digest, checks exact changed-file names against
+`proposedPaths`, and computes per-file and candidate-inventory digests:
+
+```js
+import {
+  snapshotDigest, reviewRepairSnapshots
+} from "metron-reference-gateway-jobs/snapshot-diff";
+
+const beforeFiles = { "src/widget.js": "export const n=1;\n" };
+const afterFiles = { "src/widget.js": "export const n=2;\n" };
+// Capture/pin this expected digest from a *separately trusted* baseline reader.
+const expectedBaseDigest = snapshotDigest(beforeFiles);
+const review = reviewRepairSnapshots({
+  scope: {
+    symptom: "counter does not update", expectedFix: "Correct counter value",
+    preserveContracts: ["preserve export name"],
+    prohibitedChanges: ["no external I/O"],
+    protectedPaths: ["src/auth/**"],
+    proposedPaths: ["src/widget.js"]
+  },
+  beforeFiles, afterFiles, expectedBaseDigest
+});
+console.log(review.status, review.changes);
+// "review_required"; review.canApply is ALWAYS false
+```
+
+This is a **byte-level file comparison**, not a Git patch parser, full JS AST,
+semantic test, deployment or source-of-truth proof. Supplying an incomplete,
+malicious or inconsistent pair of snapshots can conceal changes elsewhere.
+The host must independently obtain a complete inventory and pin the baseline
+digest outside the candidate writer's control. Symlink/hardlink/realpath,
+filesystem case sensitivity, executable permissions, binary files, generated
+outputs, submodules and dependency behavior are outside this adapter.
+Text-file snapshots are capped at 128 files and 1 MiB/file (8 MiB total).
+The checker rejects file/directory collisions, case-only aliases, traversal,
+empty diffs, unlisted changes and overbroad declared scope. No source contents
+appear in the review result; it is never executable authority.

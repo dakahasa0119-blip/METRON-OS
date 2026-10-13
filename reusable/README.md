@@ -14,6 +14,7 @@
 | `gateway-jobs/chunk-envelope.mjs` | `createChunkedArtifact`, `verifyChunkedArtifact` | All-or-nothing UTF-8 Base64 reconstruction with length and SHA-256 checking; not authentication/transport |
 | `gateway-jobs/mediation-advice.mjs` | `adviseGatewayRoute` | Pure recommendation only, requires separate authorization for actions; heuristic keyword matching |
 | `gateway-jobs/repair-preflight.mjs` | `preflightRepairRequest` | Validate declared repair scope and require review; no diff inspection, approval or automated repair |
+| `gateway-jobs/snapshot-diff.mjs` | `snapshotDigest`, `reviewRepairSnapshots` | Compare caller-supplied full text snapshots and pinned baseline; no filesystem/semantic proof and no apply permission |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
 
 ## Running tests
