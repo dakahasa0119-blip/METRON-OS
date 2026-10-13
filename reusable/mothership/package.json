@@ -1,14 +1,16 @@
 {
   "name": "metron-reference-mothership-workflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable MotherShip task classification and evidence-gated patch states (experimental)",
   "type": "module",
   "main": "./workflow.mjs",
   "exports": {
-    ".": "./workflow.mjs"
+    ".": "./workflow.mjs",
+    "./mailbox": "./mailbox.mjs"
   },
   "files": [
     "workflow.mjs",
+    "mailbox.mjs",
     "README.md",
     "LICENSE"
   ],
