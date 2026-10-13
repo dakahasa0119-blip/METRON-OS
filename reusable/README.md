@@ -19,6 +19,7 @@
 | `gateway-jobs/worktree-review.mjs` | `reviewRepairWorktrees`, `verifyWorktreeReadback` | Read-only pre/post tree comparison and later re-collected digest check; never application approval |
 | `gateway-jobs/repair-evidence.mjs` | `assessRepairEvidence` | Correlate test receipts, candidate hashes, readback and rollback reference; no authentication or deployment authority |
 | `gateway-jobs/signed-receipts.mjs` | `signCheckReceipt`, `verifyCheckBundle`, `assessSignedRepairEvidence` | Ed25519 signature and scoped nonce checks; no attested runner or deploy approval |
+| `gateway-jobs/persistent-receipts.mjs` | `PersistentReceiptVerifier` | Single-writer fail-closed disk-backed replay ledger; no multi-process lock or real runner attestation |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
 | `mothership/mailbox.mjs` | `newMailbox`, `receiveMailboxMessage` | Pure per-node deduplicating inbox state; no network/authentication or historical GAS proof |
 
