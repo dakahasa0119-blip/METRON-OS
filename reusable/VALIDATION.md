@@ -174,3 +174,16 @@ node --test reusable/tests/*.test.mjs
   are exercised by five additional tests using disposable local files.
 - Scope remains single-writer local state; no process synchronization,
   cloud-wide replay consensus or trusted real CI result execution is claimed.
+
+## 2026-10-14: BAKU held-out benchmark accounting
+
+- Added an independent incident evaluator with frozen label-set SHA,
+  family-level train/holdout exclusion, six-field result evidence and
+  separate categories for verified-local-fix, missed repair, correctly rejected,
+  unsafe proposal, failed candidate and inconclusive.
+- Seven synthetic tests confirm duplicate-incident refusal, family leakage
+  detection, unchanged label sets across alternate candidate outcomes,
+  development/holdout isolation and conservative treatment of unknown checks.
+- **Not** historical BAKU repair precision: only scored test fixtures, not a
+  blinded real incident corpus. The required independent labelling and actual
+  candidate functional tests remain issue #100.
