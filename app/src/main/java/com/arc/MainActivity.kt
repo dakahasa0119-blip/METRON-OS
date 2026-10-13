@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
             },
             onAiResult = { _ -> /* ArcWorker handles */ },
             onAutoDom = { json -> handleAutoDomResult(json) },
-            onPicked = { selector -> savePickedSelector(selector) },
+            onPicked = { selector -> runOnUiThread { savePickedSelector(selector) } },
             onPageFinished = { 
                 runOnUiThread {
                     debugHud.update("PAGE_READY")
