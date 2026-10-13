@@ -35,6 +35,23 @@ An additional read-only comparison joined every `Dispatcher` row to each destina
 
 This is more specific than comparing the two Dispatcher logs alone: the archived rows **positively corroborate tab-local delivery**, whereas they do not corroborate a direct cross-file delivery event in the examined dataset. It does not establish that a transformed/stamped relay never ran, nor that these are complete execution logs. Multiple rows may repeat identical payloads and should not be counted as independent conversations.
 
+## Newly reproduced topology (explicitly separate from the historic claim)
+
+On 2026-10-14, a **new** portable Node.js demo was created at
+[`reusable/examples/two-mothership-relay.mjs`](../reusable/examples/two-mothership-relay.mjs).
+It uses **two independently persisted JSON mailbox files** plus a distinct
+Gateway JSON checkpoint (three physical files, **not Google Sheets**). The
+synthetic fixture sends A → B an `OBSERVE` message, simulates a crash after
+B stores the message but before Gateway completion, retries with a new lease
+and observes B rejecting the duplicate. B then sends an `ACK` through Gateway
+back to A. The demo reports `LOCAL_TWO_MOTHERSHIP_PASS` and is included in
+the Windows/Linux test suite.
+
+This is evidence that a Gateway-mediated two-storage communication pattern
+**can be implemented and tested today**. It does **not** reconstruct,
+authenticate or prove the January 2026 MotherShip A/B Google spreadsheet
+forwarding path, and it does not establish autonomous AI communication.
+
 ## Current conclusion
 
 - **Confirmed:** Two distinct MotherShip spreadsheets exist, both with message-like historical records.
