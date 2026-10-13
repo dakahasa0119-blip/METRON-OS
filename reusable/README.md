@@ -15,6 +15,8 @@
 | `gateway-jobs/mediation-advice.mjs` | `adviseGatewayRoute` | Pure recommendation only, requires separate authorization for actions; heuristic keyword matching |
 | `gateway-jobs/repair-preflight.mjs` | `preflightRepairRequest` | Validate declared repair scope and require review; no diff inspection, approval or automated repair |
 | `gateway-jobs/snapshot-diff.mjs` | `snapshotDigest`, `reviewRepairSnapshots` | Compare caller-supplied full text snapshots and pinned baseline; no filesystem/semantic proof and no apply permission |
+| `gateway-jobs/worktree-reader.mjs` | `readTextWorktree` | Enumerate independent bounded UTF-8 file tree, excluding root Git metadata; no symlink/binary support |
+| `gateway-jobs/worktree-review.mjs` | `reviewRepairWorktrees`, `verifyWorktreeReadback` | Read-only pre/post tree comparison and later re-collected digest check; never application approval |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
 
 ## Running tests

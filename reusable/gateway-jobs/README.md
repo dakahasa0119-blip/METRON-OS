@@ -161,3 +161,43 @@ Text-file snapshots are capped at 128 files and 1 MiB/file (8 MiB total).
 The checker rejects file/directory collisions, case-only aliases, traversal,
 empty diffs, unlisted changes and overbroad declared scope. No source contents
 appear in the review result; it is never executable authority.
+
+## Read-only trusted worktree inventories and later readback
+
+`worktree-reader` scans a **trusted isolated checkout** from an explicit root,
+skipping root `.git` metadata while rejecting symlinks, non-text files,
+invalid UTF-8, nested git metadata and oversized source trees. This permits
+the **verifier's own process** to enumerate code rather than trusting an
+agent-supplied list of changed filenames.
+
+```js
+import { readTextWorktree } from "metron-reference-gateway-jobs/worktree-reader";
+import { snapshotDigest } from "metron-reference-gateway-jobs/snapshot-diff";
+import {
+  reviewRepairWorktrees, verifyWorktreeReadback
+} from "metron-reference-gateway-jobs/worktree-review";
+
+// baselineRoot and candidateRoot must be two independently authorized,
+// isolated, stable directories under the verifier's control.
+const expectedBaseDigest = snapshotDigest(readTextWorktree(baselineRoot).files);
+// In a real host, pin the digest *before* receiving candidate material.
+const review = reviewRepairWorktrees({
+  baselineRoot, candidateRoot, expectedBaseDigest, scope
+});
+if (review.status === "review_required") {
+  const readback = verifyWorktreeReadback({
+    root: candidateRoot, expectedCandidateDigest: review.candidateDigest
+  });
+  console.log(readback.status); // matched, still not approval to deploy
+}
+```
+
+This is a **read-only reference adapter**, not a sandbox, application
+installer, lock, signature checker, transaction or release authority.
+A malicious/changed directory, hardlinks, race conditions, directory
+permissions, ignored root `.git` metadata, repository submodules, non-text
+assets and external dependencies can invalidate apparent completeness.
+Use immutable disposable clones/containers and a trusted actor to pin the
+baseline **outside** the patch writer's control. Comparing two snapshots and
+readback digests cannot establish test passing, behavioral correctness,
+authorization, secure code or live deployment.
