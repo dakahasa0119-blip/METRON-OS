@@ -231,3 +231,40 @@ attest runner isolation, determine correctness, prove rollback availability or
 grant permission. A malicious patch process could fabricate receipts. Only
 a separate trusted host that ran the checks and independently approved the
 operation could make such an operational determination.
+
+## Signed check receipts (Ed25519 — signature verification only)
+
+The `signed-receipts` subpath adds a strictly typed versioned receipt format
+binding an Ed25519 signature to the runner identity, pinned public-key ID,
+target audience, **single-use verifier-generated nonce**, source candidate SHA,
+test-suite SHA, individual test category, result counts and a five-minute
+maximum validity interval. All four expected categories are required.
+
+```js
+import {
+  signCheckReceipt, verifyCheckBundle, assessSignedRepairEvidence
+} from "metron-reference-gateway-jobs/signed-receipts";
+```
+
+A **trusted verifier** must pin each permitted public key and its runner ID
+independently of the patch submitter, create the nonce before execution,
+provide an immutable test-suite digest, and keep a durable single-use challenge
+ledger. Private signing keys must never be committed or passed through build
+artifacts. The example tests use ephemeral Ed25519 test keys and a local child
+process; no production identity or attested CI provider is implied.
+
+`verifyCheckBundle` verifies all signatures and scopes, then consumes a nonce
+in a caller-owned Set only after all four succeed. The caller is responsible
+for **persisting the replay ledger durably under a single-writer lock before
+accepting the verified bundle**; the Set itself does not survive restart.
+`assessSignedRepairEvidence` combines those verified receipts with the
+existing source/readback/rollback checks and still returns
+`approved:false,canApply:false,canDeploy:false`.
+
+**Security caveat:** A valid signature proves that whoever controlled the
+pinned key signed these exact claims. It does **not** prove that code compiled,
+that a truly independent trusted runner executed tests, that logs were not
+fabricated by a compromised signing host, that a sandbox was isolated, that
+replay state was durably recorded, or that deployment is authorized. This
+package has no trust-root lifecycle, identity provisioning, revocation,
+persistent nonce ledger, trusted CI connector or deployment actions.
