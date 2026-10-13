@@ -66,9 +66,10 @@ jobs:
           import { reviewRepairWorktrees, verifyWorktreeReadback } from "metron-reference-gateway-jobs/worktree-review";
           import { assessRepairEvidence } from "metron-reference-gateway-jobs/repair-evidence";
           import { signCheckReceipt, verifyCheckBundle, assessSignedRepairEvidence } from "metron-reference-gateway-jobs/signed-receipts";
+          import { PersistentReceiptVerifier } from "metron-reference-gateway-jobs/persistent-receipts";
           import { newPatch } from "metron-reference-mothership-workflow";
           import { newMailbox, receiveMailboxMessage } from "metron-reference-mothership-workflow/mailbox";
-          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, readTextWorktree, reviewRepairWorktrees, verifyWorktreeReadback, assessRepairEvidence, signCheckReceipt, verifyCheckBundle, assessSignedRepairEvidence, newPatch, newMailbox, receiveMailboxMessage].some(x => typeof x !== "function")) {
+          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, readTextWorktree, reviewRepairWorktrees, verifyWorktreeReadback, assessRepairEvidence, signCheckReceipt, verifyCheckBundle, assessSignedRepairEvidence, PersistentReceiptVerifier, newPatch, newMailbox, receiveMailboxMessage].some(x => typeof x !== "function")) {
             throw new Error("package entrypoint could not be imported");
           }
           console.log("FOUR_PACKAGES_IMPORT_PASS");
