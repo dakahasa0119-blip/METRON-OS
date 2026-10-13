@@ -16,6 +16,12 @@ The developer recalls a two-spreadsheet design. This audit preserves that possib
 4. [METRON_GATEWAY_BRIDGE.js](../modules/gas/METRON_OS_B/METRON_GATEWAY_BRIDGE.js) posts to the Gateway URL and submits ARC jobs, but does not by itself establish a two-MotherShip sheet-to-sheet forwarding path.
 5. The Gateway's [code.js](../modules/gas/METRON_GATEWAY/code.js) contains a configured default MotherShip spreadsheet ID and a per-user active-target switch. This demonstrates that the Gateway can identify/switch a target spreadsheet; it is **not proof that the MotherShip A/B conversation rows were transmitted between those two files**.
 
+## Dispatcher log comparison (2026-10-14 bounded full-tab read)
+
+A full scan of the populated `Dispatcher!A:E` records in each source file produced **32 data rows in OS_A** and **146 in OS_B**, excluding their headers (both fit inside the first 1,000 rows). Matching all five fields `from, to, type, payload, timestamp` found **zero identical rows across the two files**. Ignoring the timestamp yielded **six matching A rows**, which may simply be repeated canned message content. The message distributions were A: 1 OBSERVE, 16 ACK, 4 STATE, 11 PROPOSE; B: 1 OBSERVE, 73 ACK, 7 STATE, 65 PROPOSE.
+
+The zero exact matches do **not** disprove a relay: a receiver could stamp messages at a different time or transform envelopes. Conversely, similar payloads without a shared message ID, correlated source/destination event, or forwarding code do **not** establish cross-file delivery. In the preserved GAS source tree, the only inspected explicit spreadsheet ID matching these two source files was the OS_B default in the Gateway `code.js`. This is a scoped source observation, not an exhaustive historical revision search.
+
 ## Current conclusion
 
 - **Confirmed:** Two distinct MotherShip spreadsheets exist, both with message-like historical records.
