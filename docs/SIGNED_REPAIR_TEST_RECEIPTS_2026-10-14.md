@@ -20,3 +20,12 @@ A signature validates only that the private key controlling the claimed runner i
 A trusted runner would hold the private key outside the repository, independently check a pinned worktree, launch a fixed allowlisted test suite, bind actual exit codes and cryptographic logs to the candidate digest, sign the result, and let a separate verifier check the immutable suite identity and replay ledger. Applying or deploying the patch would require an additional explicit user authorization and post-deploy readback.
 
 This prototype supports issue #103 as a **cryptographic building block**; it does not close the end-to-end trusted attestation or approval issue.
+
+## Follow-up: single-writer durable replay ledger
+
+The `persistent-receipts` subpath checkpoints a consumed verifier challenge
+before returning a verified status, failing closed on storage errors and
+rejecting an already consumed challenge after a local process restart.
+It uses the existing atomic JSON writer and explicitly supports only one
+writer per checkpoint file. The signing-key lifecycle, trusted test runner,
+multi-writer coordination and actual deployment approval remain unresolved.
