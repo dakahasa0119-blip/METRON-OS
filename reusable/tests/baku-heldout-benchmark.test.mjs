@@ -67,7 +67,9 @@ test("missing independent evidence does not count a repair as success",()=>{
   assert.equal(r.counts.locally_verified_fix,0);
   assert.equal(r.counts.inconclusive,2);
   fixture[1].checks={...pass}; delete fixture[1].checks.rollback;
-  assert.throws(()=>fingerprintIncidentLabels(fixture),/incomplete_independent_checks/);
+  assert.throws(()=>evaluateHeldoutIncidents(fixture,{
+    expectedLabelDigest:fingerprintIncidentLabels(fixture)
+  }),/incomplete_independent_checks/);
 });
 test("same frozen dataset can evaluate competing predictions separately",()=>{
   const a=rows(),b=rows();
@@ -87,4 +89,15 @@ test("reject improperly specified or missing pinned benchmark",()=>{
   const b=rows();b.forEach(x=>x.split="development");
   assert.throws(()=>evaluateHeldoutIncidents(b,{expectedLabelDigest:fingerprintIncidentLabels(b)}),
     /heldout_cases_required/);
+});
+
+test("label manifest can be pinned before candidate decisions exist",()=>{
+  const truthOnly=rows().map(({decision,checks,...label})=>label);
+  const frozen=fingerprintIncidentLabels(truthOnly);
+  const predicted=rows();
+  assert.equal(fingerprintIncidentLabels(predicted),frozen);
+  const result=evaluateHeldoutIncidents(predicted,{expectedLabelDigest:frozen});
+  assert.equal(result.holdoutIncidents,6);
+  assert.throws(()=>evaluateHeldoutIncidents(truthOnly,{expectedLabelDigest:frozen}),
+    /invalid_benchmark_decision/);
 });
