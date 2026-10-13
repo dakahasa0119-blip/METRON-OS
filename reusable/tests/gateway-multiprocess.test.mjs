@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -85,7 +85,7 @@ test("abandoned lock fails closed rather than silently discarding state", { time
     await gw.enqueue("saved", {});
     mkdirSync(gw.lockPath);
     await assert.rejects(() => gw.enqueue("lost", {}), error => error.code === "LOCK_TIMEOUT");
-    rmSync(gw.lockPath, { recursive: false });
+    rmdirSync(gw.lockPath);
     assert.equal((await gw.getJob("saved")).state, "pending");
     assert.equal(await gw.getJob("lost"), null);
     await gw.enqueue("recovered", {});
