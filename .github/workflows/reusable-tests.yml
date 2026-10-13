@@ -66,7 +66,8 @@ jobs:
           import { reviewRepairWorktrees, verifyWorktreeReadback } from "metron-reference-gateway-jobs/worktree-review";
           import { assessRepairEvidence } from "metron-reference-gateway-jobs/repair-evidence";
           import { newPatch } from "metron-reference-mothership-workflow";
-          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, readTextWorktree, reviewRepairWorktrees, verifyWorktreeReadback, assessRepairEvidence, newPatch].some(x => typeof x !== "function")) {
+          import { newMailbox, receiveMailboxMessage } from "metron-reference-mothership-workflow/mailbox";
+          if ([findDeep, extractCards, auditRepairOutcomes, JobQueue, createChunkedArtifact, verifyChunkedArtifact, adviseGatewayRoute, preflightRepairRequest, snapshotDigest, reviewRepairSnapshots, readTextWorktree, reviewRepairWorktrees, verifyWorktreeReadback, assessRepairEvidence, newPatch, newMailbox, receiveMailboxMessage].some(x => typeof x !== "function")) {
             throw new Error("package entrypoint could not be imported");
           }
           console.log("FOUR_PACKAGES_IMPORT_PASS");
