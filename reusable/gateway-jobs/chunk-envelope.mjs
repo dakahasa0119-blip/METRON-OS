@@ -40,6 +40,7 @@ export function createChunkedArtifact(source, {
     throw new RangeError("invalid chunk size");
   }
   const bytes = Buffer.from(source, "utf8");
+  if (bytes.toString("utf8") !== source) throw new TypeError("source is not valid Unicode text");
   if (bytes.length > maxBytes) throw new RangeError("artifact exceeds byte limit");
   const count = Math.max(1, Math.ceil(bytes.length / chunkSizeBytes));
   if (count > maxChunks) throw new RangeError("artifact exceeds chunk limit");
