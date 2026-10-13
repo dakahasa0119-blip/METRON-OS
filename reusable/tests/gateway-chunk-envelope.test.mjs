@@ -58,3 +58,17 @@ test("empty artifacts and strict byte/chunk budgets remain deterministic", () =>
   const big = packet("hello");
   assert.equal(verifyChunkedArtifact(big.manifest, big.chunks, { maxBytes: 1 }).reason, "invalid_manifest");
 });
+
+test("invalid lone-surrogate input is not silently replaced", () => {
+  assert.throws(() => packet("bad\\uD800text"), /valid Unicode/);
+});
+
+test("matching forged digest cannot smuggle invalid UTF-8 bytes", async () => {
+  const { createHash } = await import("node:crypto");
+  const p = packet("abc");
+  const bad = Buffer.from([0xff, 0xfe, 0xfd]);
+  const chunks = new Map(p.chunks);
+  chunks.set(p.manifest.chunkKeys[0], bad.toString("base64"));
+  const forged = { ...p.manifest, sha256: createHash("sha256").update(bad).digest("hex") };
+  assert.equal(verifyChunkedArtifact(forged, chunks).reason, "invalid_utf8");
+});
