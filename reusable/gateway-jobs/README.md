@@ -26,6 +26,15 @@ if (leased) {
 }
 ~~~
 
+For work that lasts longer than its lease, the active worker can periodically
+extend its lease using `gateway.renewLease(leased.id, leased.lease)`. This
+heartbeat succeeds only while the **same lease remains active and unexpired**;
+it extends the expiry by the configured `leaseMs` interval from the current
+time, without shortening an existing expiry. A failed heartbeat returns
+`false`, and the worker must not assume it still owns the job. Clients are
+responsible for sending heartbeats well before expiry; no background timer or
+remote heartbeat transport is provided.
+
 Low-level storage helpers are available at `metron-reference-gateway-jobs/checkpoint`. `JobQueue.snapshot()` and `JobQueue.restore()` retain job statuses and lease versions; `ExpiringMemory.snapshot()` and `.restore()` preserve absolute expiry timestamps. Expired leases are recovered on load. An old worker response cannot complete a newly leased or already expired job.
 
 **Mandatory limits:**

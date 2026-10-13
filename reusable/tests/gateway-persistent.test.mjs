@@ -46,3 +46,28 @@ test("persistent Gateway does not discard invalid on-disk state", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("persisted worker heartbeat survives restart without replaying the job", () => {
+  const dir = mkdtempSync(join(tmpdir(), "metron-heartbeat-"));
+  try {
+    const file = join(dir, "gateway.json");
+    let now = 100;
+    const opts = { now: () => now, queueOptions: { leaseMs: 20, backoffMs: 0 } };
+    let gateway = new PersistentGateway(file, opts);
+    gateway.enqueue("long-task", { kind: "fixture" });
+    const lease = gateway.claim("ARC");
+    now = 115;
+    assert.equal(gateway.renewLease("long-task", lease.lease), true);
+    assert.equal(gateway.getJob("long-task").expiresAt, 135);
+    now = 125;
+    gateway = new PersistentGateway(file, opts); // simulated single-writer restart
+    assert.equal(gateway.getJob("long-task").state, "leased");
+    assert.equal(gateway.getJob("long-task").expiresAt, 135);
+    assert.equal(gateway.complete("long-task", lease.lease, { success: true }), true);
+    const done = new PersistentGateway(file, opts);
+    assert.equal(done.getJob("long-task").state, "done");
+    assert.equal(done.renewLease("long-task", lease.lease), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
