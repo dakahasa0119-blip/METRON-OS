@@ -165,3 +165,12 @@ node --test reusable/tests/*.test.mjs
 - **Scope:** cryptographic verification of signed metadata only, NOT
   independently authenticated real CI runners, semantically validated test
   results, durable challenge storage, trusted key issuance or patch approval.
+
+## 2026-10-14: persisted single-writer signed receipt replay state
+
+- Added `PersistentReceiptVerifier` to atomically checkpoint a consumed
+  challenge **before** reporting its signed receipts as verified.
+- Restart, corrupt checkpoint, signature rejection and write-failure cases
+  are exercised by five additional tests using disposable local files.
+- Scope remains single-writer local state; no process synchronization,
+  cloud-wide replay consensus or trusted real CI result execution is claimed.
