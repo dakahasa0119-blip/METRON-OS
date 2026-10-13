@@ -6,7 +6,7 @@
  * origin and exact receipt fields, NOT whether tests actually ran or whether
  * signing host was secure. Never gives deployment/apply authorization.
  */
-import { sign as signBytes, verify as verifyBytes, createPublicKey, createPrivateKey } from "node:crypto";
+import { sign as signBytes, verify as verifyBytes, createPublicKey, createPrivateKey, KeyObject } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { assessRepairEvidence } from "./repair-evidence.mjs";
 
@@ -49,7 +49,7 @@ const encoded = claims => Buffer.from(
 /** Signing is only for a host that ACTUALLY performed the declared checks. */
 export function signCheckReceipt(claims, privateKey) {
   if (!validateClaims(claims)) throw new TypeError("invalid_receipt_claims");
-  const key = createPrivateKey(privateKey);
+  const key = privateKey instanceof KeyObject ? privateKey : createPrivateKey(privateKey);
   if (key.asymmetricKeyType !== "ed25519") throw new TypeError("ed25519_private_key_required");
   const signature = signBytes(null,encoded(claims),key).toString("base64url");
   return { claims: { ...claims }, signature };
@@ -93,7 +93,7 @@ export function verifyCheckBundle(receipts,{
       return blocked("untrusted_runner_key");
     let valid = false;
     try {
-      const key=createPublicKey(trust.publicKey);
+      const key=trust.publicKey instanceof KeyObject ? trust.publicKey : createPublicKey(trust.publicKey);
       if (key.asymmetricKeyType === "ed25519") {
         const sig=Buffer.from(packet.signature,"base64url");
         valid = sig.length===64 && sig.toString("base64url")===packet.signature &&
