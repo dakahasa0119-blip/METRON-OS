@@ -22,6 +22,19 @@ A full scan of the populated `Dispatcher!A:E` records in each source file produc
 
 The zero exact matches do **not** disprove a relay: a receiver could stamp messages at a different time or transform envelopes. Conversely, similar payloads without a shared message ID, correlated source/destination event, or forwarding code do **not** establish cross-file delivery. In the preserved GAS source tree, the only inspected explicit spreadsheet ID matching these two source files was the OS_B default in the Gateway `code.js`. This is a scoped source observation, not an exhaustive historical revision search.
 
+## Dispatcher-to-inbox provenance check
+
+An additional read-only comparison joined every `Dispatcher` row to each destination's `METRON-A` or `METRON-B` inbox on the exact four-field key `(from, type, payload, timestamp)` (the Dispatcher `to` value selects the inbox). Matching the same source workbook versus the *other* workbook produced:
+
+| Dispatcher source | Target inbox | Same workbook matches | Other workbook matches |
+| --- | --- | ---: | ---: |
+| OS_A | METRON-A | 9 | **0** |
+| OS_A | METRON-B | 6 | **0** |
+| OS_B | METRON-A | 62 | **0** |
+| OS_B | METRON-B | 65 | **0** |
+
+This is more specific than comparing the two Dispatcher logs alone: the archived rows **positively corroborate tab-local delivery**, whereas they do not corroborate a direct cross-file delivery event in the examined dataset. It does not establish that a transformed/stamped relay never ran, nor that these are complete execution logs. Multiple rows may repeat identical payloads and should not be counted as independent conversations.
+
 ## Current conclusion
 
 - **Confirmed:** Two distinct MotherShip spreadsheets exist, both with message-like historical records.
