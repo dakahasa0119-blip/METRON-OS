@@ -1,16 +1,18 @@
 {
   "name": "metron-reference-baku-dna",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Portable BAKU named source fragment extraction and dependency ordering (experimental)",
   "type": "module",
   "main": "./code-cards.mjs",
   "exports": {
     ".": "./code-cards.mjs",
-    "./repair-audit": "./repair-audit.mjs"
+    "./repair-audit": "./repair-audit.mjs",
+    "./heldout-benchmark": "./heldout-benchmark.mjs"
   },
   "files": [
     "code-cards.mjs",
     "repair-audit.mjs",
+    "heldout-benchmark.mjs",
     "README.md",
     "LICENSE"
   ],
