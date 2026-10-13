@@ -153,3 +153,15 @@ node --test reusable/tests/*.test.mjs
 - These are **not Google spreadsheet files** and prove no historical
   cross-spreadsheet communication, P2P AI cognition, real worker identity,
   atomic external effects or old GAS integration.
+
+## 2026-10-14: Ed25519-signed, nonce-bound check receipt prototype
+
+- New `signed-receipts` module checks four distinct categories against a pinned
+  candidate SHA-256, suite SHA-256, audience, runner ID, key ID, short validity
+  window and single-use verifier nonce. Signatures are **Ed25519**.
+- Nine additional tests cover isolated child-process signatures, tampering,
+  wrong keys, binding mismatches, duplicate receipt kinds, expiration,
+  replay and invalid optimistic claims.
+- **Scope:** cryptographic verification of signed metadata only, NOT
+  independently authenticated real CI runners, semantically validated test
+  results, durable challenge storage, trusted key issuance or patch approval.
