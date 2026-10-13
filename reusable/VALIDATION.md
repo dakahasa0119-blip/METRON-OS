@@ -110,3 +110,18 @@ node --test reusable/tests/*.test.mjs
 - The verifier does **not** independently read the on-disk filesystem. If the
   supplying process is malicious or omits files, comparison cannot detect it;
   a trusted host must obtain snapshots and validate readback separately.
+
+## 2026-10-14: isolated real worktree readback reference
+
+- Added a bounded, read-only `readTextWorktree` filesystem reader.
+  It skips root Git metadata and rejects symlinks, malformed UTF-8,
+  binary inputs, special nodes and files exceeding its byte/file ceilings.
+- Added `reviewRepairWorktrees` for independently enumerating isolated
+  baseline/candidate text files and matching pinned base + changed scope;
+  `verifyWorktreeReadback` independently re-reads a later on-disk inventory.
+- **Windows Node.js + real Chromium: 70/70 tests passed, no failures/skips**.
+  Nine additional tests use real temporary directories, not production files.
+- These tests do **not** prove atomic filesystem snapshots, race-free operation,
+  correct permissions, safe code execution, successful repair, or actual GAS
+  deployment. The host must control the root and prove it represents the
+  complete intended source inventory.
