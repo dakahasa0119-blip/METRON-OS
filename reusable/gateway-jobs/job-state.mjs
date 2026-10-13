@@ -36,6 +36,16 @@ export class JobQueue {
   isLeaseValid(job, lease) {
     return !!(job && job.state === "leased" && Number.isFinite(job.expiresAt) && this.now() < job.expiresAt && lease?.worker === job.worker && lease?.version === job.leaseVersion);
   }
+  /**
+   * Worker heartbeat: extend only an active, matching lease. A stale or
+   * already expired worker must not resurrect a job after failover.
+   */
+  renewLease(id, lease) {
+    const job = this.jobs.get(id);
+    if (!this.isLeaseValid(job, lease)) return false;
+    job.expiresAt = Math.max(job.expiresAt, this.now() + this.leaseMs);
+    return true;
+  }
   complete(id, lease, result) {
     const job = this.jobs.get(id);
     if (!this.isLeaseValid(job, lease)) return false;
