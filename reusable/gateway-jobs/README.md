@@ -90,3 +90,32 @@ unclassified chat defaults to analysis-only (safer than the archived default
 ARC lane). Intent detection is simple keyword matching and **will misclassify
 negation and ambiguous requests**. Explicit user consent and independent
 authorization/validation are responsibilities of a separate trusted host.
+
+## Repair intake preflight (advisory, fail-closed)
+
+The archived `gateway_baku_intake_module.gs` required a repair symptom,
+expected fix, contracts to preserve, prohibited changes and protected paths.
+The new standalone `repair-preflight` also requires explicit proposed paths:
+
+```js
+import { preflightRepairRequest } from "metron-reference-gateway-jobs/repair-preflight";
+const result = preflightRepairRequest({
+  symptom: "UI button fails",
+  expectedFix: "Restore button callback",
+  preserveContracts: ["keep existing UI state"],
+  prohibitedChanges: ["no API calls"],
+  protectedPaths: ["src/security/**", "src/core.js"],
+  proposedPaths: ["src/ui/button.js"]
+});
+console.log(result.status); // ready_for_review, NOT authorized to apply
+```
+
+Missing or malformed fields, unexpected paths and protected exact/directory
+overlap return `blocked`; mentions of auth/cryptography require manual review.
+Paths are compared as normalized **declared strings**, not resolved against a
+filesystem. Symlinks, generated files, case-sensitive environments, aliases,
+transitive imports, actual code diffs, semantic contracts and changing runtime
+dependencies require independent checks. `preserveContracts` and
+`prohibitedChanges` are checked for presence, **not automatically enforced**.
+Never interpret `ready_for_review` as a secure approval or a license to deploy.
+The returned `canApply` and `approved` are always `false`.

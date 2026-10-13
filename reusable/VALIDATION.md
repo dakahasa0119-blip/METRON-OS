@@ -88,3 +88,11 @@ node --test reusable/tests/*.test.mjs
 - Safety limits: an artifact checksum is *not* a signature or capability
   token, and classification is heuristic. No live Drive or AI provider was
   contacted; no historical METRON integration or autonomous repair claim.
+
+## 2026-10-14: Gateway repair-intake preflight
+
+- Added `preflightRepairRequest` as a **separate, pure reference adapter** based on the constraint-presence and critical-scope ideas in archived `gateway_baku_intake_module.gs`.
+- Six synthetic regression cases cover required fields, exact and directory protections, traversal/absolute paths, critical-topic review and ignored fake approval flags.
+- Windows 11, Node.js v24.18.0, real Chromium: **53 tests passed, 0 failed, 0 skipped** (six new tests).
+- Gateway v0.4.0 package dry-run succeeded with its dedicated `repair-preflight.mjs` subpath included.
+- Only declared paths are inspected; there is **no real diff matching, filesystem path resolution, source execution or permission grant**. `ready_for_review` cannot approve a patch or authorize operations.
