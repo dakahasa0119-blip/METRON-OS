@@ -11,6 +11,8 @@
 | `baku-dna/repair-audit.mjs` | `auditRepairOutcomes` | Aggregate repair queue final states without counting retries as independent fixes; supports **local code/compile claims only**, never deployment |
 | `gateway-jobs/job-state.mjs` | `JobQueue`, `ExpiringMemory`, snapshots | Pure single-process queue and expiring memory; no transport, authentication or exactly-once remote effects |
 | `gateway-jobs/persistent-gateway.mjs` | `PersistentGateway`, file checkpoints | Node.js single-writer atomic JSON persistence and restart/lease recovery; **no multi-process lock** |
+| `gateway-jobs/chunk-envelope.mjs` | `createChunkedArtifact`, `verifyChunkedArtifact` | All-or-nothing UTF-8 Base64 reconstruction with length and SHA-256 checking; not authentication/transport |
+| `gateway-jobs/mediation-advice.mjs` | `adviseGatewayRoute` | Pure recommendation only, requires separate authorization for actions; heuristic keyword matching |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
 
 ## Running tests
