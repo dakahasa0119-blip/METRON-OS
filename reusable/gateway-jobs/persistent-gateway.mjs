@@ -51,6 +51,7 @@ export class PersistentGateway {
 
   enqueue(id, payload = {}) { return this.#modify(() => this.queue.enqueue(id, payload)); }
   claim(worker) { return this.#modify(() => this.queue.claim(worker)); }
+  renewLease(id, lease) { return this.#modify(() => this.queue.renewLease(id, lease)); }
   complete(id, lease, result) { return this.#modify(() => this.queue.complete(id, lease, result)); }
   fail(id, lease, error) { return this.#modify(() => this.queue.fail(id, lease, error)); }
   recoverExpired() { return this.#modify(() => this.queue.recoverExpired()); }
