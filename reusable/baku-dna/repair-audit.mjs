@@ -18,6 +18,7 @@ function queueId(row) {
 
 const text = value => String(value ?? "").trim().toLowerCase();
 const yes = value => text(value) === "y";
+const no = value => text(value) === "n";
 
 export function auditRepairOutcomes(metricRows, evidenceRows) {
   requiredRows(metricRows, "metricRows");
@@ -51,9 +52,9 @@ export function auditRepairOutcomes(metricRows, evidenceRows) {
       && text(evidence.RepairState) === state;
 
     if (state === "repaired") {
-      const supported = common && !yes(metric.CompileBeforeOk)
+      const supported = common && no(metric.CompileBeforeOk)
         && yes(metric.CompileAfterOk)
-        && !yes(evidence.CompileBeforeOk)
+        && no(evidence.CompileBeforeOk)
         && yes(evidence.CompileAfterOk)
         && yes(evidence.CodeChanged)
         && text(evidence.ReviewVerdict) === "effective_fix";
@@ -64,7 +65,7 @@ export function auditRepairOutcomes(metricRows, evidenceRows) {
         && yes(metric.CompileAfterOk)
         && yes(evidence.CompileBeforeOk)
         && yes(evidence.CompileAfterOk)
-        && !yes(evidence.CodeChanged)
+        && no(evidence.CodeChanged)
         && text(evidence.ReviewVerdict) === "noop_clean";
       if (supported) cleanNoChange++;
       else unsupportedPositiveStates++;
