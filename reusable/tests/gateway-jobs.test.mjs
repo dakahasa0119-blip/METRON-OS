@@ -42,3 +42,26 @@ test("short memory expires and isolates sessions", () => {
   now = 5;
   assert.equal(mem.get("arc", "session-a", "last"), null);
 });
+
+test("worker heartbeat prolongs only the current unexpired lease", () => {
+  let at = 100;
+  const queue = new JobQueue({ now: () => at, leaseMs: 20, backoffMs: 0 });
+  queue.enqueue("long-running");
+  const active = queue.claim("ARC");
+  assert.equal(queue.get("long-running").expiresAt, 120);
+  at = 115;
+  assert.equal(queue.renewLease("long-running", active.lease), true);
+  assert.equal(queue.get("long-running").expiresAt, 135);
+  at = 125;
+  assert.equal(queue.renewLease("long-running", { worker: "other", version: 1 }), false);
+  assert.equal(queue.renewLease("long-running", active.lease), true);
+  assert.equal(queue.get("long-running").expiresAt, 145);
+  at = 146;
+  assert.equal(queue.renewLease("long-running", active.lease), false);
+  assert.equal(queue.recoverExpired(), 1);
+  const next = queue.claim("ARC-next");
+  assert.equal(next.lease.version, 2);
+  assert.equal(queue.renewLease("long-running", active.lease), false);
+  assert.equal(queue.complete("long-running", next.lease, "ok"), true);
+  assert.equal(queue.renewLease("long-running", next.lease), false);
+});
