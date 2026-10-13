@@ -131,7 +131,7 @@ node --test reusable/tests/*.test.mjs
 - Added `assessRepairEvidence`, correlating a reviewed candidate and later
   readback digest, pinned rollback digest and four separately named check
   receipts (compile, unit, regression, smoke).
-- Seven synthetic tests reject missing/failed/duplicate/stale receipts and
+- Eight synthetic tests reject missing/failed/duplicate/stale receipts and
   fake approval flags. **Windows/Chromium Node suite: 77/77 pass**, no
   failures or skipped cases.
 - Receipts here are **self-reported JSON inputs**, not signed independent
@@ -181,7 +181,7 @@ node --test reusable/tests/*.test.mjs
   family-level train/holdout exclusion, six-field result evidence and
   separate categories for verified-local-fix, missed repair, correctly rejected,
   unsafe proposal, failed candidate and inconclusive.
-- Seven synthetic tests confirm duplicate-incident refusal, family leakage
+- Eight synthetic tests confirm duplicate-incident refusal, family leakage
   detection, unchanged label sets across alternate candidate outcomes,
   development/holdout isolation and conservative treatment of unknown checks.
 - **Not** historical BAKU repair precision: only scored test fixtures, not a
