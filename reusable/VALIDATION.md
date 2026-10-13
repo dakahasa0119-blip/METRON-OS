@@ -64,3 +64,11 @@ node --test reusable/tests/*.test.mjs
 ```
 
 **Scope of proof:** successful portable reference workflows only. No historical Apps Script deployment, live external AI session, Android device, multi-PC federation, or P2P village consensus was exercised. The old METRON suite still has no independently verified complete four-system E2E run.
+
+## 2026-10-14: BAKU evidence classifier and Windows follow-up
+
+- Re-read both BAKU repair evidence and metrics sheets **read-only** and counted **2,908 populated records in each**, **487 unique queue IDs**, and **5 unique card IDs**. Deduplicated last-metric states are 482 exhausted, 2 repaired, 2 clean/no-change and 1 unresolved. See [audit report](../docs/BAKU_REPAIR_EVIDENCE_AUDIT_2026-10-14.md).
+- Added a dependency-free `auditRepairOutcomes` module and three additional synthetic tests: repeated attempts do not inflate successes, optimistic status without supporting evidence is rejected, and missing queue identity fails closed.
+- Windows real Chromium + all Node tests: **36 passed, 0 failed, 0 skipped** (Node.js v24.18.0).
+- `npm.cmd pack --dry-run ./reusable/baku-dna` succeeded, including the newly exported `repair-audit.mjs` file. Windows PowerShell execution policy was **not** relaxed; `npm.cmd` was used instead of the blocked `npm.ps1` shim.
+- These outcomes are **not** a BAKU unknown-fault repair benchmark. Neither the classifier nor these tests deploys code or verifies historic GAS/Android behavior.

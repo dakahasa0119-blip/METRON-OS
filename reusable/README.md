@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | `arc-dom/selector-kit.mjs` | `findDeep`, `stableSelector`, `SelectorMemory`, `startPicker` | Open shadow roots only; works inside authorized DOM context; click picker is a new standalone implementation, not proof the old Android picker was complete |
 | `baku-dna/code-cards.mjs` | `extractCards`, `inspectCard`, `composeCards` | Best-effort JavaScript lexical scanner supporting common object-method and arrow-function forms; regex literals, templates and advanced syntax can defeat extraction. **Not a static security analyzer** |
+| `baku-dna/repair-audit.mjs` | `auditRepairOutcomes` | Aggregate repair queue final states without counting retries as independent fixes; supports **local code/compile claims only**, never deployment |
 | `gateway-jobs/job-state.mjs` | `JobQueue`, `ExpiringMemory`, snapshots | Pure single-process queue and expiring memory; no transport, authentication or exactly-once remote effects |
 | `gateway-jobs/persistent-gateway.mjs` | `PersistentGateway`, file checkpoints | Node.js single-writer atomic JSON persistence and restart/lease recovery; **no multi-process lock** |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
