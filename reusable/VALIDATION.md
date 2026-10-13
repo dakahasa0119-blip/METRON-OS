@@ -138,3 +138,18 @@ node --test reusable/tests/*.test.mjs
   test attestations. The gate NEVER approves or applies a candidate. The
   trusted caller must independently run tests, verify receipt authenticity,
   confirm rollback materials and obtain explicit deployment authorization.
+
+## 2026-10-14: two distinct synthetic MotherShip mailboxes
+
+- New pure `newMailbox`/`receiveMailboxMessage` functions reject conflicting
+  message-ID replays and invalid recipients while deduplicating exact replays.
+- The offline `two-mothership-relay.mjs` demo stores MotherShip A, MotherShip B
+  and Gateway in **three distinct JSON files**. A message from A to B is
+  persisted; Gateway then simulates a crash before ACK, recovers the expired
+  lease and redelivers the same message. B records it only once. B sends a new
+  ACK back to A, and a stale Gateway ACK is rejected.
+- **Windows Node.js v24.18.0 + Chromium: 84/84 tests passing, 0 skipped**.
+  Seven new tests include a standalone two-file process run.
+- These are **not Google spreadsheet files** and prove no historical
+  cross-spreadsheet communication, P2P AI cognition, real worker identity,
+  atomic external effects or old GAS integration.

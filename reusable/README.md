@@ -19,6 +19,7 @@
 | `gateway-jobs/worktree-review.mjs` | `reviewRepairWorktrees`, `verifyWorktreeReadback` | Read-only pre/post tree comparison and later re-collected digest check; never application approval |
 | `gateway-jobs/repair-evidence.mjs` | `assessRepairEvidence` | Correlate test receipts, candidate hashes, readback and rollback reference; no authentication or deployment authority |
 | `mothership/workflow.mjs` | `classifyWork`, `recommendEngine`, `newPatch`, `transitionPatch` | Heuristic model choice, no model invocation; patch verification requires caller-supplied evidence and does not independently run tests |
+| `mothership/mailbox.mjs` | `newMailbox`, `receiveMailboxMessage` | Pure per-node deduplicating inbox state; no network/authentication or historical GAS proof |
 
 ## Running tests
 
@@ -55,6 +56,14 @@ console.log(staged.state);
 
 Run `npm pack --dry-run ./reusable/arc-dom` (or `baku-dna`, `gateway-jobs`, `mothership`) from the repository root. Real tarballs can be generated with `npm pack`; no npm registry publication or API credentials are required for local packing. These package names have **not** been registered or published to npm. The package-specific README and LICENSE are included in every tarball.
 
+
+## Two distinct synthetic MotherShips
+
+Run `node reusable/examples/two-mothership-relay.mjs` for an **offline**
+Gateway-mediated A-to-B, B-to-A exchange with separate JSON file stores,
+crash/retry and duplicate-delivery protection. This is a **new local
+demonstration**, not retroactive proof that historic spreadsheet A/B communicated
+directly.
 
 ## Local four-component continuity demo
 
