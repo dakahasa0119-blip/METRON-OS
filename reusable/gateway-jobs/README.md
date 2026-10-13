@@ -44,3 +44,49 @@ Low-level storage helpers are available at `metron-reference-gateway-jobs/checkp
 - Checkpoint each queue transition before initiating an external non-idempotent action. Even with checkpoints, side effects can run twice after timeout; apply a separate idempotency key at the external system.
 - The JSON file can contain sensitive job prompts/results. Place it in a private directory, restrict its permissions, and never commit it to Git.
 - Corrupt checkpoints produce an error rather than silently resetting the queue. Recovery only concerns the reusable Node.js reference, not the historical GAS Gateway deployment.
+
+## Checked chunk handoff (separate reference design)
+
+The archived Gateway had an external BAKU-code manifest/inbox process. The
+standalone `chunk-envelope` adapter illustrates how to **reject incomplete
+code instead of saving a partial source as a usable artifact**. This is a new
+schema, not a compatible deployment migration:
+
+```js
+import {
+  createChunkedArtifact, verifyChunkedArtifact
+} from "metron-reference-gateway-jobs/chunk-envelope";
+
+const transfer = createChunkedArtifact("function demo() { return 1; }", {
+  returnId: "demo_01", chunkSizeBytes: 16
+});
+const verified = verifyChunkedArtifact(transfer.manifest, transfer.chunks);
+if (verified.status === "ok") console.log(verified.bytes, verified.sha256);
+```
+
+Chunks are canonical Base64-encoded UTF-8 bytes stored in a `Map`. The
+manifest declares a fixed schema, exact chunk keys and order, total byte count
+and SHA-256 digest. **No artifact text is returned on missing, duplicated,
+reordered, malformed, truncated or hash-mismatched data.** Defaults cap data
+to 1 MiB and 256 chunks. The caller must separately authenticate the manifest,
+authorize the source/recipient, protect stored content, prevent replay and
+supply durable transport. SHA-256 alone **does not authenticate a sender**:
+a party who replaces both manifest and chunks can generate a new valid digest.
+The helper does not save to Google Sheets, update Apps Script or execute code.
+
+## Advisory-only Gateway mediation
+
+The archived mediation flow inspired a pure classification helper:
+
+```js
+import { adviseGatewayRoute } from "metron-reference-gateway-jobs/mediation-advice";
+const advice = adviseGatewayRoute("このコードを修復して");
+console.log(advice.recommended.lane); // BAKU; NOT an authorization to execute
+```
+
+It recommends lanes but cannot enqueue, authenticate, approve or execute any
+task. Repair/execute suggestions declare `requiresConfirmation: true`;
+unclassified chat defaults to analysis-only (safer than the archived default
+ARC lane). Intent detection is simple keyword matching and **will misclassify
+negation and ambiguous requests**. Explicit user consent and independent
+authorization/validation are responsibilities of a separate trusted host.

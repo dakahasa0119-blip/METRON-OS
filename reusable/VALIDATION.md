@@ -72,3 +72,19 @@ node --test reusable/tests/*.test.mjs
 - Windows real Chromium + all Node tests: **36 passed, 0 failed, 0 skipped** (Node.js v24.18.0).
 - `npm.cmd pack --dry-run ./reusable/baku-dna` succeeded, including the newly exported `repair-audit.mjs` file. Windows PowerShell execution policy was **not** relaxed; `npm.cmd` was used instead of the blocked `npm.ps1` shim.
 - These outcomes are **not** a BAKU unknown-fault repair benchmark. Neither the classifier nor these tests deploys code or verifies historic GAS/Android behavior.
+
+## 2026-10-14: archived Gateway feature extraction (independent)
+
+- Inspected the six preserved `gateway_*_module.gs` source files from a
+  read-only, verified 2026-09-28 local snapshot. The latest cloud source
+  was **not** uploaded to GitHub verbatim. See the
+  [source-gap inventory](../docs/GATEWAY_CLOUD_SOURCE_GAP_2026-10-14.md).
+- Added standalone checked BAKU/Gateway code artifact envelopes and
+  advisory-only routing, **not** original GAS migration.
+- Windows Node v24.18.0 with local real Chromium:
+  **47 tests passed, 0 failed, 0 skipped** (eleven new tests).
+- Two additional Unicode tests reject malformed UTF-8 and lone surrogates rather than silently replacing text.
+- Gateway package v0.3.0 dry-runs successfully with both new module subpaths included.
+- Safety limits: an artifact checksum is *not* a signature or capability
+  token, and classification is heuristic. No live Drive or AI provider was
+  contacted; no historical METRON integration or autonomous repair claim.
