@@ -1,5 +1,14 @@
 # METRON / BAKU Behavioral Repair — 2026-10-14
 
+## Classification within the actual BAKU architecture
+
+This module is an **auxiliary limited mutation proposer**, not the
+BAKU repair agent. The original target is a real AI coding worker
+performing diagnosis, edits, independent tests and iterative correction
+with authorized tools. See the [BAKU agentic-repair contract](BAKU_AGENTIC_REPAIR_CONTRACT_2026-10-14.md).
+No number of fixed-expression toy tests should be represented as the
+full general agentic self-repair capability.
+
 ## Why the previous automatic recovery was insufficient
 
 The earlier **isolated-repair** demonstration intentionally corrupted a
