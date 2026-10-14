@@ -158,7 +158,7 @@ export async function realRepairReasoner(prompt,{
 export async function runAgenticRepair({
   root,goal="The invoice total is incorrect when a discounted unit is multiplied by quantity",
   maxAttempts=3,askModel,provider,env=process.env,fetcher,
-  allowExternalCalls=false
+  allowExternalCalls=false,resumeRunId=null
 }={}){
   if(typeof root!=="string"||!root||
      typeof goal!=="string"||!goal.trim()||goal.length>500||
@@ -168,14 +168,32 @@ export async function runAgenticRepair({
   if(!askModel && (provider||env.METRON_REPAIR_PROVIDER)==="openai" && allowExternalCalls!==true)
     return {status:"blocked",reason:"external_model_operator_consent_required"};
   const fixture=pinnedFixture();
-  const runId="case_"+randomUUID().replaceAll("-","");
+  if(resumeRunId!==null && (typeof resumeRunId!=="string"||
+     !/^case_[a-f0-9]{32}$/.test(resumeRunId)))
+    throw refused("invalid_resume_run_id");
+  const runId=resumeRunId??("case_"+randomUUID().replaceAll("-",""));
+  const modelProvenance=askModel?"test_injected_not_real_ai":
+    provider||env.METRON_REPAIR_PROVIDER||"ollama";
+  const prior=resumeRunId?
+    readCheckpoint(join(root,"baku-agent-journal",runId+".json")):null;
+  if(resumeRunId){
+    if(!prior||prior.schemaVersion!==1||prior.id!==runId||
+       prior.fixtureDigest!==fixture.digest||prior.goal!==goal||
+       prior.modelProvenance!==modelProvenance||
+       !Array.isArray(prior.attempts)||prior.attempts.length>4||
+       !prior.lastCandidate||typeof prior.lastCandidate!=="object"||
+       Object.keys(prior.lastCandidate).some(p=>!SRC.includes(p)||
+         typeof prior.lastCandidate[p]!=="string"||
+         prior.lastCandidate[p].length>5000)||
+       ["verified_candidate","holdout_rejected","readback_failed","not_reproduced"].includes(prior.status))
+      throw refused("unresumable_or_changed_incident");
+  }
   const scratch=mkdtempSync(join(root,"baku-scratch-"));
   const stage=join(scratch,"project");
   let files={...fixture.files};
-  const attempts=[];
-  const journal={
-    id:runId,goal,fixtureDigest:fixture.digest,
-    modelProvenance:askModel?"test_injected_not_real_ai":provider||"ollama",
+  const attempts=prior?structuredClone(prior.attempts):[];
+  const journal=prior?{...prior,attempts}:{
+    id:runId,goal,fixtureDigest:fixture.digest,modelProvenance,
     status:"started",attempts
   };
   try{
@@ -193,8 +211,13 @@ export async function runAgenticRepair({
       persistJournal(root,runId,journal);
       return {status:"not_reproduced",runId,attempts,productionChanged:false};
     }
+    if(prior?.lastCandidate){
+      files={...fixture.files,...prior.lastCandidate};
+      syncFiles();
+    }
+    journal.status="ready_for_agent";
     persistJournal(root,runId,journal);
-    for(let n=1;n<=maxAttempts;n++){
+    for(let n=attempts.length+1;n<=maxAttempts;n++){
       const prompt=promptForModel({
         goal,files,baselineOutput:before.output,previousAttempts:attempts
       });
@@ -224,6 +247,7 @@ export async function runAgenticRepair({
         candidateDigest:sha(JSON.stringify(SRC.map(p=>[p,files[p]])))
       };
       attempts.push(entry);
+      journal.lastCandidate=Object.fromEntries(SRC.map(p=>[p,files[p]]));
       journal.status="testing";persistJournal(root,runId,journal);
       if(!publicCheck.passed)continue;
       // Hidden tests are used ONLY once, after the candidate clears public tests.
