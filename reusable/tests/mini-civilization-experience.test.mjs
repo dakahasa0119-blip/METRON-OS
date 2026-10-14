@@ -175,3 +175,21 @@ test("actual Chromium renders the interactive civilization map from local persis
     assert.match(stdout,/文明の状態を読み込みました/);
   }finally{await app.close();}
 }));
+
+test("a failed checkpoint write does not commit knowledge or review in memory",()=>temp(root=>{
+  const {experience}=world(root);
+  const proposal=experience.publish({text:"慎重に保全する"});
+  const currentFile=experience.file;
+  experience.file=join(root,"gateway.json","invalid-under-regular-file.json");
+  assert.throws(()=>experience.review({
+    rumorId:proposal.rumor.id,decision:"adopt"
+  }));
+  experience.file=currentFile;
+  assert.equal(experience.state().square[0].status,"awaiting_review");
+  assert.equal(experience.state().villages.B.knowledge.length,1);
+  const reloaded=world(root).experience;
+  assert.equal(reloaded.state().square[0].status,"awaiting_review");
+  assert.equal(reloaded.review({
+    rumorId:proposal.rumor.id,decision:"adopt"
+  }).state.villages.B.knowledge.length,2);
+}));
