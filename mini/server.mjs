@@ -113,7 +113,8 @@ export async function createMiniServer({root,port=8766}={}){
           const result=await runAgenticRepair({
             root:agentRoot,provider:body.provider,
             goal:body.goal,maxAttempts:3,
-            allowExternalCalls:body.allowExternalCalls===true
+            allowExternalCalls:body.allowExternalCalls===true,
+            resumeRunId:body.resumeRunId??null
           });
           return send(res,200,result);
         }
