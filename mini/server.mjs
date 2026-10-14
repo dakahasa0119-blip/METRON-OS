@@ -14,6 +14,7 @@ import {runAgenticRepair} from "./agentic-runner.mjs";
 import {join} from "node:path";
 import {mkdirSync} from "node:fs";
 import { modelAvailability,consultAndJudge } from "./ai-consensus.mjs";
+import {ArcHandoff} from "./arc-handoff.mjs";
 
 const UI=new Map([
   ["/",["./public/index.html","text/html; charset=utf-8"]],
@@ -57,6 +58,7 @@ export async function createMiniServer({root,port=8766}={}){
   const runtime=new MetronMiniRuntime(root);
   const civilization=new CivilizationExperienceV3(runtime.root,runtime);
   const pouc=new PoUCLedger(runtime.root);
+  const arcHandoff=new ArcHandoff(runtime);
   const server=createServer(async(req,res)=>{
     const currentPort=server.address()?.port||port;
     if(!hostAllowed(req.headers.host,currentPort))
@@ -68,6 +70,22 @@ export async function createMiniServer({root,port=8766}={}){
         "Content-Security-Policy":csp,
         "X-Content-Type-Options":"nosniff","Cache-Control":"no-store"});
       return res.end(item.body);
+    }
+    if(req.method==="POST"&&url==="/api/arc/handoff"){
+      if(req.headers["x-metron-mini"]!=="1")
+        return send(res,403,{error:"explicit_local_request_header_required"});
+      const origin=req.headers.origin;
+      if(origin&&!["http://127.0.0.1:"+currentPort,
+        "http://localhost:"+currentPort].includes(origin))
+        return send(res,403,{error:"invalid_origin"});
+      if(!String(req.headers["content-type"]||"").startsWith("application/json"))
+        return send(res,415,{error:"json_required"});
+      try{
+        const body=await readJson(req);
+        if(body?.action==="start")return send(res,200,arcHandoff.start());
+        if(body?.action==="deliver")return send(res,200,arcHandoff.deliver(body));
+        return send(res,400,{error:"invalid_arc_handoff_action"});
+      }catch(e){return send(res,400,{error:e.code||"arc_handoff_failed"});}
     }
     if(req.method==="GET"&&url==="/api/agent/status")
       return send(res,200,{
