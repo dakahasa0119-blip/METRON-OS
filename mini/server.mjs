@@ -104,14 +104,18 @@ export async function createMiniServer({root,port=8766}={}){
         if(url==="/api/agent/run"){
           if(!body||typeof body!=="object"||Array.isArray(body))
             return send(res,400,{error:"invalid_agent_request"});
-          if(!["ollama","openai"].includes(body.provider))
+          if(!["ollama","openai"].includes(body.provider)&&
+             !(body.provider==="auto"&&Array.isArray(body.providerOrder)))
             return send(res,400,{error:"explicit_model_choice_required"});
-          if(body.provider==="openai"&&body.allowExternalCalls!==true)
+          if((body.provider==="openai"||
+             (body.provider==="auto"&&body.providerOrder.includes("openai")))&&
+             body.allowExternalCalls!==true)
             return send(res,403,{error:"remote_ai_requires_explicit_consent"});
           const agentRoot=join(runtime.root,"agentic-baku");
           mkdirSync(agentRoot,{recursive:true});
           const result=await runAgenticRepair({
-            root:agentRoot,provider:body.provider,
+            root:agentRoot,provider:body.provider==="auto"?undefined:body.provider,
+            providerOrder:body.provider==="auto"?body.providerOrder:null,
             goal:body.goal,maxAttempts:3,
             allowExternalCalls:body.allowExternalCalls===true,
             resumeRunId:body.resumeRunId??null
