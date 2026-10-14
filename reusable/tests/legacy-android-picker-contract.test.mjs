@@ -59,6 +59,45 @@ test("legacy WebView picker selects input/send/response, blocks click and cancel
         assert(messages[3]==="","escape announces cancellation");
         assert(!MetronSelectorPicker.active,"escape stops picker");
         assert(!MetronSelectorPicker.start("unsafe"),"invalid role never arms");
+        // ARC's deepQuerySelector can see open Shadow DOM but ordinary
+        // document.querySelector cannot. A saved selector must uniquely
+        // round-trip through the SAME deep traversal as ARC at runtime.
+        function findDeep(root, selector) {
+          var local=root.querySelector(selector);
+          if(local) return local;
+          var hosts=root.querySelectorAll("*");
+          for(var i=0;i<hosts.length;i++) {
+            if(hosts[i].shadowRoot) {
+              var nested=findDeep(hosts[i].shadowRoot,selector);
+              if(nested) return nested;
+            }
+          }
+          return null;
+        }
+        assert(findDeep(document,messages[0])===button,"shadow root round trip");
+        var duplicatedHost=document.createElement("div");
+        document.body.appendChild(duplicatedHost);
+        var otherShadow=duplicatedHost.attachShadow({mode:"open"});
+        otherShadow.innerHTML='<button id="send-now">duplicate</button>';
+        assert(MetronSelectorPicker.start("send"),"restart picker with duplicate ID");
+        otherShadow.getElementById("send-now").click();
+        assert(messages.length===4,"ambiguous selector never delivered");
+        assert(MetronSelectorPicker.active,"ambiguous picker stays active");
+        document.dispatchEvent(new KeyboardEvent("keydown",{
+          key:"Escape",bubbles:true,cancelable:true
+        }));
+        assert(messages.length===5 && messages[4]==="","duplicate picker cancelled");
+
+        // Escape CSS string attributes, not merely CSS identifier syntax.
+        var special=document.createElement("button");
+        special.setAttribute("data-testid",'repair-"btn');
+        document.body.appendChild(special);
+        assert(MetronSelectorPicker.start("send"),"start special attr picker");
+        special.click();
+        assert(findDeep(document,messages[5])===special,
+          "quoted data-testid selector round-trips");
+        assert(!MetronSelectorPicker.active,"special picker stops");
+
       }
       const html='<!doctype html><html><body><input id="prompt">'+
         '<article id="response"><span id="response-inner">ok</span></article>'+
