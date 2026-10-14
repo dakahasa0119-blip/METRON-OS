@@ -15,6 +15,8 @@ cd METRON-OS
 node mini/start.mjs
 ```
 
+Windowsなら、[**START_WINDOWS.cmd**](START_WINDOWS.cmd) をダブルクリックする方法もあります。Node.jsが利用可能な場合、ローカルサーバーを別ウィンドウで起動して標準ブラウザを開きます。終了時はサーバーのコマンドウィンドウを閉じてください。
+
 ブラウザで **http://127.0.0.1:8766/** を開いてください。
 
 1. 母艦Aから母艦Bへメッセージを送ります。
@@ -79,3 +81,7 @@ node --test reusable/tests/*.test.mjs
 使用するオープンソースライセンス: 新規Webアプリ本体は
 [Apache-2.0](../LICENSE)、`reusable/`の各コンポーネントは
 [MIT](../reusable/LICENSE)です。
+
+## 追加の復旧検証
+
+自動試験では、母艦A/Bの逆方向配送、配達保存直後にGatewayが停止してACKを受け取れなかった状況、再起動後の再送・重複抑止、コードの一時検査、実ChromiumによるARCのDOM探索を扱います。
