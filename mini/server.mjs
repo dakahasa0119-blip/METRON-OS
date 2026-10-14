@@ -74,7 +74,8 @@ export async function createMiniServer({root,port=8766}={}){
         status:"real_model_needed_for_agentic_repair",
         configured:{
           ollama:!!process.env.METRON_LOCAL_MODEL,
-          openai:!!(process.env.OPENAI_API_KEY&&process.env.METRON_REPAIR_MODEL)
+          openai:!!(process.env.OPENAI_API_KEY&&process.env.METRON_REPAIR_MODEL),
+          claudeCli:"account_login_must_be_checked_by_cli"
         },
         scope:"first_party_disposable_multifile_fixture_only",
         testExecution:"Node_permission_constrained_child_process",
@@ -104,9 +105,9 @@ export async function createMiniServer({root,port=8766}={}){
         if(url==="/api/agent/run"){
           if(!body||typeof body!=="object"||Array.isArray(body))
             return send(res,400,{error:"invalid_agent_request"});
-          if(!["ollama","openai"].includes(body.provider))
+          if(!["ollama","openai","claude-cli"].includes(body.provider))
             return send(res,400,{error:"explicit_model_choice_required"});
-          if(body.provider==="openai"&&body.allowExternalCalls!==true)
+          if(["openai","claude-cli"].includes(body.provider)&&body.allowExternalCalls!==true)
             return send(res,403,{error:"remote_ai_requires_explicit_consent"});
           const agentRoot=join(runtime.root,"agentic-baku");
           mkdirSync(agentRoot,{recursive:true});
