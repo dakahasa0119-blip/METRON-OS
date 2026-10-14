@@ -17,9 +17,11 @@ other cloud files differed from their older Git counterparts and require
 separate, version-specific preservation review. The archived .clasp metadata,
 private spreadsheets, execution logs and live deployment IDs are omitted.
 
-**License:** this original historical source is **not** offered under the
-MIT license covering `reusable/`. Publication is for transparent research and
-preservation, not a blanket permission to republish or operate it.
+**License:** original first-party Gateway source in this folder is available under
+[Apache License 2.0](LICENSE), with author attribution in [NOTICE](NOTICE).
+This is separate from the MIT-licensed portable `reusable/` reference code.
+Original third-party content (if identified) retains its own license. The
+copyright grant does not authorize access to private services or deployment.
 Do not deploy this source unchanged; it can depend on other archived GAS
 modules and private Script Properties, and has not been independently audited
 for safety, correctness or authorized external-system access.
