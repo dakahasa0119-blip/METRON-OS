@@ -183,10 +183,12 @@ export async function runAgenticRepair({
        prior.fixtureDigest!==fixture.digest||prior.goal!==goal||
        prior.modelProvenance!==modelProvenance||
        !Array.isArray(prior.attempts)||prior.attempts.length>4||
-       !prior.lastCandidate||typeof prior.lastCandidate!=="object"||
-       Object.keys(prior.lastCandidate).some(p=>!SRC.includes(p)||
-         typeof prior.lastCandidate[p]!=="string"||
-         prior.lastCandidate[p].length>5000)||
+       (prior.attempts.length>0&&!prior.lastCandidate)||
+       (prior.lastCandidate!==undefined&&
+         (typeof prior.lastCandidate!=="object"||!prior.lastCandidate||
+          Object.keys(prior.lastCandidate).some(p=>!SRC.includes(p)||
+            typeof prior.lastCandidate[p]!=="string"||
+            prior.lastCandidate[p].length>5000)))||
        ["verified_candidate","holdout_rejected","readback_failed","not_reproduced"].includes(prior.status))
       throw refused("unresumable_or_changed_incident");
   }
