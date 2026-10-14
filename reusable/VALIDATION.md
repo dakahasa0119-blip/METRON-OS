@@ -187,3 +187,18 @@ node --test reusable/tests/*.test.mjs
 - **Not** historical BAKU repair precision: only scored test fixtures, not a
   blinded real incident corpus. The required independent labelling and actual
   candidate functional tests remain issue #100.
+
+## 2026-10-14: actual METRON Mini OS loopback runtime
+
+- New [METRON Mini OS](../mini/README.md) Node.js HTTP server, browser UI and
+  integrated local MotherShip A/B, Gateway, BAKU and ARC workflows.
+- Verified actual HTTP `POST /api/mission`, two independent JSON MotherShip
+  files, Gateway ACK and worker queue persistence, static BAKU code-card
+  detection without source storage, ARC same-page DOM discovery, reverse
+  direction and crash-after-delivery deduplication.
+- Eight new tests cover the runtime, restart, idempotency and conflict
+  rejection, invalid routes, host/Origin protections, static source limits,
+  real desktop Chromium UI initialization and reverse ACK routing.
+- This is a **working local reference app** only. It is not a live integration
+  with the four historic deployments, real external AI authentication,
+  autonomous code repair or an Android device.

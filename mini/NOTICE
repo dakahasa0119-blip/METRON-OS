@@ -1,0 +1,13 @@
+METRON Mini OS — local working reference
+Copyright 2025-2026 dakahasa0119-blip
+
+Original METRON OS, Gateway, BAKU and ARC project:
+https://github.com/dakahasa0119-blip/METRON-OS
+
+The first-party METRON Mini UI/runtime in this directory is licensed
+under the Apache License, Version 2.0 (see LICENSE).
+The imported portable helper modules in ../reusable/ are MIT licensed
+under their own LICENSE files; those terms are preserved.
+Third-party programs and SDKs are subject to their own upstream rights.
+This notice does not authorize use of any original trademarks to imply
+endorsement or official production compatibility.

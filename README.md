@@ -19,6 +19,25 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## Try the running METRON Mini OS / 実際に起動する
+
+A browser-based **local working reference** now connects two separately
+persisted MotherShip mailboxes, Gateway queued message delivery and ACK,
+BAKU source-fragment inspection, and ARC DOM selector exploration. It
+runs without AI-service credentials, a Google Apps Script deployment, npm
+installation, or an Android device:
+
+```sh
+node mini/start.mjs
+```
+
+Open **http://127.0.0.1:8766/** from the same PC. See the
+[Japanese quick start, architecture and boundaries](mini/README.md).
+This is an operational local prototype, **not** a reconstruction or proof of
+the historical cloud system's complete end-to-end autonomous integration.
+Local messages persist in git-ignored JSON; code excerpts are only inspected,
+not run or saved. The server binds loopback only.
+
 ## Start with the reusable code
 
 | Area | Standalone reference module | Demonstrated behavior |

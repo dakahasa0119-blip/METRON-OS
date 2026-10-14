@@ -11,6 +11,16 @@ This repository contains **legacy experimental code** (Android WebView, Apps Scr
 - New `reusable/` components do **not** supply cryptographic authentication, secure distributed consensus, an isolated sandbox, audited parser or production-grade runtime.
 - The isolated selector picker is for automation on pages you own or are authorized to inspect and operate.
 
+## METRON Mini local runtime
+
+The runnable `mini/` integration intentionally binds only `127.0.0.1`.
+It does not authenticate local processes or provide protection from users
+sharing the same host. Messages and static inspection summaries persist
+in a gitignored JSON directory; do not submit secrets or run two writer
+processes using one data directory. Source snippets are not executed or saved,
+but symbol names and risk flags are recorded. There is no external AI
+access, automated code deployment or network-wide worker authorization.
+
 ## Vulnerability reports
 
 Please use GitHub's private vulnerability reporting feature if enabled for this repository, rather than posting secrets or exploitable details in a public issue. If private reporting is unavailable, open a public issue without sensitive payloads and ask for a secure contact path.

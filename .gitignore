@@ -22,3 +22,7 @@ Thumbs.db
 # ARC health watch runtime
 .arc_health_watch.pid
 .arc_health_watch.log
+
+# METRON Mini private local memory (never commit user messages)
+.metron-mini-data/
+mini/.metron-mini-data/
