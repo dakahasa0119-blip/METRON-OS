@@ -19,6 +19,22 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## BAKU now has an optional real LLM-driven multi-file repair worker
+
+METRON Mini includes a guarded **agentic BAKU workflow**:
+a real local Ollama model or authenticated OpenAI API can inspect multiple
+source files and actual failing test output, suggest file changes, receive
+real feedback from separate Node test execution and iterate. A hidden
+acceptance suite is used only after public tests pass. All changes remain
+inside a disposable first-party project; incident attempts are checkpointed
+for explicit restart.
+
+**This path cannot run autonomously on the observed PC without installing/
+authenticating a real coding model.** Tests inject a labelled fixture
+responder solely to verify the real test/execution and retry control plane.
+This is not evidence that an actual LLM has already fixed a new bug on that
+PC. Read the [BAKU Mini agent runner guide](docs/BAKU_AGENTIC_MINI_RUNNER_2026-10-14.md).
+
 ## BAKU is an actual coding-agent repair loop — NOT a mutation toy
 
 **BAKU's intended behavior is the same real investigate → edit → test →
