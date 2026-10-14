@@ -120,3 +120,38 @@ test("Ollama reasoner endpoint emits a JSON content string without a fake fallba
     fetcher:mock});
   assert.match(raw,/fixture answer/);
 });
+
+
+test("BAKU incident resumes in another invocation using pinned saved source + prior failures",()=>withTemp(async root=>{
+  const goal="Invoice total is wrong: preserve existing verified source changes";
+  const first=await runAgenticRepair({
+    root,goal,maxAttempts:1,
+    askModel:async()=>JSON.stringify({
+      diagnosis:"Correct unit price first",
+      changes:[{path:"src/pricing.mjs",content:repairPricing}]
+    })
+  });
+  assert.equal(first.status,"unresolved");
+  assert.equal(first.attempts.length,1);
+  const restart=await runAgenticRepair({
+    root,goal,maxAttempts:2,resumeRunId:first.runId,
+    askModel:async prompt=>{
+      assert.match(prompt,/Correct unit price first/);
+      assert.match(prompt,/return base - discount/);
+      return JSON.stringify({
+        diagnosis:"Multiply corrected unit price by quantity",
+        changes:[{path:"src/invoice.mjs",content:repairInvoice}]
+      });
+    }
+  });
+  assert.equal(restart.status,"verified_candidate");
+  assert.equal(restart.runId,first.runId);
+  assert.equal(restart.attempts.length,2);
+  assert.equal(restart.attempts[0].publicPassed,false);
+  assert.equal(restart.attempts[1].publicPassed,true);
+  assert.equal(restart.attempts[1].holdoutPassed,true);
+  await assert.rejects(()=>runAgenticRepair({
+    root,goal,maxAttempts:3,resumeRunId:first.runId,
+    askModel:async()=>{throw new Error("must not run");}
+  }),/unresumable_or_changed_incident/);
+}));
