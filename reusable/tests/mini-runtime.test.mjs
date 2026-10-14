@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MetronMiniRuntime } from "../../mini/runtime.mjs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createMiniServer } from "../../mini/server.mjs";
 
 function isolated(fn){
@@ -116,3 +118,34 @@ test("wrong recipient and conflicting ID preserve message integrity",()=>isolate
   assert.equal(runtime.state().ships.A.count,1);
   assert.equal(runtime.state().ships.B.count,1);
 }));
+
+
+const execFileAsync=promisify(execFile);
+function availableChromium(){
+  return [
+    process.env.CHROME_BIN,"/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable","/usr/bin/chromium",
+    process.env.PROGRAMFILES&&join(process.env.PROGRAMFILES,"Google","Chrome","Application","chrome.exe"),
+    process.env["PROGRAMFILES(X86)"]&&join(process.env["PROGRAMFILES(X86)"],"Microsoft","Edge","Application","msedge.exe")
+  ].filter(Boolean).find(existsSync)||null;
+}
+test("METRON Mini dashboard starts ARC DOM checks in a real Chromium browser",
+  {skip:!availableChromium()},
+  ()=>isolatedAsync(async root=>{
+    const server=await createMiniServer({root:join(root,"data"),port:0});
+    try{
+      const browser=availableChromium();
+      const args=["--headless=new","--disable-gpu","--disable-background-networking",
+        "--no-first-run","--no-default-browser-check","--disable-extensions",
+        "--virtual-time-budget=4000","--user-data-dir="+join(root,"browser"),
+        "--dump-dom",server.url+"/"];
+      if(process.getuid?.()===0)args.unshift("--no-sandbox");
+      const {stdout}=await execFileAsync(browser,args,{
+        timeout:30000,maxBuffer:8*1024*1024,windowsHide:true
+      });
+      assert.match(stdout,/id="health">RUNNING<\/small>/);
+      assert.match(stdout,/id="arc-ready">3 \/ 3<\/span>/);
+      assert.match(stdout,/METRON Mini OS/);
+    }finally{await server.close();}
+  })
+);
