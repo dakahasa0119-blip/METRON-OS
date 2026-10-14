@@ -1,5 +1,5 @@
 // ARC manual DOM picker. Installed only after the user clicks the extension.
-// Never reads password fields, cookies, localStorage, or conversation history.
+// Never accesses credentials, browser storage, or prior conversation content.
 (()=>{
  if(window.__metronArcPickerActive)return;
  window.__metronArcPickerActive=true;
