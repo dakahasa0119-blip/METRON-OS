@@ -35,7 +35,7 @@ The existing Gateway state machine is single-process and in-memory. Its state tr
 
 ## Installation
 
-Each `reusable/<package>/` directory is independently npm-packable and contains the same scoped MIT permission for its files. No npm registry publishing is claimed. The rest of the historical repository remains outside the new license scope.
+Each `reusable/<package>/` directory is independently npm-packable and contains the same scoped MIT permission for its files. No npm registry publishing is claimed. Original first-party historical METRON bodies now have separate Apache-2.0 coverage; see the root LICENSING.md. Third-party content retains its upstream license.
 
 ## Follow-up experiments, not yet accomplished
 
