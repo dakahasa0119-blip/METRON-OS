@@ -37,12 +37,24 @@ export class ArcHandoff {
     if(("[ARC external UI response] "+text).length>1024)
       throw fail("arc_reply_exceeds_gateway_limit");
     session.used=true;
-    const result=this.runtime.submit({
-      from:"A",to:"B",messageId:"m_"+randomBytes(16).toString("hex"),
-      message:"[ARC external UI response] "+text,code:"",
-      arc:{selectorsChecked:true}
-    });
-    return {accepted:result.job?.state==="done",messageId:result.messageId,
-      jobState:result.job?.state,receiptHash:sha(text)};
+    const messageId="m_"+randomBytes(16).toString("hex");
+    let job;
+    try{
+      const result=this.runtime.submit({
+        from:"A",to:"B",messageId,
+        message:"[ARC external UI response] "+text,code:"",
+        arc:{selectorsChecked:true}
+      });
+      job=result.job;
+    }catch(error){
+      // submit persists before draining. A later delivery/state failure must
+      // not invite a fresh handoff that would enqueue the same reply twice.
+      try{job=this.runtime.gateway?.getJob(messageId);}catch{}
+      if(!job)throw error;
+    }
+    // A bounded drain can leave this job queued. Submission consumes the
+    // one-time session, but only a completed job confirms mailbox delivery.
+    return {submitted:true,accepted:job?.state==="done",messageId,
+      jobState:job?.state,receiptHash:sha(text)};
   }
 }
