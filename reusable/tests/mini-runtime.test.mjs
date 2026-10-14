@@ -50,11 +50,12 @@ test("restart restores three persistent files; exact replay doesn't create dupli
   runtime=new MetronMiniRuntime(root);
   assert.equal(runtime.state().ships.A.count,1);
   assert.equal(runtime.state().ships.B.count,1);
-  const result=runtime.submit(req("replay","function changed(){return 2;}"));
+  const result=runtime.submit(req("replay"));
   assert.equal(result.deduplicated,true);
   assert.equal(result.state.gateway.jobs,2);
   assert.equal(runtime.state().ships.B.count,1);
   assert.throws(()=>runtime.submit({...req("replay"),message:"different body"}),/messageId has different content/);
+  assert.throws(()=>runtime.submit(req("replay","function changed(){return 2;}")),/different content/);
 }));
 
 test("rejects invalid routes and oversized messages; code is not executed",()=>isolated(root=>{
