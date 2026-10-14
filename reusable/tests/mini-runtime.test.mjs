@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MetronMiniRuntime } from "../../mini/runtime.mjs";
+import { writeAtomicJson } from "../gateway-jobs/checkpoint.mjs";
+import { receiveMailboxMessage } from "../mothership/mailbox.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createMiniServer } from "../../mini/server.mjs";
@@ -149,3 +151,42 @@ test("METRON Mini dashboard starts ARC DOM checks in a real Chromium browser",
     }finally{await server.close();}
   })
 );
+
+
+test("B to A requests create an independent automatic ACK from A to B",()=>isolated(root=>{
+  const runtime=new MetronMiniRuntime(root);
+  const sent=runtime.submit({
+    messageId:"reverse",from:"B",to:"A",message:"Back from MotherShip B",code:""
+  });
+  assert.equal(sent.job.state,"done");
+  assert.equal(runtime.state().ships.A.messages[0].sender,"B");
+  assert.equal(runtime.state().ships.B.messages[0].sender,"A");
+  assert.equal(runtime.state().ships.B.messages[0].type,"ACK");
+}));
+
+test("Mini recovers crash after receiver persisted before Gateway ACK without duplicate",()=>isolated(root=>{
+  let now=1000;
+  let runtime=new MetronMiniRuntime(root,{now:()=>now,leaseMs:10});
+  const envelope={
+    id:"crashOriginal",sender:"A",recipient:"B",
+    type:"OBSERVE",body:"simulated local crash",traceId:"traceCrash"
+  };
+  runtime.gateway.enqueue(envelope.id,{
+    envelope,meta:{workClass:"general",codeDigest:"",baku:{inspected:false,cards:[]}}
+  });
+  const lease=runtime.gateway.claim("lost-worker");
+  assert.equal(lease.id,envelope.id);
+  const delivered=receiveMailboxMessage(runtime.mailbox("B"),envelope);
+  assert.equal(delivered.status,"accepted");
+  writeAtomicJson(runtime.shipFiles.B,delivered.mailbox);
+  // Worker dies before completion; lease expires, then a fresh Mini restores.
+  now=1011;
+  runtime=new MetronMiniRuntime(root,{now:()=>now,leaseMs:10});
+  assert.equal(runtime.gateway.getJob(envelope.id).state,"pending");
+  runtime.drain();
+  const state=runtime.state();
+  assert.equal(state.ships.B.count,1);
+  assert.equal(state.ships.A.count,1);
+  assert.equal(runtime.gateway.getJob(envelope.id).state,"done");
+  assert.equal(runtime.gateway.getJob(envelope.id).result.delivery,"duplicate");
+}));
