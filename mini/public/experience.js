@@ -291,7 +291,8 @@ async function updateAgentHealth() {
     $("agent-health").textContent=
       "LOCAL OLLAMA: "+(x.configured.ollama?"モデル名あり":"モデル名なし")+
       " / OPENAI API: "+(x.configured.openai?"認証設定あり":"認証設定なし")+
-      " / これらは実際のモデル応答の成功保証ではありません。";
+      " / CLAUDE CLI: アカウントのログイン確認が必要"+
+      " / 設定の有無は実際のモデル応答の成功保証ではありません。";
   }catch(e){$("agent-health").textContent="接続状態不明: "+e.message;}
 }
 $("try-agentic-repair").addEventListener("click",async()=>{
