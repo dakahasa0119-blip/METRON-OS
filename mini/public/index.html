@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>METRON Mini OS — Local Console</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/client.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="identity">
+        <div class="mark">M<span>•</span></div>
+        <div>
+          <div class="eyebrow">REFERENCE IMPLEMENTATION · 2026</div>
+          <h1>METRON <em>Mini OS</em></h1>
+          <p>記憶を保ち、指示を届け、復旧を検査する。ローカルで動く最小構成。</p>
+        </div>
+      </div>
+      <div class="top-status"><span class="live-dot"></span><span>LOCAL / OFFLINE</span><small id="health">Connecting…</small></div>
+    </header>
+
+    <section class="architecture" aria-label="コンポーネント構成">
+      <div class="system-chip"><span class="chip-symbol">01</span><span><strong>MotherShip</strong><small>A / B の独立記憶</small></span></div>
+      <div class="connector-line"></div>
+      <div class="system-chip"><span class="chip-symbol">02</span><span><strong>Gateway</strong><small>キュー・配送・ACK</small></span></div>
+      <div class="connector-line"></div>
+      <div class="system-chip"><span class="chip-symbol">03</span><span><strong>BAKU</strong><small>コード断片の静的検査</small></span></div>
+      <div class="connector-line"></div>
+      <div class="system-chip"><span class="chip-symbol">04</span><span><strong>ARC</strong><small>DOM探索・手動選択</small></span></div>
+    </section>
+
+    <main class="main-grid">
+      <section class="panel composer">
+        <div class="section-top">
+          <div><div class="eyebrow">MISSION CONTROL</div><h2>メッセージを送信</h2></div>
+          <span class="tag">A ↔ B</span>
+        </div>
+        <form id="mission-form">
+          <div class="route-picker">
+            <label>送信元<select id="from-ship"><option value="A">母艦 A</option><option value="B">母艦 B</option></select></label>
+            <span class="route-arrow">→</span>
+            <label>送信先<select id="to-ship"><option value="B">母艦 B</option><option value="A">母艦 A</option></select></label>
+          </div>
+          <label for="message-text">送信する指示・メッセージ</label>
+          <textarea id="message-text" rows="4" maxlength="1024" required>METRON Mini OS の通信と記憶を確認してください。</textarea>
+          <label for="code-excerpt">BAKUに検査させるコード（任意・実行しません）</label>
+          <textarea id="code-excerpt" rows="4" maxlength="4000" spellcheck="false">function sampleStatus() { return "ready"; }</textarea>
+          <div class="form-footer">
+            <small>メッセージはローカル保存。コード本文は保存せず、検査結果のみ記録。</small>
+            <button id="submit-mission" type="submit">ミッションを実行 <span aria-hidden="true">↗</span></button>
+          </div>
+        </form>
+        <div class="flash" id="notice" aria-live="polite">起動状態を取得しています…</div>
+      </section>
+      <section class="panel metrics-panel">
+        <div class="section-top">
+          <div><div class="eyebrow">CONTINUITY ENGINE</div><h2>運用状態</h2></div>
+          <button class="subtle" id="refresh" type="button">再読み込み ↻</button>
+        </div>
+        <div class="metric-row">
+          <div><span class="metric" id="metric-jobs">—</span><small>Gateway のジョブ</small></div>
+          <div><span class="metric" id="metric-delivered">—</span><small>到着済みメッセージ</small></div>
+          <div><span class="metric" id="metric-baku">—</span><small>最後に抽出したカード</small></div>
+        </div>
+        <div class="divider"></div>
+        <div class="eyebrow">ARC / LOCAL DOM</div>
+        <div class="arc-status"><strong id="arc-health">探索中</strong><span id="arc-ready">0 / 3</span></div>
+        <p class="hint">下のボタンを押し、この画面内の入力欄・送信ボタン・受信欄をクリックするとセレクタを記録します。外部サイトは操作しません。</p>
+        <div class="picker-row">
+          <button class="subtle" type="button" data-picker="input">入力欄を選択</button>
+          <button class="subtle" type="button" data-picker="send">送信ボタンを選択</button>
+          <button class="subtle" type="button" data-picker="resp">受信欄を選択</button>
+        </div>
+        <div id="selector-output" class="selector-output">DOMの探索結果を表示します。</div>
+      </section>
+
+      <section class="panel ship-panel" id="ship-a">
+        <div class="section-top"><div><div class="eyebrow">PERSISTED NODE A</div><h2>母艦 A</h2></div><span class="tag">独立JSON</span></div>
+        <div id="ship-a-messages" class="inbox"><p class="empty">まだ記録はありません。</p></div>
+      </section>
+      <section class="panel ship-panel" id="ship-b">
+        <div class="section-top"><div><div class="eyebrow">PERSISTED NODE B</div><h2>母艦 B</h2></div><span class="tag">独立JSON</span></div>
+        <div id="ship-b-messages" class="inbox"><p class="empty">まだ記録はありません。</p></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-top"><div><div class="eyebrow">OPERATIONS / EVENT LOG</div><h2>Gateway 配送履歴</h2></div><span class="tag">再起動しても保持</span></div>
+        <div class="log" id="gateway-log"><p class="empty">配送イベントがありません。</p></div>
+      </section>
+    </main>
+    <footer>
+      <span>METRON Mini OS · Apache-2.0 original integration / MIT reusable modules</span>
+      <span>単一PC向け参考実装 · 外部AI・GASへ接続しません · 本番運用不可</span>
+    </footer>
+  </div>
+</body>
+</html>
