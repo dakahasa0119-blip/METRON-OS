@@ -202,3 +202,18 @@ node --test reusable/tests/*.test.mjs
 - This is a **working local reference app** only. It is not a live integration
   with the four historic deployments, real external AI authentication,
   autonomous code repair or an Android device.
+
+## 2026-10-14: guided METRON civilization experience
+
+- New `mini/civilization.mjs` and browser `/experience` guide:
+  independent village knowledge, actual Gateway transport/ACK, explicit
+  knowledge adoption or quarantine, parent-linked rule-based knowledge
+  inheritance, BAKU synthetic salvage and isolated crash/replay demonstration.
+- Real persisted Village Square ledger survives Mini process recreation.
+  Decisions are checkpointed before in-memory acceptance to fail closed on
+  storage errors.
+- Tests use actual temporary local storage, HTTP API, deliberate adversarial
+  input, and a real Chromium render of the guided page.
+- The experience is educational and deterministic; **no claim of autonomous
+  AI reasoners, external LLM calls, genuine P2P multi-host villages, live
+  unknown-code repair, or historical system restoration**.

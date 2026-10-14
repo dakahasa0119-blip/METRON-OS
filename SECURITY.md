@@ -28,3 +28,13 @@ Please use GitHub's private vulnerability reporting feature if enabled for this 
 ## Licensing scope
 
 First-party original METRON source is granted under Apache License 2.0 (root `LICENSE` and `NOTICE`), while `reusable/` is granted under MIT. See `LICENSING.md` for exceptions. This grant does not cover third-party bundled binaries, SDKs, other rightsholders' contributions, credentials, private logs or access to online services.
+
+## Village Square concept experience
+
+The `/experience` flow may store the user's supplied knowledge text in the
+local `civilization.json` and in MotherShip/Gateway checkpoints. Avoid
+secrets and sensitive material. Adoption is explicit; it is not automatic
+instruction injection into a remote model. Generated inheritance proposals
+are **deterministic fixtures**, not authenticated independent AI judgments.
+The miniature Gateway and Village Square share one process and do not offer
+multi-writer consistency or security boundaries against other local users.

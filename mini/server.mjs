@@ -6,9 +6,13 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MetronMiniRuntime } from "./runtime.mjs";
+import { CivilizationExperience } from "./civilization.mjs";
 
 const UI=new Map([
   ["/",["./public/index.html","text/html; charset=utf-8"]],
+  ["/experience",["./public/experience.html","text/html; charset=utf-8"]],
+  ["/experience.js",["./public/experience.js","text/javascript; charset=utf-8"]],
+  ["/experience.css",["./public/experience.css","text/css; charset=utf-8"]],
   ["/client.js",["./public/client.js","text/javascript; charset=utf-8"]],
   ["/style.css",["./public/style.css","text/css; charset=utf-8"]],
   ["/arc-kit.mjs",["../reusable/arc-dom/selector-kit.mjs","text/javascript; charset=utf-8"]]
@@ -44,6 +48,7 @@ export async function createMiniServer({root,port=8766}={}){
   if(!Number.isInteger(port)||port<0||port>65535)
     throw new Error("port must be 0-65535");
   const runtime=new MetronMiniRuntime(root);
+  const civilization=new CivilizationExperience(runtime.root,runtime);
   const server=createServer(async(req,res)=>{
     const currentPort=server.address()?.port||port;
     if(!hostAllowed(req.headers.host,currentPort))
@@ -56,11 +61,13 @@ export async function createMiniServer({root,port=8766}={}){
         "X-Content-Type-Options":"nosniff","Cache-Control":"no-store"});
       return res.end(item.body);
     }
+    if(req.method==="GET"&&url==="/api/civilization/state")
+      return send(res,200,civilization.state());
     if(req.method==="GET"&&url==="/api/state")
       return send(res,200,runtime.state());
     if(req.method==="GET"&&url==="/api/health")
       return send(res,200,{status:"ok",mode:"local-only"});
-    if(req.method==="POST"&&["/api/mission","/api/drain"].includes(url)){
+    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action"].includes(url)){
       if(req.headers["x-metron-mini"]!=="1")
         return send(res,403,{error:"explicit_local_request_header_required"});
       const origin=req.headers.origin;
@@ -70,6 +77,17 @@ export async function createMiniServer({root,port=8766}={}){
         return send(res,415,{error:"json_required"});
       try{
         const body=await readJson(req);
+        if(url==="/api/civilization/action") {
+          if(!body||typeof body!=="object"||Array.isArray(body))
+            return send(res,400,{error:"invalid_concept_action"});
+          const result=body.action==="publish"?civilization.publish(body):
+            body.action==="review"?civilization.review(body):
+            body.action==="derive"?civilization.derive(body):
+            body.action==="salvage"?civilization.salvage():
+            body.action==="recovery"?civilization.recoveryDemo():null;
+          if(!result)return send(res,400,{error:"unknown_concept_action"});
+          return send(res,200,result);
+        }
         if(url==="/api/mission")
           return send(res,200,runtime.submit(body));
         return send(res,200,{processed:runtime.drain(),state:runtime.state()});
@@ -94,5 +112,5 @@ export async function createMiniServer({root,port=8766}={}){
     clearInterval(interval);
     await new Promise(resolve=>server.close(resolve));
   };
-  return {server,runtime,url:"http://127.0.0.1:"+server.address().port,close};
+  return {server,runtime,civilization,url:"http://127.0.0.1:"+server.address().port,close};
 }
