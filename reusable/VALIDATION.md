@@ -232,3 +232,18 @@ node --test reusable/tests/*.test.mjs
   disconnected, rather than substituted with nonoriginal demo logic.
 - Rewrote the guided concept tests to check both levels and preserve the
   original incorrectly labeled experience checkpoint read-only.
+
+## 2026-10-14: optional real external AI and bounded PoUC/repair paths
+
+- Three official external AI API adapters, with no fabricated fallback, plus
+  localhost Ollama verdict requiring all three real outputs.
+- Bounded PoUC source syntax verification and BAKU DNA analysis with
+  recomputed SHA-256 and deduplicating persistent local proof ledger.
+- Isolated automatic BAKU cycle actually injects a syntax defect, detects
+  it, restores a known-good copy, recompiles, hashes, reads back and reports
+  an unchanged production environment.
+- Tests use fake HTTP provider fixtures **only** for request/protocol
+  validation; they are not proof of actual cloud AI consultations.
+- The observed Windows host had Claude Code installed but no available
+  Ollama server, Gemini CLI or standalone local LLM, so fully realized
+  live tri-consensus and final local-model reasoning remain unverified.

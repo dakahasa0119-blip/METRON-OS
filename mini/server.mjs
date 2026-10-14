@@ -7,6 +7,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MetronMiniRuntime } from "./runtime.mjs";
 import { CivilizationExperienceV3 } from "./civilization-v3.mjs";
+import { PoUCLedger, performUsefulComputation } from "./pouc.mjs";
+import { runIsolatedRecoveryCycle } from "./isolated-repair.mjs";
+import { modelAvailability,consultAndJudge } from "./ai-consensus.mjs";
 
 const UI=new Map([
   ["/",["./public/index.html","text/html; charset=utf-8"]],
@@ -49,6 +52,7 @@ export async function createMiniServer({root,port=8766}={}){
     throw new Error("port must be 0-65535");
   const runtime=new MetronMiniRuntime(root);
   const civilization=new CivilizationExperienceV3(runtime.root,runtime);
+  const pouc=new PoUCLedger(runtime.root);
   const server=createServer(async(req,res)=>{
     const currentPort=server.address()?.port||port;
     if(!hostAllowed(req.headers.host,currentPort))
@@ -61,13 +65,18 @@ export async function createMiniServer({root,port=8766}={}){
         "X-Content-Type-Options":"nosniff","Cache-Control":"no-store"});
       return res.end(item.body);
     }
+    if(req.method==="GET"&&url==="/api/advanced/status")
+      return send(res,200,{providers:modelAvailability(),
+        localLlm:"requires_installed_local_Ollama_and_Metron_model",
+        mining:pouc.status(),repair:"isolated_known_good_recovery_only",
+        externalCalls:"require_per_request_consent"});
     if(req.method==="GET"&&url==="/api/civilization/state")
       return send(res,200,civilization.state());
     if(req.method==="GET"&&url==="/api/state")
       return send(res,200,runtime.state());
     if(req.method==="GET"&&url==="/api/health")
       return send(res,200,{status:"ok",mode:"local-only"});
-    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action"].includes(url)){
+    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action","/api/advanced/action"].includes(url)){
       if(req.headers["x-metron-mini"]!=="1")
         return send(res,403,{error:"explicit_local_request_header_required"});
       const origin=req.headers.origin;
@@ -77,6 +86,29 @@ export async function createMiniServer({root,port=8766}={}){
         return send(res,415,{error:"json_required"});
       try{
         const body=await readJson(req);
+        if(url==="/api/advanced/action"){
+          if(!body||typeof body!=="object"||Array.isArray(body))
+            return send(res,400,{error:"invalid_advanced_action"});
+          if(body.action==="consult"){
+            if(body.allowExternalCalls!==true)
+              return send(res,403,{error:"explicit_external_ai_consent_required"});
+            // Never invent multi-model output when auth/model setup is absent.
+            const result=await consultAndJudge(body.question);
+            return send(res,200,result);
+          }
+          if(body.action==="pouc"){
+            const source={baseline:body.baseline,candidate:body.candidate};
+            const claimed=performUsefulComputation(source);
+            const result=pouc.contribute(source,claimed);
+            return send(res,200,{contribution:result,proof:claimed,
+              credits:pouc.status(),note:"No tokens or payments minted"});
+          }
+          if(body.action==="repair"){
+            const proof=runIsolatedRecoveryCycle();
+            return send(res,200,{proof,appliedToProduction:false});
+          }
+          return send(res,400,{error:"unknown_advanced_action"});
+        }
         if(url==="/api/civilization/action") {
           if(!body||typeof body!=="object"||Array.isArray(body))
             return send(res,400,{error:"invalid_concept_action"});
@@ -113,5 +145,5 @@ export async function createMiniServer({root,port=8766}={}){
     clearInterval(interval);
     await new Promise(resolve=>server.close(resolve));
   };
-  return {server,runtime,civilization,url:"http://127.0.0.1:"+server.address().port,close};
+  return {server,runtime,civilization,pouc,url:"http://127.0.0.1:"+server.address().port,close};
 }

@@ -48,3 +48,18 @@ local shared-folder adapter. JSON SHA-256 does not authenticate external
 senders. The owner configures the provisional noise filter level and makes
 the final adopt/quarantine decision. Legacy `civilization.json` is retained
 unaltered and not migrated into false village identities.
+
+## Advanced Mini AI, PoUC and BAKU modes
+
+Actual OpenAI, Gemini and Claude API requests require environment credentials,
+model name, and **per-request explicit browser consent**. Real services may
+charge the operator. No credentials are accepted in HTTP JSON bodies or
+persisted by Mini. The only accepted local LLM endpoint is localhost Ollama
+on port 11434; its outputs cannot approve deployment.
+
+PoUC uses Node's syntax compiler without running submitted code, and stores
+only proof metadata, not the raw proposed source. The repair lab touches only
+a newly created temporary path and restores a deliberately injected syntax
+fault from an independently checksum-pinned known-good source. This does
+**not** provide a secure sandbox for hostile runtime execution or allow
+unattended patching of a user's real repository.
