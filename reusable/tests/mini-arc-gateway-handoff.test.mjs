@@ -28,35 +28,32 @@ test("one-time ARC handoff delivers real response to same-village MotherShip B",
  }finally{await app.close();}
 }));
 
-test("bounded drain returns a pending ARC receipt and eventually delivers once",()=>temp(async root=>{
- const app=await createMiniServer({root,port:0});
- const call=async body=>{const r=await fetch(app.url+"/api/arc/handoff",{
-  method:"POST",headers:{"Content-Type":"application/json","X-Metron-Mini":"1"},
-  body:JSON.stringify(body)});return {status:r.status,data:await r.json()};};
- try{
-  // Seed real durable work without submit's automatic bounded drain.
-  for(let i=0;i<101;i++)app.runtime.gateway.enqueue("backlog_"+i,{
-   envelope:{id:"backlog_"+i,sender:"A",recipient:"B",type:"ACK",
-    body:"Earlier work",traceId:"backlog_trace_"+i},meta:{}});
-  const session=(await call({action:"start"})).data;
-  const text="ARC reply waiting behind the queue";
-  const response=await call({action:"deliver",...session,text});
-  assert.equal(response.status,200);
-  const receipt=response.data;
-  assert.equal(receipt.submitted,true);
-  assert.equal(receipt.accepted,false);
-  assert.equal(receipt.jobState,"pending");
-  assert.match(receipt.messageId,/^m_[a-f0-9]{32}$/);
-  assert.equal(app.runtime.mailbox("B").messages.length,100);
-  assert.equal(app.runtime.gateway.getJob(receipt.messageId).state,"pending");
-  assert.equal((await call({action:"deliver",...session,text})).status,400);
-  app.runtime.drain();
-  app.runtime.drain();
-  assert.equal(app.runtime.gateway.getJob(receipt.messageId).state,"done");
-  assert.equal(app.runtime.mailbox("B").messages.filter(x=>x.id===receipt.messageId).length,1);
-  assert.equal(app.runtime.mailbox("A").messages.filter(x=>x.id==="ack_"+receipt.messageId).length,1);
-  assert.equal(app.runtime.gateway.queue.snapshot().jobs.filter(x=>x.payload?.envelope?.body.includes(text)).length,1);
- }finally{await app.close();}
+test("bounded drain returns a pending ARC receipt and eventually delivers once",()=>temp(root=>{
+ const runtime=new MetronMiniRuntime(root);
+ const handoff=new ArcHandoff(runtime);
+ // Exercise the real persistent queue synchronously, without the HTTP server's
+ // periodic worker racing the backlog between awaited network calls. Endpoint
+ // serialization and replay rejection are covered by the HTTP test above.
+ for(let i=0;i<101;i++)runtime.gateway.enqueue("backlog_"+i,{
+  envelope:{id:"backlog_"+i,sender:"A",recipient:"B",type:"ACK",
+   body:"Earlier work",traceId:"backlog_trace_"+i},meta:{}});
+ const session=handoff.start();
+ const text="ARC reply waiting behind the queue";
+ const receipt=handoff.deliver({...session,text});
+ assert.equal(receipt.submitted,true);
+ assert.equal(receipt.accepted,false);
+ assert.equal(receipt.jobState,"pending");
+ assert.match(receipt.messageId,/^m_[a-f0-9]{32}$/);
+ assert.equal(runtime.mailbox("B").messages.length,100);
+ assert.equal(runtime.gateway.getJob(receipt.messageId).state,"pending");
+ assert.throws(()=>handoff.deliver({...session,text}),
+  {code:"arc_session_expired_or_used"});
+ runtime.drain();
+ runtime.drain();
+ assert.equal(runtime.gateway.getJob(receipt.messageId).state,"done");
+ assert.equal(runtime.mailbox("B").messages.filter(x=>x.id===receipt.messageId).length,1);
+ assert.equal(runtime.mailbox("A").messages.filter(x=>x.id==="ack_"+receipt.messageId).length,1);
+ assert.equal(runtime.gateway.queue.snapshot().jobs.filter(x=>x.payload?.envelope?.body.includes(text)).length,1);
 }));
 
 test("failure after durable enqueue returns the existing pending ARC job",()=>temp(root=>{
