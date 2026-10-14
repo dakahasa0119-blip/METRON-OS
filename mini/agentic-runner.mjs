@@ -12,6 +12,7 @@ import {createHash,randomUUID} from "node:crypto";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {readCheckpoint,writeAtomicJson} from "../reusable/gateway-jobs/checkpoint.mjs";
+import {claudeCliReasoner} from "./claude-cli.mjs";
 
 const execAsync=promisify(execFile);
 const sha=s=>createHash("sha256").update(s,"utf8").digest("hex");
@@ -20,7 +21,7 @@ const SRC=["src/pricing.mjs","src/invoice.mjs"];
 const TESTS=["tests/public.test.mjs","tests/holdout.test.mjs"];
 const FIXTURE=new URL("./fixtures/pricing/",import.meta.url);
 const basename=path=>new URL(path,FIXTURE);
-const allowedModel=new Set(["ollama","openai"]);
+const allowedModel=new Set(["ollama","openai","claude-cli"]);
 const trim=x=>typeof x==="string"?x.trim():"";
 const truncated=(s,n=1200)=>String(s??"").slice(-n);
 const jsonFrom=x=>{
@@ -122,6 +123,9 @@ export async function realRepairReasoner(prompt,{
   env=process.env,fetcher=fetch
 }={}){
   if(!allowedModel.has(provider))throw refused("unsupported_repair_provider");
+  if(provider==="claude-cli"){
+    return claudeCliReasoner(prompt,{env});
+  }
   if(provider==="ollama"){
     const model=trim(env.METRON_LOCAL_MODEL);
     if(!model)throw refused("local_repair_model_not_configured");
@@ -167,7 +171,8 @@ export async function runAgenticRepair({
   if(Number(process.versions.node.split(".")[0])<22)
     return {status:"blocked",reason:"node_22_required_for_permission_constrained_tests"};
   // Deny implicit cost: authenticated remote model needs caller confirmation.
-  if(!askModel && (provider||env.METRON_REPAIR_PROVIDER)==="openai" && allowExternalCalls!==true)
+  if(!askModel && ["openai","claude-cli"].includes(
+    provider||env.METRON_REPAIR_PROVIDER) && allowExternalCalls!==true)
     return {status:"blocked",reason:"external_model_operator_consent_required"};
   const fixture=pinnedFixture();
   if(resumeRunId!==null && (typeof resumeRunId!=="string"||
