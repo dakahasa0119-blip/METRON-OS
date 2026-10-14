@@ -74,7 +74,7 @@ Run `node reusable/examples/local-continuity-demo.mjs` to exercise ARC selector 
 
 ## Licensing
 
-MIT applies to this `reusable/` directory. See [LICENSE](LICENSE). It does not automatically cover existing Android or Apps Script source outside `reusable/`.
+MIT applies to this `reusable/` directory. See [LICENSE](LICENSE). Original first-party Android and Apps Script bodies outside `reusable/` are Apache-2.0 licensed, with exclusions for independently owned third-party material. See the [root license map](../LICENSING.md).
 
 ## Derivation
 
