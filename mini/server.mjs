@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MetronMiniRuntime } from "./runtime.mjs";
-import { CivilizationExperience } from "./civilization.mjs";
+import { CivilizationExperienceV2 } from "./civilization-v2.mjs";
 
 const UI=new Map([
   ["/",["./public/index.html","text/html; charset=utf-8"]],
@@ -48,7 +48,7 @@ export async function createMiniServer({root,port=8766}={}){
   if(!Number.isInteger(port)||port<0||port>65535)
     throw new Error("port must be 0-65535");
   const runtime=new MetronMiniRuntime(root);
-  const civilization=new CivilizationExperience(runtime.root,runtime);
+  const civilization=new CivilizationExperienceV2(runtime.root,runtime);
   const server=createServer(async(req,res)=>{
     const currentPort=server.address()?.port||port;
     if(!hostAllowed(req.headers.host,currentPort))
