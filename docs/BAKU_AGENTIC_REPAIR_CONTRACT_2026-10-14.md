@@ -126,3 +126,13 @@ functional model that BAKU must embody.
 Never describe limited operator mutation, example rollback or fixed
 strings as "BAKU's complete autonomous self-repair". Preserve them as
 narrow supporting components with explicit evidence limits.
+
+## Implemented first-party Mini agent-loop adapter
+
+The prototype described in
+[BAKU Mini agentic runner guide](BAKU_AGENTIC_MINI_RUNNER_2026-10-14.md)
+now covers real bounded worktree inspection/editing, actual Node process
+tests, failure-driven retries, sealed holdout evidence and durable incident
+checkpointing. It still requires real provider/model configuration and is
+restricted to a first-party fixture; independent model reasoning and safe
+generalized live-repository repair remain unproven.
