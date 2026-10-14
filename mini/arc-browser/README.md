@@ -29,3 +29,22 @@ into the overlay. No polling, background prompts, login automation, cookie
 access or automatic Gateway forwarding is performed. A change to ChatGPT's
 DOM may require selecting elements again. This is not yet a complete
 AutoDOM or Gateway-connected ARC.
+
+## Explicit ARC → Gateway transfer
+
+After capturing a reply, click **選択した回答をGatewayへ渡す**. The extension
+asks for a one-time optional permission to connect to
+`http://127.0.0.1:8766`. If approved, its background worker requests a
+short-lived one-time session token from the local Mini and delivers the
+captured text to the actual Gateway/MotherShip B mailbox. It reports the
+message ID only after the Gateway confirms completion. Replies over 950
+characters are refused, not silently truncated. No automatic transmission
+of conversation history, cookies, credentials or hidden browser state.
+
+The loopback Gateway accepts only a Chromium extension origin and the
+random one-time token for this operation. **This does not authenticate the
+identity of the human or AI provider**; any installed local extension
+origin can request a new session if it has localhost network access. Do
+not run the Mini endpoint on a public interface or with untrusted local
+extensions. The transport is functional but needs live signed-in ChatGPT
+and Chromium-extension end-to-end verification before a full ARC claim.
