@@ -30,4 +30,6 @@ The archive's `code.gs` (not cloud-only; a differently sized counterpart exists 
 
 ## Limits and next proof target
 
+**Publication update (2026-10-14):** the six cloud-only originals have now been preserved in [the historical archive](../archive/gas/METRON_GATEWAY/cloud-only-2026-09-28/README.md), with Apache 2.0 applying to first-party work. The five differing cloud sources still need a coherent dated release.
+
 This inventory identifies a preservation gap and narrows the plausible locations for future investigation. It is **not** a functional test, source release, secret scan, or independent proof of deployed behavior. Establishing actual MotherShip A/B cross-file communication still requires a grounded route from source spreadsheet -> sending operation -> destination spreadsheet -> destination log/ACK (preferably with a unique message identifier).
