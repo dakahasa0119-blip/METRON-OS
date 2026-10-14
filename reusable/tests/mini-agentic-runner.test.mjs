@@ -155,3 +155,30 @@ test("BAKU incident resumes in another invocation using pinned saved source + pr
     askModel:async()=>{throw new Error("must not run");}
   }),/unresumable_or_changed_incident/);
 }));
+
+
+test("interrupted before first model reply resumes from journal without losing original test failure",()=>withTemp(async root=>{
+  const goal="Lost model connection while investigating invoice bug";
+  const blocked=await runAgenticRepair({
+    root,goal,askModel:async()=>{throw new Error("simulated model interruption");}
+  });
+  assert.equal(blocked.status,"blocked");
+  assert.equal(blocked.attempts.length,0);
+  const recovered=await runAgenticRepair({
+    root,goal,resumeRunId:blocked.runId,
+    askModel:async prompt=>{
+      assert.match(prompt,/Public test failure output/);
+      return JSON.stringify({
+        diagnosis:"Both files must be changed",
+        changes:[
+          {path:"src/pricing.mjs",content:repairPricing},
+          {path:"src/invoice.mjs",content:repairInvoice}
+        ]
+      });
+    }
+  });
+  assert.equal(recovered.status,"verified_candidate");
+  assert.equal(recovered.runId,blocked.runId);
+  assert.equal(recovered.attempts.length,1);
+  assert.equal(recovered.attempts[0].holdoutPassed,true);
+}));
