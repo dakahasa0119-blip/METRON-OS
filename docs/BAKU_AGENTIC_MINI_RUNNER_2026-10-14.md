@@ -62,6 +62,26 @@ The current connected PC had **no running Ollama model**, and no confirmed
 OpenAI API credentials. Therefore the project cannot honestly claim that
 the live model performed an autonomous repair on that PC yet.
 
+## Restart and explicit continuation
+
+Each attempt checkpoints the actual candidate source (limited to the two
+first-party files), diagnosis, test evidence and SHA-256 in the private
+`baku-agent-journal` directory under the Mini data root. A failed or
+unresolved incident can be continued using the same `case_...` run ID,
+same goal, pinned fixture revision and the same model-provider identity.
+The runner reloads prior edits and failures and starts at the next attempt
+instead of losing context. A completed or holdout-rejected incident
+cannot be resumed for automatic optimization.
+
+The browser exposes an optional **保存された修復案件ID** field, populated
+after a nonterminal run. Restart requires explicit user action; an OpenAI
+request requires **fresh per-run consent** again. The implementation does
+not autonomously start a new paid external model call after reboot and
+does not persist model API credentials or environment variables.
+
+**Node 22+** is required for the repair test subprocess using
+`node --permission`; the rest of the Mini remains Node 20+.
+
 ## Evidence versus simulation
 
 The actual Node test suite uses a **labelled injected model response**
