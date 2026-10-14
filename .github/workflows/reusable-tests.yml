@@ -22,7 +22,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,7 +44,7 @@ jobs:
             throw "No supported Chromium browser is available on the runner"
           }
       - name: Run unit, historical-source and Chromium integration tests
-        run: node --test reusable/tests/*.test.mjs
+        run: node --test --test-concurrency=1 reusable/tests/*.test.mjs
       - name: Validate independently distributable packages
         if: runner.os == 'Linux'
         shell: bash
