@@ -19,6 +19,23 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## Experience the original METRON civilization concept / 構想を体験する
+
+**METRON is not merely a task-resume utility.** Its long-term concept is
+independent, memory-bearing AI villages exchanging knowledge through a
+Village Square, retaining provenance, rejecting untrusted information and
+surviving loss of individual external interfaces.
+
+A new **guided, interactive experience** is part of the runnable Mini OS.
+Start `node mini/start.mjs` and open
+**http://127.0.0.1:8766/experience** to share village knowledge, adopt or
+quarantine it as the recipient, see lineage on a new proposal, and inspect
+BAKU salvage and Gateway recovery. The network delivery and local persistence
+are real. The proposing/acceptance choices and derived idea example are
+explicitly human-controlled/deterministic, **not autonomous AI thinking**.
+
+Read the [original concept and precise evidence boundaries](docs/METRON_CIVILIZATION_EXPERIENCE_2026-10-14.md).
+
 ## Try the running METRON Mini OS / 実際に起動する
 
 A browser-based **local working reference** now connects two separately
