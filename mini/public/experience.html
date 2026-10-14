@@ -188,6 +188,7 @@
           <div class="trust-details" id="agent-health">AI修復ワーカーの接続状態を確認しています。</div>
           <label for="agent-model">実行するAI</label>
           <select id="agent-model">
+            <option value="auto">自動切替：Ollama → OpenAI（利用可能なAIへ引き継ぐ）</option>
             <option value="ollama">ローカルOllama（METRON_LOCAL_MODEL）</option>
             <option value="openai">OpenAI公式API（認証情報が必要）</option>
           </select>

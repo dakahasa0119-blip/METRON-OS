@@ -305,6 +305,7 @@ $("try-agentic-repair").addEventListener("click",async()=>{
       headers:{"Content-Type":"application/json","X-Metron-Mini":"1"},
       body:JSON.stringify({
         provider:$("agent-model").value,
+        providerOrder:$("agent-model").value==="auto"?["ollama","openai"]:null,
         goal:$("agent-goal").value,
         resumeRunId:$("agent-resume-id").value.trim()||null,
         allowExternalCalls:$("agent-cloud-consent").checked
