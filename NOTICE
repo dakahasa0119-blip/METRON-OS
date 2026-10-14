@@ -1,0 +1,18 @@
+METRON Project — original experimental source distribution
+Copyright 2025-2026 dakahasa0119-blip
+
+Original project and source repository:
+https://github.com/dakahasa0119-blip/METRON-OS
+
+Original systems: METRON OS (MotherShip), Gateway, BAKU, and ARC.
+
+The first-party historical source and documentation identified in
+LICENSING.md are licensed under the Apache License, Version 2.0.
+
+The separately developed software in reusable/ remains licensed under
+the MIT License supplied in reusable/LICENSE and the individual
+reusable/*/LICENSE files.
+
+Any third-party components keep their original copyrights and licenses.
+Apache License 2.0 does not grant trademark or endorsement rights.
+This NOTICE is attribution information and does not change license terms.
