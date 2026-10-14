@@ -241,3 +241,41 @@ $("try-auto-repair").addEventListener("click",async()=>{
   }catch(e){printAdvanced("repair-result","復旧未成立: "+e.message);}
 });
 refreshAdvanced();
+
+
+/** Candidate mutation discovery runs only for a pure, bounded function grammar.
+ * The development vectors select the patch. Holdout never guides search. */
+$("try-unknown-repair").addEventListener("click",async()=>{
+  const output=$("unknown-repair-result");
+  output.textContent="失敗テストから修正候補を探索しています…";
+  try {
+    const developmentTests=JSON.parse($("unknown-dev-tests").value);
+    const holdoutTests=JSON.parse($("unknown-holdout-tests").value);
+    const reply=await advancedRequest("discover-repair",{
+      source:$("unknown-code").value,
+      developmentTests,holdoutTests
+    });
+    const result=reply.result;
+    if(result.status==="behavioral_patch_verified") {
+      output.textContent=[
+        "修正候補: supplied tests に対して検証成功",
+        "変更: "+result.mutation.from+" → "+result.mutation.to,
+        "探索した候補数: "+result.candidatesTried,
+        "開発用テスト: "+result.developmentPassed+"件合格",
+        "別の確認テスト: "+result.holdoutPassed+" / "+result.holdoutTotal+"件合格",
+        "読み戻し検証: "+result.diskReadbackVerified,
+        "変更前 SHA-256: "+result.beforeSha256,
+        "変更後 SHA-256: "+result.afterSha256,
+        "提案されたソース（本体未変更）:\n"+result.candidateSource,
+        "本番への自動適用: なし"
+      ].join("\n");
+    } else {
+      output.textContent="修復成功とは判定できません: "+result.status+
+        (result.reason?" / "+result.reason:"")+
+        "\n元のソースは変更していません。";
+    }
+  }catch(error){
+    output.textContent="入力・修復処理が拒否されました: "+error.message+
+      "\n対応対象は純粋な短いJavaScript関数1個です。";
+  }
+});
