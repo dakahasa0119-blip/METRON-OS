@@ -1,4 +1,9 @@
 /**
+ * DEPRECATED historical mini educational prototype (DO NOT USE FOR METRON CONCEPT).
+ * Incorrectly modeled MotherShip A and B as distinct villages.
+ * Active original-protocol implementation is civilization-v3.mjs.
+ * Kept only so old V1 checkpoints are never silently rewritten.
+ *
  * METRON civilization concept experience, running on actual Mini primitives.
  *
  * A & B have separate knowledge, Village Square is an independent ledger,
