@@ -12,6 +12,7 @@ import {createHash,randomUUID} from "node:crypto";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {readCheckpoint,writeAtomicJson} from "../reusable/gateway-jobs/checkpoint.mjs";
+import {executeWithFailover} from "./ai-failover.mjs";
 
 const execAsync=promisify(execFile);
 const sha=s=>createHash("sha256").update(s,"utf8").digest("hex");
@@ -158,7 +159,7 @@ export async function realRepairReasoner(prompt,{
 export async function runAgenticRepair({
   root,goal="The invoice total is incorrect when a discounted unit is multiplied by quantity",
   maxAttempts=3,askModel,provider,env=process.env,fetcher,
-  allowExternalCalls=false,resumeRunId=null
+  allowExternalCalls=false,resumeRunId=null,providerOrder=null
 }={}){
   if(typeof root!=="string"||!root||
      typeof goal!=="string"||!goal.trim()||goal.length>500||
@@ -169,13 +170,26 @@ export async function runAgenticRepair({
   // Deny implicit cost: authenticated remote model needs caller confirmation.
   if(!askModel && (provider||env.METRON_REPAIR_PROVIDER)==="openai" && allowExternalCalls!==true)
     return {status:"blocked",reason:"external_model_operator_consent_required"};
+  const orderedProviders=providerOrder===null?null:providerOrder;
+  if(orderedProviders!==null&&(!Array.isArray(orderedProviders)||
+     orderedProviders.length<1||orderedProviders.length>3||
+     orderedProviders.some(p=>!["ollama","openai"].includes(p))))
+    throw refused("invalid_repair_provider_order");
+  if(!askModel&&orderedProviders?.includes("openai")&&allowExternalCalls!==true)
+    return {status:"blocked",reason:"external_model_operator_consent_required"};
+  const available={
+    ollama:!!trim(env.METRON_LOCAL_MODEL),
+    openai:!!(trim(env.OPENAI_API_KEY)&&trim(env.METRON_REPAIR_MODEL))
+  };
+  const selected=orderedProviders?orderedProviders[0]:provider||env.METRON_REPAIR_PROVIDER||"ollama";
+  const provenance=orderedProviders?"failover:"+orderedProviders.join(","):selected;
   const fixture=pinnedFixture();
   if(resumeRunId!==null && (typeof resumeRunId!=="string"||
      !/^case_[a-f0-9]{32}$/.test(resumeRunId)))
     throw refused("invalid_resume_run_id");
   const runId=resumeRunId??("case_"+randomUUID().replaceAll("-",""));
   const modelProvenance=askModel?"test_injected_not_real_ai":
-    provider||env.METRON_REPAIR_PROVIDER||"ollama";
+    provenance;
   const prior=resumeRunId?
     readCheckpoint(join(root,"baku-agent-journal",runId+".json")):null;
   if(resumeRunId){
@@ -227,10 +241,27 @@ export async function runAgenticRepair({
       });
       let proposed;
       try{
-        const raw=await (askModel||((p)=>realRepairReasoner(p,{
-          provider,env,fetcher
-        })))(prompt);
-        proposed=modelProposal(raw);
+        if(askModel){
+          proposed=modelProposal(await askModel(prompt));
+        }else if(orderedProviders){
+          const selection=await executeWithFailover({
+            capability:"repair",preferred:orderedProviders,
+            available,allowExternalCalls,
+            invoke:async name=>modelProposal(await realRepairReasoner(prompt,{
+              provider:name,env,fetcher
+            }))
+          });
+          journal.providerAttempts=(journal.providerAttempts||[]).concat(
+            selection.attempts||[]);
+          if(selection.status!=="completed")
+            throw refused(selection.reason||"no_capable_provider");
+          journal.selectedProvider=selection.provider;
+          proposed=selection.result;
+        }else{
+          proposed=modelProposal(await realRepairReasoner(prompt,{
+            provider,env,fetcher
+          }));
+        }
       }catch(e){
         journal.status="blocked";
         journal.reason=e.code||"model_proposal_rejected";
@@ -243,7 +274,8 @@ export async function runAgenticRepair({
       files=updated; syncFiles();
       const publicCheck=await runTest(stage,TESTS[0]);
       const entry={
-        attempt:n,diagnosis:proposed.diagnosis,
+        attempt:n,provider:journal.selectedProvider||selected,
+        diagnosis:proposed.diagnosis,
         changed:proposed.changes.map(p=>({path:p.path,
           sha256:sha(p.content)})),
         publicPassed:publicCheck.passed,
