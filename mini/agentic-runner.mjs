@@ -164,6 +164,8 @@ export async function runAgenticRepair({
      typeof goal!=="string"||!goal.trim()||goal.length>500||
      !Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>4)
     throw refused("invalid_agent_incident");
+  if(Number(process.versions.node.split(".")[0])<22)
+    return {status:"blocked",reason:"node_22_required_for_permission_constrained_tests"};
   // Deny implicit cost: authenticated remote model needs caller confirmation.
   if(!askModel && (provider||env.METRON_REPAIR_PROVIDER)==="openai" && allowExternalCalls!==true)
     return {status:"blocked",reason:"external_model_operator_consent_required"};
