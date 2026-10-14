@@ -119,6 +119,14 @@
           <div id="recovery-details" class="proof-list"></div>
         </div>
       </article>
+      <div class="notice">
+        <strong>BAKU本来の自己修復とは：</strong>
+        ChatGPTのような実際のAIエージェントが、ソース・Git履歴・障害ログを調査し、
+        原因を推論し、コードを修正して、実ビルド・動作テストを行い、
+        失敗なら再修正を続けることです。現在のMiniには、その一連を独立実行する
+        AI修復ワーカーはまだ接続されていません。
+        <a href="https://github.com/dakahasa0119-blip/METRON-OS/blob/main/docs/BAKU_AGENTIC_REPAIR_CONTRACT_2026-10-14.md">BAKU修復の本来の仕様</a>
+      </div>
       <article class="chapter" id="metron-advanced">
         <div class="chapter-number">06</div>
         <div class="chapter-body">
@@ -150,7 +158,7 @@
       <article class="chapter">
         <div class="chapter-number">08</div>
         <div class="chapter-body">
-          <h3>BAKUの自動復旧サイクル</h3>
+          <h3>BAKU補助機能：検証済みバックアップへの自動復旧</h3>
           <p>隔離された一時領域で障害を実際に発生させ、検出、最後に検証済みのソースからの復旧、再コンパイル、読み戻し検証を自動実行します。既存のプロジェクトには適用しません。</p>
           <button id="try-auto-repair" class="subtle" type="button">隔離環境で自動復旧を実行する</button>
           <div class="proof-list" id="repair-result"></div>
@@ -159,8 +167,8 @@
       <article class="chapter" id="unknown-bug-search">
         <div class="chapter-number">09</div>
         <div class="chapter-body">
-          <h3>未知の不具合から修正候補を探索する</h3>
-          <p>正常版コードは渡しません。実際に失敗する入出力テストから演算子などの変更候補を探索し、探索に使っていない別テストで初めて合否を判定します。単一return式の純粋なJavaScript関数に限る、実際の振る舞いに基づく修復です。</p>
+          <h3>BAKU補助機能：限定的な未知関数の変更候補探索</h3>
+          <p>正常版コードは渡しません。実際に失敗する入出力テストから演算子などの変更候補を探索し、別テストで合否を判定します。これは単一return式の純粋なJavaScript関数だけを扱う補助機能であり、BAKU本来のAIエージェントによる調査・複数ファイル修復とは別です。</p>
           <label for="unknown-code">不具合を含む関数（ユーザー側のコードは変更しません）</label>
           <textarea id="unknown-code" rows="3" maxlength="2200" spellcheck="false">function remaining(total, used){return total + used;}</textarea>
           <label for="unknown-dev-tests">失敗を再現する開発用テスト（JSON配列）</label>
