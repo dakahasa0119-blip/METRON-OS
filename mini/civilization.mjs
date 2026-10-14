@@ -96,7 +96,7 @@ export class CivilizationExperience {
     const id=makeId("rumor_");
     const rumor={id,from,to,text:text.trim(),status:"awaiting_review",
       source:parentId?"rule_based_derivation":"human_input",
-      parentId,deliveryId:"mission_"+id};
+      parentId,deliveryId:"m_"+randomUUID().replaceAll("-", "")};
     // Commit actual Gateway and destination inbox first. If interrupted,
     // deterministic job ID guards duplicate message transport.
     const delivery=this.runtime.submit({
