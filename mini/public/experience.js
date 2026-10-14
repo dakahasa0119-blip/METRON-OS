@@ -167,3 +167,77 @@ $("try-recovery").addEventListener("click",()=>act("recovery"));
 refresh().then(()=>notify(
   "確認完了。まず第一の村の母艦A/BからRumor JSONを公開してください。"
 )).catch(e=>notify(e.message,true));
+
+
+/**
+ * The four original-system paths are separate from the Village Square flow.
+ * External model consultation requires operator confirmation per request.
+ * Neither a failed remote call nor an empty local model can create verdicts.
+ */
+async function advancedRequest(action,payload={}){
+  const response=await fetch("/api/advanced/action",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Metron-Mini":"1"},
+    body:JSON.stringify({action,...payload})
+  });
+  const data=await response.json();
+  if(!response.ok)throw Error(data.message||data.error||"操作が拒否されました");
+  return data;
+}
+const printAdvanced=(id,value)=>{
+  $(id).textContent=typeof value==="string"?value:JSON.stringify(value,null,2);
+};
+async function refreshAdvanced(){
+  try{
+    const response=await fetch("/api/advanced/status",{cache:"no-store"});
+    if(!response.ok)throw Error("接続状態を取得できません");
+    const info=await response.json();
+    const names=["openai","gemini","claude"];
+    const list=names.map(name=>
+      name.toUpperCase()+": "+(info.providers?.[name]?"設定あり":"未接続"));
+    $("advanced-provider-status").textContent=
+      "外部AI "+list.join(" / ")+
+      " · 最終判断にはローカルOllamaモデルが必要です。接続状態は推論成功を意味しません。";
+  }catch(e){$("advanced-provider-status").textContent=e.message;}
+}
+$("try-consensus").addEventListener("click",async()=>{
+  if(!$("external-consent").checked){
+    return printAdvanced("consensus-result",
+      "外部への質問送信に許可が必要です。");
+  }
+  const question=$("consensus-question").value.trim();
+  printAdvanced("consensus-result","本物の3つのAIを独立して照会しています…");
+  try{
+    const result=await advancedRequest("consult",{
+      allowExternalCalls:true,question
+    });
+    printAdvanced("consensus-result",result);
+  }catch(e){printAdvanced("consensus-result","実行拒否: "+e.message);}
+});
+$("try-pouc").addEventListener("click",async()=>{
+  printAdvanced("pouc-result","有用な計算と受領検証を実行中…");
+  try{
+    const result=await advancedRequest("pouc",{
+      baseline:$("mine-before").value,candidate:$("mine-after").value
+    });
+    printAdvanced("pouc-result",{
+      proofHash:result.proof.proofDigest,
+      beforeCompiles:result.proof.baseline.compiles,
+      afterCompiles:result.proof.candidate.compiles,
+      compileImproved:result.proof.compileImproved,
+      independentlyReverified:result.contribution.verified.verified,
+      totalLocalContributions:result.credits.contributions,
+      sourceExecuted:false,
+      behavioralRepairVerified:false,
+      rewards:"NONE (PoUC local receipt only)"
+    });
+  }catch(e){printAdvanced("pouc-result","検証失敗: "+e.message);}
+});
+$("try-auto-repair").addEventListener("click",async()=>{
+  printAdvanced("repair-result","隔離した一時領域で故障と自動復旧を検証中…");
+  try{
+    const result=await advancedRequest("repair");
+    printAdvanced("repair-result",result.proof);
+  }catch(e){printAdvanced("repair-result","復旧未成立: "+e.message);}
+});
+refreshAdvanced();
