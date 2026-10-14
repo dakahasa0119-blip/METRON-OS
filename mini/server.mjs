@@ -10,6 +10,9 @@ import { CivilizationExperienceV3 } from "./civilization-v3.mjs";
 import { PoUCLedger, performUsefulComputation } from "./pouc.mjs";
 import { runIsolatedRecoveryCycle } from "./isolated-repair.mjs";
 import { repairDisposableSource } from "./behavioral-repair.mjs";
+import {runAgenticRepair} from "./agentic-runner.mjs";
+import {join} from "node:path";
+import {mkdirSync} from "node:fs";
 import { modelAvailability,consultAndJudge } from "./ai-consensus.mjs";
 
 const UI=new Map([
@@ -66,6 +69,17 @@ export async function createMiniServer({root,port=8766}={}){
         "X-Content-Type-Options":"nosniff","Cache-Control":"no-store"});
       return res.end(item.body);
     }
+    if(req.method==="GET"&&url==="/api/agent/status")
+      return send(res,200,{
+        status:"real_model_needed_for_agentic_repair",
+        configured:{
+          ollama:!!process.env.METRON_LOCAL_MODEL,
+          openai:!!(process.env.OPENAI_API_KEY&&process.env.METRON_REPAIR_MODEL)
+        },
+        scope:"first_party_disposable_multifile_fixture_only",
+        testExecution:"Node_permission_constrained_child_process",
+        productionChanges:false
+      });
     if(req.method==="GET"&&url==="/api/advanced/status")
       return send(res,200,{providers:modelAvailability(),
         localLlm:"requires_installed_local_Ollama_and_Metron_model",
@@ -77,7 +91,7 @@ export async function createMiniServer({root,port=8766}={}){
       return send(res,200,runtime.state());
     if(req.method==="GET"&&url==="/api/health")
       return send(res,200,{status:"ok",mode:"local-only"});
-    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action","/api/advanced/action"].includes(url)){
+    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action","/api/advanced/action","/api/agent/run"].includes(url)){
       if(req.headers["x-metron-mini"]!=="1")
         return send(res,403,{error:"explicit_local_request_header_required"});
       const origin=req.headers.origin;
@@ -87,6 +101,22 @@ export async function createMiniServer({root,port=8766}={}){
         return send(res,415,{error:"json_required"});
       try{
         const body=await readJson(req);
+        if(url==="/api/agent/run"){
+          if(!body||typeof body!=="object"||Array.isArray(body))
+            return send(res,400,{error:"invalid_agent_request"});
+          if(!["ollama","openai"].includes(body.provider))
+            return send(res,400,{error:"explicit_model_choice_required"});
+          if(body.provider==="openai"&&body.allowExternalCalls!==true)
+            return send(res,403,{error:"remote_ai_requires_explicit_consent"});
+          const agentRoot=join(runtime.root,"agentic-baku");
+          mkdirSync(agentRoot,{recursive:true});
+          const result=await runAgenticRepair({
+            root:agentRoot,provider:body.provider,
+            goal:body.goal,maxAttempts:3,
+            allowExternalCalls:body.allowExternalCalls===true
+          });
+          return send(res,200,result);
+        }
         if(url==="/api/advanced/action"){
           if(!body||typeof body!=="object"||Array.isArray(body))
             return send(res,400,{error:"invalid_advanced_action"});
