@@ -19,6 +19,19 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## Recover previously unseen behavior, not just known backups
+
+Mini now supports **actual bounded unknown-bug repair search**. The operator
+provides failing behavior examples, *not* a fixed source file. An expression
+mutation engine searches candidate edits on its own and only returns a patch
+after separate holdout vectors pass. No arbitrary source is executed and
+no real project is modified.
+
+Open `http://127.0.0.1:8766/experience` → chapter 09, or consult the
+[exact supported grammar, proof, refused cases and limitations](docs/UNKNOWN_BEHAVIORAL_REPAIR_2026-10-14.md).
+This does **not** establish general autonomous repair for unknown faults in
+arbitrary production software.
+
 ## AI consensus, local LLM, useful computation and recovery
 
 The Mini `/experience` page now has actual provider API adapters for a
