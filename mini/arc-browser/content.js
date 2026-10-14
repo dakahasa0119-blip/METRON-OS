@@ -54,9 +54,11 @@
  prompt.style.cssText="display:block;width:98%;margin:7px 0";
  const send=document.createElement("button");send.textContent="この文章を送信";
  const capture=document.createElement("button");capture.textContent="最後の回答を取得";
+ const forward=document.createElement("button");forward.textContent="選択した回答をGatewayへ渡す";
  const result=document.createElement("pre");
  result.style.cssText="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px";
- session.append(prompt,send,capture,result);
+ session.append(prompt,send,capture,forward,result);
+ let lastCaptured=null;
  const picked=kind=>state.selected.find(x=>x.kind===kind);
  const locate=kind=>{
    const p=picked(kind);
@@ -96,7 +98,25 @@
    const response=locate("response");
    if(isSensitive(response)){result.textContent="回答欄を再選択してください";return;}
    const text=(response.innerText||response.textContent||"").trim().slice(0,5000);
+   lastCaptured=text||null;
    result.textContent=text||"回答はまだ取得できません";
+ });
+ forward.addEventListener("click",()=>{
+   if(!lastCaptured){result.textContent="先に回答を取得してください";return;}
+   if(lastCaptured.length>950){
+     result.textContent="回答が長すぎます。950文字以内の部分を選択してください。";
+     return;
+   }
+   forward.disabled=true;
+   chrome.runtime.sendMessage({type:"arc_gateway_handoff",text:lastCaptured},reply=>{
+     forward.disabled=false;
+     if(chrome.runtime.lastError){
+       result.textContent="Gateway通信失敗: "+chrome.runtime.lastError.message;return;
+     }
+     result.textContent=reply?.accepted?
+       "Gateway配送済み: "+reply.messageId:
+       "Gateway配送拒否: "+(reply?.error||"unknown");
+   });
  });
  const cleanup=()=>{document.removeEventListener("click",onClick,true);root.remove();delete window.__metronArcPickerActive;};
  stop.addEventListener("click",cleanup);
