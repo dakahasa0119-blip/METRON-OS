@@ -170,7 +170,7 @@ test("actual Chromium renders the interactive civilization map from local persis
       "--dump-dom",app.url+"/experience"];
     if(process.getuid?.()===0)args.unshift("--no-sandbox");
     const {stdout}=await run(chrome,args,{timeout:30000,maxBuffer:8*1024*1024,windowsHide:true});
-    assert.match(stdout,/id="memory-a-count">記憶 1</);
+    assert.match(stdout,/id="memory-a-count"[^>]*>記憶 1</);
     assert.match(stdout,/id="stat-ideas">0/);
     assert.match(stdout,/文明の状態を読み込みました/);
   }finally{await app.close();}
