@@ -119,6 +119,43 @@
           <div id="recovery-details" class="proof-list"></div>
         </div>
       </article>
+      <article class="chapter" id="metron-advanced">
+        <div class="chapter-number">06</div>
+        <div class="chapter-body">
+          <h3>AI三者合議・ローカル判断</h3>
+          <p>実際のOpenAI / Gemini / Claude APIの三者回答を個別に収集し、OllamaのローカルLLMが別工程で最終的な助言を作ります。1つでも未接続なら合議は成立しません。</p>
+          <div class="trust-details" id="advanced-provider-status">利用可能なAI接続を調べています…</div>
+          <label for="consensus-question">3つの外部AIへ相談する内容</label>
+          <textarea id="consensus-question" rows="3" maxlength="2400">安全なMETRONの村間通信で重要な検証条件を比較してください。</textarea>
+          <label class="consent"><input id="external-consent" type="checkbox"> この実行で外部APIへ質問を送信することを許可する（API利用料が発生する場合があります）</label>
+          <button id="try-consensus" class="subtle" type="button">実際の三者合議とローカル最終判断を実行</button>
+          <div class="proof-list" id="consensus-result"></div>
+        </div>
+      </article>
+
+      <article class="chapter">
+        <div class="chapter-number">07</div>
+        <div class="chapter-body">
+          <h3>PoUC（有用な計算）に参加</h3>
+          <p>計算資源を単なるハッシュ当てではなく、実際のソース変更候補の構文検証・DNA抽出・リスク検査に使います。検証した貢献をローカル台帳に残します。トークンや報酬は発行しません。</p>
+          <label for="mine-before">修復前のコード</label>
+          <textarea id="mine-before" rows="2" maxlength="4096">function example( { return false; }</textarea>
+          <label for="mine-after">修復候補のコード</label>
+          <textarea id="mine-after" rows="2" maxlength="4096">function example() { return true; }</textarea>
+          <button id="try-pouc" class="subtle" type="button">PoUCの有用計算・独立再検証を実行</button>
+          <div class="proof-list" id="pouc-result"></div>
+        </div>
+      </article>
+
+      <article class="chapter">
+        <div class="chapter-number">08</div>
+        <div class="chapter-body">
+          <h3>BAKUの自動復旧サイクル</h3>
+          <p>隔離された一時領域で障害を実際に発生させ、検出、最後に検証済みのソースからの復旧、再コンパイル、読み戻し検証を自動実行します。既存のプロジェクトには適用しません。</p>
+          <button id="try-auto-repair" class="subtle" type="button">隔離環境で自動復旧を実行する</button>
+          <div class="proof-list" id="repair-result"></div>
+        </div>
+      </article>
       <div class="notice" id="concept-notice" role="status" aria-live="polite">村のデータを読み込んでいます…</div>
     </section>
 
