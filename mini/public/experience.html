@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>METRON — Civilization Experience</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/experience.css">
+  <script type="module" src="/experience.js"></script>
+</head>
+<body>
+<div class="shell concept-shell">
+  <header class="experience-header">
+    <a href="/" class="backlink">← Mini OS Console</a>
+    <div class="eyebrow">METRON / CIVILIZATION EXPERIENCE · LOCAL</div>
+    <h1>AIの集落が、<br><em>知識を継いでいく世界。</em></h1>
+    <p>単一のチャットを超えて、独立した母艦が記憶を持ち、知識を交換し、失敗から学べる環境。ここでは、その最小の仕組みを実際の保存・配送処理で体験します。</p>
+    <div class="trustline"><span class="live-dot"></span> 本物のローカル記憶・配送機能を使用　/　知識の判断は人間操作と明示した規則で再現。自律AIではありません。</div>
+  </header>
+  <section class="concept-map" aria-label="METRON の構想">
+    <div class="concept-ship" id="card-village-a">
+      <div class="eyebrow">INDEPENDENT VILLAGE 01</div>
+      <h2>母艦 A</h2><strong>記憶を保つ</strong>
+      <p id="village-a-purpose">保全・継承</p>
+      <span id="memory-a-count" class="memorystat">記憶 1</span>
+    </div>
+    <div class="concept-middle">
+      <span class="map-arrow">⇄</span>
+      <div class="square-node"><div class="eyebrow">COMMON SPACE</div><h2>Village Square</h2><p>知識を届ける広場</p></div>
+      <span class="map-arrow">⇄</span>
+    </div>
+    <div class="concept-ship" id="card-village-b">
+      <div class="eyebrow">INDEPENDENT VILLAGE 02</div>
+      <h2>母艦 B</h2><strong>可能性を確かめる</strong>
+      <p id="village-b-purpose">探索・検証</p>
+      <span id="memory-b-count" class="memorystat">記憶 1</span>
+    </div>
+  </section>
+  <section class="concept-subsystems">
+    <div><b>Gateway</b><span>人間・母艦・配送をつなぎ、再送を制御する</span></div>
+    <div><b>ARC</b><span>記憶を抱えず外部世界の操作を担う手足</span></div>
+    <div><b>BAKU</b><span>失敗した仕組みから残す価値のある断片を救う</span></div>
+  </section>
+
+  <main class="experience-grid">
+    <section class="panel walkthrough">
+      <div class="eyebrow">GUIDED EXPERIENCE / 5 MINUTES</div>
+      <h2>METRONを操作して理解する</h2>
+      <p class="hint">以下は各機能の独立した概念を示す実験です。操作結果はローカルのJSONに残り、ページを再読み込みしても消えません。</p>
+      <article class="chapter">
+        <div class="chapter-number">01</div>
+        <div class="chapter-body">
+          <h3>独立した村を訪ねる</h3>
+          <p>AとBは、同じ単一メモリのコピーではありません。目的も、保持する知識も異なります。</p>
+          <div class="village-knowledge" id="village-memories">読み込み中…</div>
+        </div>
+      </article>
+      <article class="chapter">
+        <div class="chapter-number">02</div>
+        <div class="chapter-body">
+          <h3>Village Squareへ知識を出す</h3>
+          <p>母艦Aから知識の提案を出すと、Gatewayが実際に母艦Bへ配送します。ただし、Bが自動で信じるわけではありません。</p>
+          <label for="rumor-text">村に届ける知識・アイデア</label>
+          <textarea id="rumor-text" rows="3" maxlength="320">作業が中断しても、目標・途中経過・根拠を次の担当へ継承する。</textarea>
+          <button id="share-knowledge" type="button">Aから広場へ共有する ↗</button>
+          <div id="square-proposals" class="proposals"></div>
+        </div>
+      </article>
+      <article class="chapter">
+        <div class="chapter-number">03</div>
+        <div class="chapter-body">
+          <h3>知識が村の文化になる</h3>
+          <p>Bが採用した知識はB自身の記憶に増えます。その知識から、新しい継承案を作ってAに返す流れも体験できます。</p>
+          <button id="derive-knowledge" class="subtle" type="button" disabled>BからAへ継承案を提案する ↗</button>
+          <div class="hint">※「継承案」は固定ルールによる例示です。AIが独自に推論した結果ではありません。</div>
+        </div>
+      </article>
+      <article class="chapter">
+        <div class="chapter-number">04</div>
+        <div class="chapter-body">
+          <h3>壊れたものを救い、つなぎ直す</h3>
+          <p>BAKUは架空の損傷コードから関数の断片を抽出し、リスクを検出して隔離します。Gatewayは障害と再送を模擬し、知識の重複消失を防ぐ様子を確認します。</p>
+          <div class="action-pair">
+            <button id="try-salvage" class="subtle" type="button">BAKUでDNA救済を体験</button>
+            <button id="try-recovery" class="subtle" type="button">Gateway障害→復旧を体験</button>
+          </div>
+          <div id="recovery-details" class="proof-list"></div>
+        </div>
+      </article>
+      <div class="notice" id="concept-notice" role="status" aria-live="polite">構想の現在状態を読み込み中…</div>
+    </section>
+
+    <aside class="concept-aside">
+      <section class="panel">
+        <div class="eyebrow">CIVILIZATION MAP / LIVE STATE</div>
+        <h2>文明の広がり</h2>
+        <div class="stat-grid">
+          <div><span id="stat-ideas">—</span><small>広場で共有した提案</small></div>
+          <div><span id="stat-accepted">—</span><small>採用された知識</small></div>
+          <div><span id="stat-deliveries">—</span><small>Gatewayジョブ</small></div>
+          <div><span id="stat-salvages">—</span><small>救済・隔離した断片</small></div>
+        </div>
+        <p class="hint">数値は実際のローカル保存状態から取得しています。文明の「知能」や自律性を測ったスコアではありません。</p>
+      </section>
+      <section class="panel">
+        <div class="eyebrow">REAL EVENTS / PROVENANCE</div>
+        <h2>何が起きたのか</h2>
+        <div id="concept-timeline" class="event-feed"><p class="empty">まだ共有イベントはありません。</p></div>
+      </section>
+      <section class="panel reality-panel">
+        <div class="eyebrow">WHAT IS REAL / WHAT IS NEXT</div>
+        <h2>実装と構想の境界</h2>
+        <p><strong>実際に動く:</strong> 独立した記憶、Gateway配送・ACK、広場での提案・採用・隔離、来歴保存、断片の静的検査、再送復旧試験。</p>
+        <p><strong>まだ構想段階:</strong> 自律的なAI人格の生成、複数PC間のP2P通信、外部AIでの推論、知識の自動審査、自己進化したプログラムの実運用。</p>
+      </section>
+    </aside>
+  </main>
+  <footer>
+    <span>METRON · Civilization Experience / local reference</span>
+    <span>実世界のAI文明を達成したという意味ではありません。</span>
+  </footer>
+</div>
+</body>
+</html>
