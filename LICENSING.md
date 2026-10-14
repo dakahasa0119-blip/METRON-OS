@@ -17,6 +17,7 @@ derivatives, subject to the actual Apache 2.0 terms.
 | `app/` | **Apache-2.0** for first-party source | Android ARC application, source and original resources |
 | `archive/gas/METRON_GATEWAY/` | **Apache-2.0** | Preserved first-party historical Gateway cloud source, not a certified deployment |
 | Other project-authored `modules/`, `scripts/`, `docs/`, root project source/build configuration and project documentation | **Apache-2.0** | Original project work unless individually identified otherwise |
+| `mini/` | **Apache-2.0** | Standalone locally runnable four-component METRON Mini dashboard/runtime; it imports separately MIT-licensed helpers from `reusable/` |
 | `reusable/`, including its four published module packages | **MIT** | Independent portable reference implementations. Each package carries its own MIT LICENSE |
 | Externally authored or third-party files and dependencies | **Their respective original license** | Not relicensed merely by being present in this repository |
 
