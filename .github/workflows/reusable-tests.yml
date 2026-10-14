@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "reusable/**"
+      - "mini/**"
       - ".github/workflows/reusable-tests.yml"
   pull_request:
     paths:
       - "reusable/**"
+      - "mini/**"
       - ".github/workflows/reusable-tests.yml"
 
 permissions:
