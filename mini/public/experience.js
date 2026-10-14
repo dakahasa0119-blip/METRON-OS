@@ -279,3 +279,64 @@ $("try-unknown-repair").addEventListener("click",async()=>{
       "\n対応対象は純粋な短いJavaScript関数1個です。";
   }
 });
+
+
+// This is the genuine optional BAKU coding-model path, not the earlier
+// arithmetic mutation engine or copy-backup restoration fixture.
+async function updateAgentHealth() {
+  try {
+    const res=await fetch("/api/agent/status",{cache:"no-store"});
+    if(!res.ok)throw Error("agent status request failed");
+    const x=await res.json();
+    $("agent-health").textContent=
+      "LOCAL OLLAMA: "+(x.configured.ollama?"モデル名あり":"モデル名なし")+
+      " / OPENAI API: "+(x.configured.openai?"認証設定あり":"認証設定なし")+
+      " / これらは実際のモデル応答の成功保証ではありません。";
+  }catch(e){$("agent-health").textContent="接続状態不明: "+e.message;}
+}
+$("try-agentic-repair").addEventListener("click",async()=>{
+  const button=$("try-agentic-repair");
+  button.disabled=true;
+  const display=$("agentic-repair-result");
+  display.textContent="認証されたモデルに実ソースと失敗テストを送り、隔離環境で修復を検証しています…";
+  try{
+    const response=await fetch("/api/agent/run",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Metron-Mini":"1"},
+      body:JSON.stringify({
+        provider:$("agent-model").value,
+        goal:$("agent-goal").value,
+        resumeRunId:$("agent-resume-id").value.trim()||null,
+        allowExternalCalls:$("agent-cloud-consent").checked
+      })
+    });
+    const payload=await response.json();
+    if(!response.ok)throw Error(payload.message||payload.error||"AI repair request blocked");
+    if(payload.runId && payload.status!=="verified_candidate" &&
+       payload.status!=="holdout_rejected")
+      $("agent-resume-id").value=payload.runId;
+    const results=[
+      "実行状態: "+payload.status,
+      "実行ID: "+(payload.runId??"なし"),
+      "モデル出所: "+(payload.modelProvenance??"未認証"),
+      "実行回数: "+(payload.attempts?.length||0),
+      "本番ソース変更: "+(payload.productionChanged===true?"YES":"NO"),
+      "説明: "+(payload.reason??"モデル修正候補の実テスト結果を下記に表示")
+    ];
+    for(const item of payload.attempts||[]){
+      results.push("候補 "+item.attempt+": "+item.diagnosis);
+      results.push("公開テスト: "+(item.publicPassed?"PASS":"FAIL"));
+      results.push("確認テスト: "+(
+        item.holdoutPassed===undefined?"未実施":item.holdoutPassed?"PASS":"FAIL"
+      ));
+      results.push("実際のテスト出力(抜粋): "+item.publicEvidence);
+    }
+    if(payload.status==="verified_candidate")
+      results.push("独立した確認テストを通過しました。ただし実プロジェクトへの適用はされていません。");
+    if(payload.status==="blocked")
+      results.push("モデルが実行できないため、修復完了とは扱いません。");
+    display.textContent=results.join("\n\n");
+  }catch(err){display.textContent="モデルによる実修復は成立していません: "+err.message;}
+  finally{button.disabled=false;}
+});
+updateAgentHealth();

@@ -264,3 +264,17 @@ node --test reusable/tests/*.test.mjs
 - New API and chapter 09 allow user-supplied faulty functions/holdout tests,
   but cannot execute or apply arbitrary code. No proof of general real-world
   autonomous unknown-bug repair is claimed.
+
+## 2026-10-14: agentic BAKU multi-file execution adapter
+
+- Added a real-model call path to local Ollama or official OpenAI Responses.
+- With a configured model, the agent inspects multiple actual source files
+  and failing public tests, proposes isolated full-file edits, and iterates
+  using **real Node subprocess test failures**. A separate hidden test suite
+  must also pass before any candidate is verified.
+- No model-suggested shell commands or unapproved production file mutations.
+  Bounded disposable worktree is removed after each run. A durable journal
+  records attempts and allows explicit restart of an incomplete incident.
+- Automated tests substitute a labelled fake model responder to validate
+  iteration and testing. This **does not constitute a real model-generated
+  repair** and is not a production general-purpose sandbox.

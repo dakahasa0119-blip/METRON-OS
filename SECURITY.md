@@ -75,3 +75,16 @@ grammar. All candidate file writes are to disposable temporary worktrees.
 The API cannot apply a candidate to a user project. A supplied holdout set
 is **not** a trusted external oracle. This does not constitute a safe
 unrestricted production code-repair sandbox.
+
+## Mini BAKU coding-model runner
+
+The new agentic repair feature only edits two hardcoded, first-party source
+files in a copied, disposable fixture. A genuinely configured Ollama or
+OpenAI model may propose changes; it cannot choose its own commands or
+modify hidden tests. Node Permission Model and subprocess timeouts reduce
+risk but are **not a secure sandbox for running hostile model-generated
+programs**. Do not expose the Mini server on a public interface or use
+this code to test untrusted arbitrary repositories. Provider credentials
+are read only from the Node process environment, never returned to the
+browser. The repair incident journal may preserve proposed source content
+and model diagnosis, so keep its directory private.
