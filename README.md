@@ -19,6 +19,19 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## BAKU is an actual coding-agent repair loop — NOT a mutation toy
+
+**BAKU's intended behavior is the same real investigate → edit → test →
+failure feedback → revise → independently verify → safe-apply work performed
+by a coding assistant with authorized GitHub/PC/IDE tools.** The old BAKU DNA
+vault and self-rebuild were parts of that architecture. The bounded
+pure-function mutation and known-backup restoration demos are only
+supporting subroutines, not the agentic repair brain.
+
+See the [canonical BAKU agentic repair contract](docs/BAKU_AGENTIC_REPAIR_CONTRACT_2026-10-14.md).
+The complete autonomous agent loop is not yet running inside METRON Mini;
+recent real METRON PR repairs were made by ChatGPT acting with connected tools.
+
 ## Recover previously unseen behavior, not just known backups
 
 Mini now supports **actual bounded unknown-bug repair search**. The operator
