@@ -16,6 +16,7 @@ import { classifyWork } from "../reusable/mothership/workflow.mjs";
 import { extractCards, inspectCard } from "../reusable/baku-dna/code-cards.mjs";
 
 const NAME = /^[A-Za-z0-9_-]{1,45}$/;
+const RECORD_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const allowedShip = value => value === "A" || value === "B";
 const fail = (code, message) => Object.assign(new Error(message), {code});
 const jsonSafe = value => JSON.parse(JSON.stringify(value));
@@ -59,8 +60,8 @@ export class MetronMiniRuntime {
       throw fail("invalid_mailbox","MotherShip invalid");
     const seen=new Set();
     for(const message of saved.messages){
-      if(!message||!NAME.test(message.id)||!NAME.test(message.sender)||
-         message.recipient!==name||!NAME.test(message.type)||
+      if(!message||!RECORD_ID.test(message.id)||!RECORD_ID.test(message.sender)||
+         message.recipient!==name||!RECORD_ID.test(message.type)||
          typeof message.body!=="string"||typeof message.traceId!=="string"||
          seen.has(message.id))throw fail("invalid_mailbox","MotherShip record invalid");
       seen.add(message.id);
