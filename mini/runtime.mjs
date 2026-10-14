@@ -8,7 +8,7 @@
  */
 import { mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { PersistentGateway } from "../reusable/gateway-jobs/persistent-gateway.mjs";
 import { readCheckpoint, writeAtomicJson } from "../reusable/gateway-jobs/checkpoint.mjs";
 import { newMailbox, receiveMailboxMessage } from "../reusable/mothership/mailbox.mjs";
@@ -53,14 +53,18 @@ export class MetronMiniRuntime {
     if(!allowedShip(name)) throw fail("invalid_ship","unknown MotherShip");
     const saved=readCheckpoint(this.shipFiles[name]);
     if(!saved) throw fail("missing_mailbox","MotherShip checkpoint missing");
-    // Validate on read: intentionally fails on corrupt state; never silently resets.
-    // receiveMailboxMessage validates persisted structure without changing it.
-    const check=receiveMailboxMessage(saved,{
-      id:"__metron_validation__",sender:"MINI",recipient:name,
-      type:"VERIFY",body:"",traceId:"validation"
-    });
-    if(check.status==="blocked"&&check.reason!=="mailbox_full")
+    // Validate without inserting synthetic messages or reserving real IDs.
+    if(saved.schemaVersion!==1||saved.owner!==name||
+       !Array.isArray(saved.messages)||saved.messages.length>1000)
       throw fail("invalid_mailbox","MotherShip invalid");
+    const seen=new Set();
+    for(const message of saved.messages){
+      if(!message||!NAME.test(message.id)||!NAME.test(message.sender)||
+         message.recipient!==name||!NAME.test(message.type)||
+         typeof message.body!=="string"||typeof message.traceId!=="string"||
+         seen.has(message.id))throw fail("invalid_mailbox","MotherShip record invalid");
+      seen.add(message.id);
+    }
     return saved;
   }
   submit(input) {
@@ -75,26 +79,35 @@ export class MetronMiniRuntime {
     const id=input.messageId??("m_"+randomUUID().replace(/-/g,""));
     if(typeof id!=="string"||!NAME.test(id))
       throw fail("invalid_message_id","messageId must be 1-45 letters, numbers, dash or underscore");
+    // Hash ephemeral code solely for idempotency; never persist the source.
+    const codeText=input.code??"";
+    if(typeof codeText!=="string"||codeText.length>4000)
+      throw fail("invalid_code","code excerpt must be at most 4,000 characters");
+    const codeDigest=createHash("sha256").update(codeText,"utf8").digest("hex");
     const prior=this.gateway.getJob(id);
     // Never interpret a conflicting replay as the same message.
     if(prior){
       const old=prior.payload?.envelope;
       if(old?.sender!==from||old?.recipient!==to||old?.body!==input.message||
-         old?.type!=="OBSERVE")
+         old?.type!=="OBSERVE"||prior.payload?.meta?.codeDigest!==codeDigest)
         throw fail("message_id_conflict","messageId has different content");
       this.drain();
       return {messageId:id,deduplicated:true,job:this.gateway.getJob(id),state:this.state()};
     }
     // BAKU inspects transient text, but only the names/risk flags are stored.
-    const baku=miniBakuScan(input.code??"");
+    const baku=miniBakuScan(codeText);
     const arc=input.arc?.selectorsChecked===true;
     const envelope={id,sender:from,recipient:to,type:"OBSERVE",
       body:input.message,traceId:"trace_"+id};
     this.gateway.enqueue(id,{
       envelope,
       meta:{
-        workClass:classifyWork(input.message),
-        baku,
+        workClass:(()=>{
+          const traits=classifyWork(input.message);
+          return traits.evolution?"repair_review":
+            traits.multiFile?"structural":traits.code?"code_related":"general";
+        })(),
+        codeDigest,baku,
         arc:{selectorsChecked:arc,origin:"local_browser_claim"}
       }
     });
