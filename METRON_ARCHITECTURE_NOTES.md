@@ -24,3 +24,18 @@
 3. **Mothership (METRON_OS_B)**:
    - Receives processed data/decisions from Gateway.
    - Executes self-rewriting, local LLM evaluation (if applicable), and builds out applications.
+
+## Source interpretation correction (2026-10-14)
+
+A and B are two MotherShip cores belonging to **one user's Village**, not
+separate Village identities. A user Village is the independent operating
+environment containing MotherShip cores and its Gateway/ARC/BAKU functions.
+Village Square exchanges **Rumor JSON between separate Villages**, not
+between A and B of one Village. The Gateway user configures the strength of
+Rumor noise filtering and has the final decision. The original protocol
+also describes external AI consultation/consensus with a Local LLM's final
+judgment; a fixed string generator is not an acceptable substitute for that
+feature in a minimal implementation.
+
+This clarification concerns interpretation, not evidence that historical
+multi-village P2P or AI consensus was fully deployed.

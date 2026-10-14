@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MetronMiniRuntime } from "./runtime.mjs";
-import { CivilizationExperience } from "./civilization.mjs";
+import { CivilizationExperienceV3 } from "./civilization-v3.mjs";
 
 const UI=new Map([
   ["/",["./public/index.html","text/html; charset=utf-8"]],
@@ -48,7 +48,7 @@ export async function createMiniServer({root,port=8766}={}){
   if(!Number.isInteger(port)||port<0||port>65535)
     throw new Error("port must be 0-65535");
   const runtime=new MetronMiniRuntime(root);
-  const civilization=new CivilizationExperience(runtime.root,runtime);
+  const civilization=new CivilizationExperienceV3(runtime.root,runtime);
   const server=createServer(async(req,res)=>{
     const currentPort=server.address()?.port||port;
     if(!hostAllowed(req.headers.host,currentPort))
@@ -81,9 +81,10 @@ export async function createMiniServer({root,port=8766}={}){
           if(!body||typeof body!=="object"||Array.isArray(body))
             return send(res,400,{error:"invalid_concept_action"});
           const result=body.action==="publish"?civilization.publish(body):
+            body.action==="receive"?civilization.receive(body):
             body.action==="review"?civilization.review(body):
-            body.action==="derive"?civilization.derive(body):
-            body.action==="salvage"?civilization.salvage():
+            body.action==="filter"?civilization.setFilter(body):
+            body.action==="salvage"?civilization.salvage(body):
             body.action==="recovery"?civilization.recoveryDemo():null;
           if(!result)return send(res,400,{error:"unknown_concept_action"});
           return send(res,200,result);

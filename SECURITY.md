@@ -38,3 +38,13 @@ instruction injection into a remote model. Generated inheritance proposals
 are **deterministic fixtures**, not authenticated independent AI judgments.
 The miniature Gateway and Village Square share one process and do not offer
 multi-writer consistency or security boundaries against other local users.
+
+## Village boundary correction
+
+MotherShip A and B are internal cores of **one** user village, not two
+villages. The corrected `civilization-v3.mjs` maintains separate village
+checkpoint roots, and exchanges bounded Rumor JSON files through a
+local shared-folder adapter. JSON SHA-256 does not authenticate external
+senders. The owner configures the provisional noise filter level and makes
+the final adopt/quarantine decision. Legacy `civilization.json` is retained
+unaltered and not migrated into false village identities.

@@ -217,3 +217,18 @@ node --test reusable/tests/*.test.mjs
 - The experience is educational and deterministic; **no claim of autonomous
   AI reasoners, external LLM calls, genuine P2P multi-host villages, live
   unknown-code repair, or historical system restoration**.
+
+## 2026-10-14: original village topology and Rumor JSON protocol correction
+
+- Fixed the erroneous first civilization mode which modeled MotherShip A/B
+  as two villages. **Each user village houses both A and B**; Village Square
+  is for information exchange between independent villages.
+- Added actual strict versioned Rumor JSON files, separate per-village
+  knowledge and Gateway checkpoints, receiving-village file import,
+  deduplicated local receipt, user-set noise-filter strength, and explicit
+  user adoption/quarantine with source lineage.
+- Dropped fabricated rule-based "AI reasoning"; tri-model consensus,
+  Local LLM decision, PoUC mining and real network P2P stay explicitly
+  disconnected, rather than substituted with nonoriginal demo logic.
+- Rewrote the guided concept tests to check both levels and preserve the
+  original incorrectly labeled experience checkpoint read-only.
