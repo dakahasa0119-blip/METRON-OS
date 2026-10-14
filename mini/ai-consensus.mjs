@@ -5,6 +5,7 @@
  * genuine local Ollama response exist. Never dispatches a repair/deploy.
  */
 import { createHash } from "node:crypto";
+import {executeWithFailover} from "./ai-failover.mjs";
 const fingerprint=s=>createHash("sha256").update(s,"utf8").digest("hex");
 const issue=(code,message)=>Object.assign(new Error(message),{code});
 const validText=x=>typeof x==="string"&&x.trim().length>0&&x.length<=2400;
@@ -131,6 +132,30 @@ export async function localFinalVerdict(question,consultation,{
   return {status:"local_judgment_recorded",model,consultationDigest:digest,
     finalDecision:content,authorizedToApply:false};
 }
+/** Optional real-AI final decision; never an authorization to deploy. */
+export async function optionalFinalDecision(question,consultation,{
+  available={},preferred=["ollama","openai","gemini","claude"],
+  allowExternalCalls=false,invoke
+}={}){
+  if(!validText(question)||!consultation?.readyForLocalDecision)
+    return {status:"blocked",reason:"consultation_incomplete",
+      finalDecision:null,authorizedToApply:false};
+  const x=await executeWithFailover({
+    capability:"final",preferred,available,allowExternalCalls,
+    invoke:async provider=>{
+      if(typeof invoke!=="function")throw issue("provider_adapter_missing","No adapter");
+      const answer=await invoke(provider,{question,consultation});
+      if(!validText(answer)||answer.length>2300)
+        throw issue("invalid_final_answer","Invalid model output");
+      return answer;
+    }
+  });
+  return {status:x.status==="completed"?"final_judgment_recorded":"blocked",
+    provider:x.provider,attempts:x.attempts,reason:x.reason??null,
+    finalDecision:x.status==="completed"?x.result:null,
+    authorizedToApply:false};
+}
+
 /** No tokens or model replies are written by this module to disk. */
 export async function consultAndJudge(question,options={}){
   const consultation=await queryThreeProviders(question,options);

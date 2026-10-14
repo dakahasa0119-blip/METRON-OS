@@ -61,6 +61,15 @@ Open `http://127.0.0.1:8766/experience` → chapter 09, or consult the
 This does **not** establish general autonomous repair for unknown faults in
 arbitrary production software.
 
+## Interchangeable AI: local LLM is optional
+
+METRON now includes a tested capability-aware provider selector and
+failover primitive. A configured, authorized external AI can replace a
+missing local model for an advisory final decision; repair roles are
+limited to providers with real coding-agent adapters. All providers can
+be unavailable without inventing output or applying unverified changes.
+[AI substitution contract](docs/AI_FAILOVER_OPTIONAL_LOCAL_2026-10-14.md).
+
 ## AI consensus, local LLM, useful computation and recovery
 
 The Mini `/experience` page now has actual provider API adapters for a
