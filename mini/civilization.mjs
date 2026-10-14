@@ -65,10 +65,13 @@ export class CivilizationExperience {
     }
     return value;
   }
-  #write(event) {
-    this.data.events.push({id:makeId("event_"),...event});
-    this.data.events=this.data.events.slice(-150);
-    writeAtomicJson(this.file,this.data);
+  #commit(next,event) {
+    next.events.push({id:makeId("event_"),...event});
+    next.events=next.events.slice(-150);
+    this.#validate(next);
+    // Durable checkpoint first; in-memory state is not committed if disk fails.
+    writeAtomicJson(this.file,next);
+    this.data=next;
   }
   state() {
     const s=this.#validate(this.data);
@@ -105,8 +108,9 @@ export class CivilizationExperience {
     });
     if(delivery.job.state!=="done")
       throw error("delivery_not_completed","Gateway did not finish delivery");
-    this.data.square.push(rumor);
-    this.#write({
+    const next=structuredClone(this.data);
+    next.square.push(rumor);
+    this.#commit(next,{
       kind:"shared",rumorId:id,
       detail:from+"から"+to+"へ知識の提案を配送。採用はまだ許可されていません。"
     });
@@ -119,21 +123,23 @@ export class CivilizationExperience {
     if(!found)throw error("rumor_not_found","Unknown Village Square proposal");
     if(found.status!=="awaiting_review")
       throw error("already_reviewed","The proposal was already reviewed");
-    const recipient=this.data.villages[found.to];
+    const next=structuredClone(this.data);
+    const decided=next.square.find(x=>x.id===rumorId);
+    const recipient=next.villages[decided.to];
     if(decision==="adopt"){
       if(recipient.knowledge.length>=120)throw error("village_full","Village memory full");
       recipient.knowledge.push({
-        id:"knowledge_"+found.id,text:found.text,
-        origin:found.from,parentId:found.id
+        id:"knowledge_"+decided.id,text:decided.text,
+        origin:decided.from,parentId:decided.id
       });
     }
-    found.status=decision==="adopt"?"adopted":"quarantined";
-    this.#write({
+    decided.status=decision==="adopt"?"adopted":"quarantined";
+    this.#commit(next,{
       kind:decision==="adopt"?"adopted":"quarantined",
       rumorId,
-      detail:found.to+"が受信した情報を"+(decision==="adopt"?"記憶に採用":"隔離")+"しました。"
+      detail:decided.to+"が受信した情報を"+(decision==="adopt"?"記憶に採用":"隔離")+"しました。"
     });
-    return {rumor:found,state:this.state()};
+    return {rumor:decided,state:this.state()};
   }
   derive({rumorId}={}) {
     const src=this.data.square.find(x=>x.id===rumorId);
@@ -159,15 +165,16 @@ export class CivilizationExperience {
       cards:inspected,executed:false,
       note:"損傷したコード断片を静的に回収し、危険な実行処理が見つかったため隔離しました。修復は実行していません。"
     };
-    this.data.salvage.push(artifact);
-    this.#write({kind:"salvaged",rumorId:null,detail:"BAKUが検査可能なDNAカードを回収・隔離。"});
+    const next=structuredClone(this.data);
+    next.salvage.push(artifact);
+    this.#commit(next,{kind:"salvaged",rumorId:null,detail:"BAKUが検査可能なDNAカードを回収・隔離。"});
     return {artifact,state:this.state()};
   }
   recoveryDemo() {
     const result=runTwoMothershipRelayDemo();
     if(result.result!=="LOCAL_TWO_MOTHERSHIP_PASS")
       throw error("recovery_failed","Local scenario did not finish");
-    this.#write({
+    this.#commit(structuredClone(this.data),{
       kind:"recovered",rumorId:null,
       detail:"Gatewayの障害を隔離環境で模擬。配送後のACK消失と再送重複排除を確認。"
     });
