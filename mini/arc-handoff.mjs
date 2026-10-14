@@ -11,6 +11,11 @@ export class ArcHandoff {
     this.runtime=runtime;this.now=now;this.sessions=new Map();
   }
   start(){
+    if(this.sessions.size>100){
+      for(const [key,value] of this.sessions)
+        if(value.used||value.expiresAt<=this.now())this.sessions.delete(key);
+      if(this.sessions.size>100)throw fail("arc_session_capacity_reached");
+    }
     const token=randomBytes(24).toString("hex");
     const id="arc_"+randomBytes(12).toString("hex");
     const expiresAt=this.now()+120000;
