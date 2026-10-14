@@ -14,31 +14,65 @@
       return "\\" + c.codePointAt(0).toString(16) + " ";
     });
   }
-  function parentElement(node) {
-    if (node.parentElement) return node.parentElement;
-    var root = node.getRootNode && node.getRootNode();
-    return root && root.host instanceof Element ? root.host : null;
+  function escapeAttr(value) {
+    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      .replace(/[\r\n\f]/g, " ");
+  }
+  function allMatches(selector, root, depth, output) {
+    if (depth > 12 || !root || typeof root.querySelectorAll !== "function") return;
+    var direct;
+    try { direct = root.querySelectorAll(selector); } catch (_) { return; }
+    for (var j = 0; j < direct.length; j++) output.push(direct[j]);
+    var hosts = root.querySelectorAll("*");
+    for (var i = 0; i < hosts.length; i++) {
+      if (hosts[i].shadowRoot) allMatches(selector, hosts[i].shadowRoot, depth + 1, output);
+    }
+  }
+  // Round-trip through ARC's open-Shadow-DOM traversal, not document.querySelector
+  // alone. Reject candidates that are ambiguous anywhere on the current page.
+  function uniquelyResolves(element, selector) {
+    if (!selector || selector.length > 240) return false;
+    var matches = [];
+    allMatches(selector, document, 0, matches);
+    return matches.length === 1 && matches[0] === element;
   }
   function stableSelector(el) {
-    if (el.id) return "#" + escapeSelector(el.id);
-    var testId = el.getAttribute("data-testid");
-    if (testId) return '[data-testid="' + escapeSelector(testId) + '"]';
-    var parts = [];
-    for (var node = el, depth = 0; node && depth < 14; node = parentElement(node), depth++) {
-      if (node.id) {
-        parts.unshift("#" + escapeSelector(node.id));
+    if (!el || !el.tagName) return "";
+    var tag = el.tagName.toLowerCase();
+    var candidates = [];
+    if (el.id && el.id.length <= 64) candidates.push("#" + escapeSelector(el.id));
+    for (var i = 0; i < 5; i++) {
+      var attr = ["data-testid", "aria-label", "name", "placeholder", "title"][i];
+      var value = el.getAttribute(attr);
+      if (value && value.length <= 80)
+        candidates.push(tag + "[" + attr + '="' + escapeAttr(value) + '"]');
+    }
+    // Build a fallback *inside the same CSS root*. A composed path crossing a
+    // shadow boundary cannot be joined with > and remain valid CSS.
+    var path = [];
+    for (var node = el, depth = 0; node && depth < 12;
+         node = node.parentElement, depth++) {
+      var piece = node.tagName.toLowerCase();
+      if (node.id && node.id.length <= 64) {
+        path.unshift("#" + escapeSelector(node.id));
+        candidates.push(path.join(" > "));
         break;
       }
-      var tag = node.tagName.toLowerCase();
       var siblings = node.parentElement
         ? Array.prototype.filter.call(node.parentElement.children, function (x) {
             return x.tagName === node.tagName;
           })
         : [];
-      if (siblings.length > 1) tag += ":nth-of-type(" + (siblings.indexOf(node) + 1) + ")";
-      parts.unshift(tag);
+      if (siblings.length > 1)
+        piece += ":nth-of-type(" +
+          (Array.prototype.indexOf.call(node.parentElement.children, node) + 1) + ")";
+      path.unshift(piece);
+      candidates.push(path.join(" > "));
     }
-    return parts.join(" > ");
+    for (var k = 0; k < candidates.length; k++) {
+      if (uniquelyResolves(el, candidates[k])) return candidates[k];
+    }
+    return "";
   }
   function selection(event, role) {
     var selector = role === "input"
@@ -74,8 +108,9 @@
       suppress(event);
       var picked = selection(event, role);
       var selector = picked && stableSelector(picked);
+      if (!selector) return; // retain active picker; do not save broken selector
       cancel();
-      if (selector && global.AndroidBridge &&
+      if (global.AndroidBridge &&
           typeof global.AndroidBridge.onPicked === "function") {
         global.AndroidBridge.onPicked(selector);
       }
