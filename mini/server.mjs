@@ -9,6 +9,7 @@ import { MetronMiniRuntime } from "./runtime.mjs";
 import { CivilizationExperienceV3 } from "./civilization-v3.mjs";
 import { PoUCLedger, performUsefulComputation } from "./pouc.mjs";
 import { runIsolatedRecoveryCycle } from "./isolated-repair.mjs";
+import { repairDisposableSource } from "./behavioral-repair.mjs";
 import { modelAvailability,consultAndJudge } from "./ai-consensus.mjs";
 
 const UI=new Map([
@@ -68,7 +69,7 @@ export async function createMiniServer({root,port=8766}={}){
     if(req.method==="GET"&&url==="/api/advanced/status")
       return send(res,200,{providers:modelAvailability(),
         localLlm:"requires_installed_local_Ollama_and_Metron_model",
-        mining:pouc.status(),repair:"isolated_known_good_recovery_only",
+        mining:pouc.status(),repair:"isolated_known_good_recovery_and_bounded_unknown_behavioral_patch",
         externalCalls:"require_per_request_consent"});
     if(req.method==="GET"&&url==="/api/civilization/state")
       return send(res,200,civilization.state());
@@ -106,6 +107,15 @@ export async function createMiniServer({root,port=8766}={}){
           if(body.action==="repair"){
             const proof=runIsolatedRecoveryCycle();
             return send(res,200,{proof,appliedToProduction:false});
+          }
+          if(body.action==="discover-repair"){
+            const result=repairDisposableSource({
+              source:body.source,developmentTests:body.developmentTests,
+              holdoutTests:body.holdoutTests
+            });
+            return send(res,200,{result,
+              productionSourceUpdated:false,
+              testsGrounding:"caller_supplied_not_independently_authenticated"});
           }
           return send(res,400,{error:"unknown_advanced_action"});
         }

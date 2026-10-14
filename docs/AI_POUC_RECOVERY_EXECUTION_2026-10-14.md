@@ -88,3 +88,13 @@ and use chapters 06–08.
 Full genuine tri-model + local-model evaluation and generalized fully
 autonomous repair are **NOT complete** on the observed host. No fixture result
 is presented as a real external AI verdict.
+
+## Follow-up: new behavioral candidate generator
+
+[Bounded unknown behavioral repair](UNKNOWN_BEHAVIORAL_REPAIR_2026-10-14.md)
+adds discovery of one-edit fixes without providing a known-good file.
+This search is real for a restricted pure-function class and uses a
+separate holdout gate. It extends but does **not replace** the older
+isolated known-good recovery. Neither can automatically fix arbitrary
+unseen production defects. General repair requires an authenticated model
+candidate source and independently sandboxed regression execution.

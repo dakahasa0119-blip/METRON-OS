@@ -63,3 +63,15 @@ a newly created temporary path and restores a deliberately injected syntax
 fault from an independently checksum-pinned known-good source. This does
 **not** provide a secure sandbox for hostile runtime execution or allow
 unattended patching of a user's real repository.
+
+## Black-box behavioral repair (bounded grammar)
+
+The discover-repair action parses a tightly restricted subset of pure
+single-return JavaScript functions using a purpose-built evaluator; arbitrary
+JS code is never run, even inside Node's VM. A candidate must satisfy
+all supplied development vectors AND a separate non-overlapping holdout
+set. Code from normal applications is not accepted unless it fits this
+grammar. All candidate file writes are to disposable temporary worktrees.
+The API cannot apply a candidate to a user project. A supplied holdout set
+is **not** a trusted external oracle. This does not constitute a safe
+unrestricted production code-repair sandbox.

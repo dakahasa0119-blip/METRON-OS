@@ -247,3 +247,20 @@ node --test reusable/tests/*.test.mjs
 - The observed Windows host had Claude Code installed but no available
   Ollama server, Gemini CLI or standalone local LLM, so fully realized
   live tri-consensus and final local-model reasoning remain unverified.
+
+## 2026-10-14: genuine bounded unknown-behavior repair discovery
+
+- New `mini/behavioral-repair.mjs` explores up to 400 single-expression
+  mutations in a restricted pure-JavaScript function grammar **without a
+  known-good reference version**.
+- The algorithm selects a candidate solely from failing development
+  examples and separately checks unseen holdout examples; no retry after
+  seeing holdout failures. Repaired candidate is independently read back
+  from a disposable file, not written to production.
+- Five small previously unspecified synthetic faults were solved from
+  behavioral examples (arithmetic, comparison, Boolean operation, numeric
+  literal and ternary), while development-only false positives and
+  unsupported faults are explicitly rejected or unresolved.
+- New API and chapter 09 allow user-supplied faulty functions/holdout tests,
+  but cannot execute or apply arbitrary code. No proof of general real-world
+  autonomous unknown-bug repair is claimed.

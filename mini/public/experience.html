@@ -156,6 +156,22 @@
           <div class="proof-list" id="repair-result"></div>
         </div>
       </article>
+      <article class="chapter" id="unknown-bug-search">
+        <div class="chapter-number">09</div>
+        <div class="chapter-body">
+          <h3>未知の不具合から修正候補を探索する</h3>
+          <p>正常版コードは渡しません。実際に失敗する入出力テストから演算子などの変更候補を探索し、探索に使っていない別テストで初めて合否を判定します。単一return式の純粋なJavaScript関数に限る、実際の振る舞いに基づく修復です。</p>
+          <label for="unknown-code">不具合を含む関数（ユーザー側のコードは変更しません）</label>
+          <textarea id="unknown-code" rows="3" maxlength="2200" spellcheck="false">function remaining(total, used){return total + used;}</textarea>
+          <label for="unknown-dev-tests">失敗を再現する開発用テスト（JSON配列）</label>
+          <textarea id="unknown-dev-tests" rows="3" spellcheck="false">[{"args":[10,3],"expected":7},{"args":[6,4],"expected":2},{"args":[0,0],"expected":0}]</textarea>
+          <label for="unknown-holdout-tests">独立した確認用テスト（候補の探索には使いません）</label>
+          <textarea id="unknown-holdout-tests" rows="3" spellcheck="false">[{"args":[17,2],"expected":15},{"args":[3,9],"expected":-6}]</textarea>
+          <button id="try-unknown-repair" class="subtle" type="button">正解を知らずに修正候補を探索・検証する</button>
+          <div id="unknown-repair-result" class="proof-list"></div>
+          <p class="hint">対応外・未解決・確認テスト失敗は明示して拒否。元のプロジェクトへは自動適用しません。任意のJavaScriptや未知の本番障害を完全修復できるという意味ではありません。</p>
+        </div>
+      </article>
       <div class="notice" id="concept-notice" role="status" aria-live="polite">村のデータを読み込んでいます…</div>
     </section>
 
