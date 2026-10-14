@@ -193,6 +193,8 @@
           </select>
           <label for="agent-goal">依頼内容</label>
           <textarea id="agent-goal" maxlength="500" rows="3">割引後の単価に数量を掛けるべきなのに、請求書の合計が誤っています。複数ファイルを調べて修正してください。</textarea>
+          <label for="agent-resume-id">保存された修復案件ID（任意・再開時に指定）</label>
+          <input id="agent-resume-id" type="text" placeholder="case_..." maxlength="37" autocomplete="off">
           <label class="consent"><input id="agent-cloud-consent" type="checkbox"> OpenAI公式APIを選んだ場合、この実行での外部送信と課金可能性を許可する</label>
           <button id="try-agentic-repair" class="subtle" type="button">本物のAIによる調査・修正・テストを開始</button>
           <div class="proof-list" id="agentic-repair-result"></div>
