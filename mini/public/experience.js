@@ -306,11 +306,15 @@ $("try-agentic-repair").addEventListener("click",async()=>{
       body:JSON.stringify({
         provider:$("agent-model").value,
         goal:$("agent-goal").value,
+        resumeRunId:$("agent-resume-id").value.trim()||null,
         allowExternalCalls:$("agent-cloud-consent").checked
       })
     });
     const payload=await response.json();
     if(!response.ok)throw Error(payload.message||payload.error||"AI repair request blocked");
+    if(payload.runId && payload.status!=="verified_candidate" &&
+       payload.status!=="holdout_rejected")
+      $("agent-resume-id").value=payload.runId;
     const results=[
       "実行状態: "+payload.status,
       "実行ID: "+(payload.runId??"なし"),
