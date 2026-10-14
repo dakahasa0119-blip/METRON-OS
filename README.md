@@ -4,7 +4,9 @@
 
 **METRON is an experimental architecture and a collection of historical prototypes**, exploring continuity of AI workflows, persistent memory, external AI interaction, repair, and eventually decentralized AI communities. It is **not** a verified, fully autonomous or fully distributed AI civilization.
 
-The historical Android, Apps Script and Gateway sources remain available in this repository. A small, dependency-free, **reusable toolkit** is maintained separately under [`reusable/`](reusable/README.md).
+The historical Android, Apps Script and Gateway sources remain available in this repository.
+
+**Historical source publication is partial, not a complete all-version release.** See the [per-body coverage audit](docs/SOURCE_RELEASE_COVERAGE_2026-10-14.md). The previously omitted six Gateway cloud modules are preserved in [their separate 2026-09-28 archive](archive/gas/METRON_GATEWAY/cloud-only-2026-09-28/README.md); A-side MotherShip source and consistent cloud revisions still need independent verification. A small, dependency-free, **reusable toolkit** is maintained separately under [`reusable/`](reusable/README.md).
 
 ## Why this exists / 目的
 
