@@ -62,7 +62,7 @@ function modelProposal(response){
 async function runTest(root,testPath){
   const args=[
     "--permission","--allow-fs-read="+resolve(root),
-    "--test",join(root,...testPath.split("/"))
+    join(root,...testPath.split("/"))
   ];
   try {
     const {stdout,stderr}=await execAsync(process.execPath,args,{
@@ -157,14 +157,15 @@ export async function realRepairReasoner(prompt,{
  */
 export async function runAgenticRepair({
   root,goal="The invoice total is incorrect when a discounted unit is multiplied by quantity",
-  maxAttempts=3,askModel,provider,env=process.env,fetcher
+  maxAttempts=3,askModel,provider,env=process.env,fetcher,
+  allowExternalCalls=false
 }={}){
   if(typeof root!=="string"||!root||
      typeof goal!=="string"||!goal.trim()||goal.length>500||
      !Number.isInteger(maxAttempts)||maxAttempts<1||maxAttempts>4)
     throw refused("invalid_agent_incident");
   // Deny implicit cost: authenticated remote model needs caller confirmation.
-  if(!askModel && provider==="openai"&&env.METRON_REPAIR_CONSENT!=="yes")
+  if(!askModel && (provider||env.METRON_REPAIR_PROVIDER)==="openai" && allowExternalCalls!==true)
     return {status:"blocked",reason:"external_model_operator_consent_required"};
   const fixture=pinnedFixture();
   const runId="case_"+randomUUID().replaceAll("-","");
