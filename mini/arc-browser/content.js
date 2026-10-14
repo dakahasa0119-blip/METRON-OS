@@ -42,8 +42,62 @@
    state.selected.push(entry);
    output.textContent=JSON.stringify(state.selected,null,2);
    status.textContent="選択 "+state.selected.length+"/3。表示内容はブラウザ内だけです。";
-   if(state.selected.length>=3)document.removeEventListener("click",onClick,true);
+   if(state.selected.length>=3){
+     document.removeEventListener("click",onClick,true);
+     enableSession();
+   }
  };
+ const session=document.createElement("div");
+ const prompt=document.createElement("textarea");
+ prompt.placeholder="ARCから送る文章（利用者の明示操作で送信）";
+ prompt.maxLength=1500;prompt.rows=3;
+ prompt.style.cssText="display:block;width:98%;margin:7px 0";
+ const send=document.createElement("button");send.textContent="この文章を送信";
+ const capture=document.createElement("button");capture.textContent="最後の回答を取得";
+ const result=document.createElement("pre");
+ result.style.cssText="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px";
+ session.append(prompt,send,capture,result);
+ const picked=kind=>state.selected.find(x=>x.kind===kind);
+ const locate=kind=>{
+   const p=picked(kind);
+   if(!p)return null;
+   try{return document.querySelector(p.selector);}catch{return null;}
+ };
+ const isSensitive=el=>!el||root.contains(el)||
+   el.closest('input[type="password"],[autocomplete="current-password"],[autocomplete="one-time-code"]');
+ function enableSession(){
+   root.append(session);
+   status.textContent="選択完了。送信と回答取得はそれぞれ利用者がボタンで実行します。";
+ }
+ send.addEventListener("click",()=>{
+   const field=locate("input"),button=locate("send");
+   if(isSensitive(field)||isSensitive(button)||!prompt.value.trim()||
+      prompt.value.length>1500){result.textContent="対象欄・内容を確認してください";return;}
+   if(!field.isContentEditable&&field.tagName!=="TEXTAREA"&&field.tagName!=="INPUT"){
+     result.textContent="編集可能な入力欄を選択してください";return;
+   }
+   if(field.isContentEditable){
+     field.focus();
+     field.textContent=prompt.value;
+     field.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:prompt.value}));
+   }else{
+     const proto=field.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+     const setter=Object.getOwnPropertyDescriptor(proto,"value")?.set;
+     if(!setter){result.textContent="入力に失敗しました";return;}
+     setter.call(field,prompt.value);
+     field.dispatchEvent(new Event("input",{bubbles:true}));
+   }
+   if(button instanceof HTMLElement&&!button.hasAttribute("disabled")){
+     button.click();
+     result.textContent="送信操作を実行。回答が表示されたら取得してください。";
+   }else result.textContent="送信ボタンが使用できません。";
+ });
+ capture.addEventListener("click",()=>{
+   const response=locate("response");
+   if(isSensitive(response)){result.textContent="回答欄を再選択してください";return;}
+   const text=(response.innerText||response.textContent||"").trim().slice(0,5000);
+   result.textContent=text||"回答はまだ取得できません";
+ });
  const cleanup=()=>{document.removeEventListener("click",onClick,true);root.remove();delete window.__metronArcPickerActive;};
  stop.addEventListener("click",cleanup);
  document.addEventListener("click",onClick,true);

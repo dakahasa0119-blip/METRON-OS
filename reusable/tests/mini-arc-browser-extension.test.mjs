@@ -20,3 +20,12 @@ test("ARC picker is ephemeral and has no credential or auto-submit mechanism",()
  assert.doesNotMatch(c,/fetch\(|XMLHttpRequest|localStorage|chrome\.cookies|\.submit\(/);
  assert.match(c,/cleanup/);
 });
+
+test("ARC send and capture require explicit user button interactions",()=>{
+ const c=load("content.js");
+ assert.match(c,/send\.addEventListener\("click"/);
+ assert.match(c,/capture\.addEventListener\("click"/);
+ assert.match(c,/button\.click\(\)/);
+ assert.match(c,/response\.innerText/);
+ assert.doesNotMatch(c,/setInterval|MutationObserver/);
+});
