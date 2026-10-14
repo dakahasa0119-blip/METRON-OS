@@ -19,6 +19,16 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## AI consensus, local LLM, useful computation and recovery
+
+The Mini `/experience` page now has actual provider API adapters for a
+three-provider OpenAI/Gemini/Claude consultation, a separate Ollama localhost
+final-judgment request, a PoUC bounded useful computation verifier, and a
+BAKU automatic known-good source recovery cycle in a disposable sandbox.
+**Provider calls are disabled without user consent/configuration; an absent
+LLM never produces a fabricated answer.** No production patch is applied.
+See [execution evidence and limits](docs/AI_POUC_RECOVERY_EXECUTION_2026-10-14.md).
+
 ## Experience the original METRON civilization concept / 構想を体験する
 
 **METRON is not merely a task-resume utility.** Its long-term concept is
