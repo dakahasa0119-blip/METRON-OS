@@ -65,7 +65,7 @@
         : [];
       if (siblings.length > 1)
         piece += ":nth-of-type(" +
-          (Array.prototype.indexOf.call(node.parentElement.children, node) + 1) + ")";
+          (siblings.indexOf(node) + 1) + ")";
       path.unshift(piece);
       candidates.push(path.join(" > "));
     }
