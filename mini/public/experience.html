@@ -180,6 +180,25 @@
           <p class="hint">対応外・未解決・確認テスト失敗は明示して拒否。元のプロジェクトへは自動適用しません。任意のJavaScriptや未知の本番障害を完全修復できるという意味ではありません。</p>
         </div>
       </article>
+      <article class="chapter" id="baku-agentic-demo">
+        <div class="chapter-number">10</div>
+        <div class="chapter-body">
+          <h3>BAKU本体：実際のAIが複数ファイルを修復する</h3>
+          <p>初期状態では2つのソースファイルにまたがって請求計算が壊れています。選択した本物のモデルが実ソースと失敗したテストを確認し、修正案を作成します。失敗すればテスト結果と履歴をモデルに渡して再修正し、別プロセスで公開・確認テストを実行します。</p>
+          <div class="trust-details" id="agent-health">AI修復ワーカーの接続状態を確認しています。</div>
+          <label for="agent-model">実行するAI</label>
+          <select id="agent-model">
+            <option value="ollama">ローカルOllama（METRON_LOCAL_MODEL）</option>
+            <option value="openai">OpenAI公式API（認証情報が必要）</option>
+          </select>
+          <label for="agent-goal">依頼内容</label>
+          <textarea id="agent-goal" maxlength="500" rows="3">割引後の単価に数量を掛けるべきなのに、請求書の合計が誤っています。複数ファイルを調べて修正してください。</textarea>
+          <label class="consent"><input id="agent-cloud-consent" type="checkbox"> OpenAI公式APIを選んだ場合、この実行での外部送信と課金可能性を許可する</label>
+          <button id="try-agentic-repair" class="subtle" type="button">本物のAIによる調査・修正・テストを開始</button>
+          <div class="proof-list" id="agentic-repair-result"></div>
+          <p class="hint">モデルが未接続なら失敗として終了し、偽のAI修復結果は出しません。修正は独立した一時コピーでのみ行い、本体へ適用しません。現在対応するのは最初から用意した小さな2ファイルの実プロジェクトです。</p>
+        </div>
+      </article>
       <div class="notice" id="concept-notice" role="status" aria-live="polite">村のデータを読み込んでいます…</div>
     </section>
 
