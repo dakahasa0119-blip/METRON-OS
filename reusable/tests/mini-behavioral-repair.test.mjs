@@ -15,8 +15,8 @@ const hiddenScenarios=[
     vector([17],false),vector([18],true),vector([21],true)
   ],[vector([16],false),vector([22],true)]),
   challenge("function permissive(owner,approved){return owner && approved;}",[
-    vector([true,false],true),vector([false,true],true),vector([false,false],false)
-  ],[vector([true,true],true),vector([false,false],false)]),
+    vector([true,false],true),vector([false,false],false)
+  ],[vector([true,true],true),vector([false,true],true)]),
   challenge("function increment(x){return x + 2;}",[
     vector([0],1),vector([5],6),vector([-2],-1)
   ],[vector([10],11),vector([20],21)]),
