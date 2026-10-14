@@ -12,7 +12,7 @@ selectors remain only in the current tab's ephemeral page state.
 
 This is an actual extension and DOM inspection surface, **not yet the
 complete ARC**. Automatic reply capture, resilient AutoDOM recovery,
-Gateway message transport, and supported browser interaction with
+automatic Gateway delivery, and supported browser interaction with
 other AI sites are still unfinished. Do not claim otherwise.
 
 Install manually via the browser's extension management page (developer
@@ -28,4 +28,43 @@ and clicks the selected send button once. The user may separately click
 into the overlay. No polling, background prompts, login automation, cookie
 access or automatic Gateway forwarding is performed. A change to ChatGPT's
 DOM may require selecting elements again. This is not yet a complete
-AutoDOM or Gateway-connected ARC.
+AutoDOM. Gateway forwarding is a separate explicit action below.
+
+## Explicit ARC → Gateway transfer
+
+After capturing a reply, click **選択した回答をGatewayへ渡す**. The extension
+asks for optional localhost permission, and removes that grant when the transfer
+finishes or fails. Enter the running Mini port in **Miniのポート** (default
+8766); the host is always `127.0.0.1`. If approved, its background worker requests a
+short-lived one-time session token from the local Mini and delivers the
+captured text to the actual Gateway/MotherShip B mailbox. It reports the
+message ID and distinguishes confirmed delivery from an accepted, pending job.
+A pending job is not reported as delivered. Failed recapture clears the previous
+answer; ambiguous selectors fail closed. Use **UIを選び直す** after DOM changes. Replies over 950
+characters are refused, not silently truncated. No automatic transmission
+of conversation history, cookies, credentials or hidden browser state.
+
+The loopback Gateway accepts Chromium extension origins, its own localhost
+origin, and local clients without an Origin header. All delivery requests need
+a random one-time token and the explicit local-request header. **This does not authenticate the
+identity of the human or AI provider**; any installed local extension
+origin can request a new session if it has localhost network access. Do
+not run the Mini endpoint on a public interface or with untrusted local
+extensions. The transport is functional but needs live signed-in ChatGPT
+and Chromium-extension end-to-end verification before a full ARC claim.
+
+## Retry and validation limits
+
+The current overlay suppresses repeat forwarding of an already submitted answer,
+including after recapturing the same text. If the delivery response is lost, it
+shows an **unconfirmed outcome** and blocks automatic retry of that capture:
+check Mini before sending again. A durable enqueue followed by a server-side
+error returns the existing job receipt where available. This is not durable,
+cross-tab or cross-reload exactly-once delivery; closing/reopening the overlay
+resets its duplicate guard. No receipt polling or automatic retry is performed.
+If permission removal fails, a warning asks the user to remove localhost access
+in the extension settings.
+
+Executable browser-API/DOM fixtures exercise these failure paths, and server
+tests use real local Gateway persistence and queue backlogs. These fixtures do
+not establish successful authenticated ChatGPT usage or Chrome permission UX.

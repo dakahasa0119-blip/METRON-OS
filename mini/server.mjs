@@ -76,7 +76,8 @@ export async function createMiniServer({root,port=8766}={}){
         return send(res,403,{error:"explicit_local_request_header_required"});
       const origin=req.headers.origin;
       if(origin&&!["http://127.0.0.1:"+currentPort,
-        "http://localhost:"+currentPort].includes(origin))
+        "http://localhost:"+currentPort].includes(origin)&&
+        !/^chrome-extension:\/\/[a-p]{32}$/.test(origin))
         return send(res,403,{error:"invalid_origin"});
       if(!String(req.headers["content-type"]||"").startsWith("application/json"))
         return send(res,415,{error:"json_required"});

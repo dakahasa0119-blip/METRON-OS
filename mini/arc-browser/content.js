@@ -33,12 +33,19 @@
    if(root.contains(e.target))return;
    if(e.target.closest('input[type="password"],[autocomplete="current-password"],[autocomplete="one-time-code"]'))return;
    e.preventDefault();e.stopImmediatePropagation();
-   const el=e.target;
+   const kind=state.selected.length===0?"input":state.selected.length===1?"send":"response";
+   const el=kind==="send"?e.target.closest('button,[role="button"],input[type="submit"]'):
+     kind==="input"?e.target.closest('textarea,input,[contenteditable="true"],[role="textbox"]'):e.target;
+   if(!el){status.textContent="用途に合う要素を選択してください。";return;}
+   const selectedSelector=selector(el);
+   let matches;
+   try{matches=document.querySelectorAll(selectedSelector);}catch{matches=[];}
+   if(matches.length!==1||matches[0]!==el){status.textContent="対象を一意に特定できません。別の要素を選択してください。";return;}
    const tag=el.tagName.toLowerCase();
    const role=el.getAttribute("role")||"";
    const type=el.getAttribute("type")||"";
-   const entry={kind:state.selected.length===0?"input":state.selected.length===1?"send":"response",
-     selector:selector(el),tag,role,type};
+   const entry={kind,
+     selector:selectedSelector,tag,role,type};
    state.selected.push(entry);
    output.textContent=JSON.stringify(state.selected,null,2);
    status.textContent="選択 "+state.selected.length+"/3。表示内容はブラウザ内だけです。";
@@ -54,14 +61,22 @@
  prompt.style.cssText="display:block;width:98%;margin:7px 0";
  const send=document.createElement("button");send.textContent="この文章を送信";
  const capture=document.createElement("button");capture.textContent="最後の回答を取得";
+ const forward=document.createElement("button");forward.textContent="選択した回答をGatewayへ渡す";
  const result=document.createElement("pre");
  result.style.cssText="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px";
- session.append(prompt,send,capture,result);
+ const portLabel=document.createElement("label");portLabel.textContent="Miniのポート ";
+ const port=document.createElement("input");port.type="number";port.min="1";port.max="65535";port.value="8766";
+ portLabel.append(port);
+ const reselect=document.createElement("button");reselect.textContent="UIを選び直す";
+ session.append(prompt,send,capture,portLabel,forward,result,reselect);
+ let lastCaptured=null;
+ let forwarding=false;
+ const submittedCaptures=new Set();
  const picked=kind=>state.selected.find(x=>x.kind===kind);
  const locate=kind=>{
    const p=picked(kind);
    if(!p)return null;
-   try{return document.querySelector(p.selector);}catch{return null;}
+   try{const matches=document.querySelectorAll(p.selector);return matches.length===1?matches[0]:null;}catch{return null;}
  };
  const isSensitive=el=>!el||root.contains(el)||
    el.closest('input[type="password"],[autocomplete="current-password"],[autocomplete="one-time-code"]');
@@ -70,6 +85,7 @@
    status.textContent="選択完了。送信と回答取得はそれぞれ利用者がボタンで実行します。";
  }
  send.addEventListener("click",()=>{
+   lastCaptured=null;
    const field=locate("input"),button=locate("send");
    if(isSensitive(field)||isSensitive(button)||!prompt.value.trim()||
       prompt.value.length>1500){result.textContent="対象欄・内容を確認してください";return;}
@@ -93,10 +109,45 @@
    }else result.textContent="送信ボタンが使用できません。";
  });
  capture.addEventListener("click",()=>{
+   lastCaptured=null;
    const response=locate("response");
    if(isSensitive(response)){result.textContent="回答欄を再選択してください";return;}
-   const text=(response.innerText||response.textContent||"").trim().slice(0,5000);
+   const text=(response.innerText||response.textContent||"").trim();
+   if(text.length>5000){result.textContent="回答が長すぎます。短い回答欄を選択してください。";return;}
+   lastCaptured=text||null;
    result.textContent=text||"回答はまだ取得できません";
+ });
+ forward.addEventListener("click",()=>{
+   if(forwarding)return;
+   if(!lastCaptured){result.textContent="先に回答を取得してください";return;}
+   if(submittedCaptures.has(lastCaptured)){result.textContent="この回答は配送済み・待機中・結果未確認です。Miniで確認してください。";return;}
+   const gatewayPort=Number(port.value);
+   if(!Number.isInteger(gatewayPort)||gatewayPort<1||gatewayPort>65535){result.textContent="Miniのポートは1〜65535で指定してください";return;}
+   if(lastCaptured.length>950){
+     result.textContent="回答が長すぎます。UIを選び直し、950文字以内の回答要素を選択してください。";
+     return;
+   }
+   const captured=lastCaptured;
+   forwarding=true;forward.disabled=true;
+   chrome.runtime.sendMessage({type:"arc_gateway_handoff",text:captured,port:gatewayPort},reply=>{
+     forwarding=false;forward.disabled=false;
+     if(chrome.runtime.lastError){
+       submittedCaptures.add(captured);
+       result.textContent="Gateway結果未確認。再送せずMiniで確認してください: "+chrome.runtime.lastError.message;return;
+     }
+     if(reply?.submitted||reply?.accepted||reply?.uncertain)submittedCaptures.add(captured);
+     result.textContent=reply?.accepted?
+       "Gateway配送済み: "+reply.messageId:
+       reply?.submitted?"Gateway受付済み・配送待ち: "+reply.messageId:
+       reply?.uncertain?"Gateway結果未確認。再送せずMiniで確認してください。":
+       "Gateway配送拒否: "+(reply?.error||"unknown");
+     if(reply?.permissionWarning)result.textContent+=" localhost権限を解除できませんでした。拡張機能設定で解除してください。";
+   });
+ });
+ reselect.addEventListener("click",()=>{
+   lastCaptured=null;state.selected=[];session.remove();output.textContent="";
+   status.textContent="入力欄・送信ボタン・回答欄を選び直してください。";
+   document.addEventListener("click",onClick,true);
  });
  const cleanup=()=>{document.removeEventListener("click",onClick,true);root.remove();delete window.__metronArcPickerActive;};
  stop.addEventListener("click",cleanup);
