@@ -17,4 +17,4 @@ Please use GitHub's private vulnerability reporting feature if enabled for this 
 
 ## Licensing scope
 
-Only `reusable/` is explicitly MIT licensed by the newly added license. Do not assume licensing rights for third-party, legacy or platform SDK code elsewhere in this repository.
+First-party original METRON source is granted under Apache License 2.0 (root `LICENSE` and `NOTICE`), while `reusable/` is granted under MIT. See `LICENSING.md` for exceptions. This grant does not cover third-party bundled binaries, SDKs, other rightsholders' contributions, credentials, private logs or access to online services.

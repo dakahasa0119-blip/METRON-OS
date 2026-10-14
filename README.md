@@ -69,12 +69,12 @@ The historical Gists were created before this repository's later archival/distri
 
 ## Scope of permission to reuse / 再利用の条件
 
-**Only the new `reusable/` toolkit is offered here under the [MIT license](reusable/LICENSE).** Other historical files in the repository may include third-party content, environment-specific details, and incomplete research experiments. Do **not** assume the MIT license applies to the old Android/GAS tree. Unless separately licensed, normal copyright restrictions apply to that material.
+**Original first-party METRON OS, Gateway, BAKU and ARC source is available under [Apache License 2.0](LICENSE).** Attribution is recorded in [NOTICE](NOTICE); see the [license map](LICENSING.md) for exact scope and third-party exclusions. The separate `reusable/` reference packages **remain MIT licensed** under [their own license](reusable/LICENSE). Commercial use and derivative works are allowed subject to the applicable license; licenses do not grant access to private services or third-party intellectual property.
 
 For security issues and research limitations, read [SECURITY.md](SECURITY.md). The original scripts may contain stale endpoint URLs or machine paths; do not deploy unchanged, expose personal data or assume provider platform terms allow automated use. We do not provide help circumventing access controls or challenges.
 
 ## 日本語まとめ
 
-旧METRONには、母艦・Gateway・BAKU・ARCそれぞれに動作履歴と実装ソースがあります。 BAKUの修復ログは[再試行を重複排除した監査](docs/BAKU_REPAIR_EVIDENCE_AUDIT_2026-10-14.md)を追加しました。ただし全体統合、独立した村間P2P通信、自律的な修復成功の安定性は未実証です。公開版は**当時の実験コード**と**新しく切り出した再利用モジュール**を分離しました。後者のみMITライセンスで二次利用できます。
+旧METRONには、母艦・Gateway・BAKU・ARCそれぞれに動作履歴と実装ソースがあります。 BAKUの修復ログは[再試行を重複排除した監査](docs/BAKU_REPAIR_EVIDENCE_AUDIT_2026-10-14.md)を追加しました。ただし全体統合、独立した村間P2P通信、自律的な修復成功の安定性は未実証です。公開版は**当時の実験コード**と**新しく切り出した再利用モジュール**を分離しました。旧本体の第一者著作部分にはApache 2.0、新しい再利用モジュールにはMITを適用しています。原著作者とライセンス表示を維持する条件で商用利用・改変・再配布が可能です。第三者コードは元のライセンスを優先します。
 
 開発を中断した背景にはAPI利用料金の負担があったと開発者は述べていますが、直接の料金記録との照合は未完了です。

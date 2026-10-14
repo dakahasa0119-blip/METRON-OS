@@ -3,9 +3,10 @@
 **Public repository:** `dakahasa0119-blip/METRON-OS`.
 
 A GitHub repository being **public** does not mean a historical project is
-complete, deployable, or legally licensed for general redistribution. The
-original source archive and the independently MIT-licensed `reusable/`
-libraries are different releases.
+complete or deployable. Original first-party METRON source is offered under
+Apache License 2.0; the separately developed `reusable/` packages remain MIT.
+See the complete [licensing and exception map](../LICENSING.md).
+Neither license grants rights over independently owned third-party components.
 
 | System body | Public original source | Gaps / validation status |
 | --- | --- | --- |
@@ -13,7 +14,7 @@ libraries are different releases.
 | Gateway | `modules/gas/METRON_GATEWAY/`: 12 tracked historical files; additionally [six original cloud-only modules](../archive/gas/METRON_GATEWAY/cloud-only-2026-09-28/README.md) from the verified September archive | The full 15-file *as-of-September* source snapshot is not yet published as one consistent version: five contemporaneous cloud files differed from older Git copies. Do not mix files from these generations and claim deployability. |
 | BAKU | `modules/gas/BAKU/`: 26 tracked files | Local verified cloud/Git archive comparison: 18 matched and seven differed at the comparison revision. A unified cloud snapshot release and independent unknown-fault repair study are outstanding. |
 | ARC | `app/src/main/`: 34 tracked Android application files, alongside Gradle project files | Kotlin compilation and desktop Chromium selector tests exist. Android emulator/device end-to-end runtime and original production build have not been demonstrated. |
-| Independent portable components | `reusable/` | MIT license applies to this directory **only**. Four independent package families can be packed/installed; these are reworked references, not source-level drop-in replacements for the old bodies. |
+| Independent portable components | `reusable/` | MIT license applies to this directory; first-party original METRON bodies are Apache-2.0. Four independent package families can be packed/installed; these are reworked references, not source-level drop-in replacements for the old bodies. |
 
 ## Source integrity of the newly archived six Gateway modules
 
