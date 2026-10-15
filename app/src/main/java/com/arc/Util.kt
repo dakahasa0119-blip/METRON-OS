@@ -2,7 +2,6 @@ package com.arc
 
 import android.util.Log
 import java.net.NetworkInterface
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
 
@@ -90,11 +89,15 @@ object Util {
 
     fun getLocalIpAddress(): String {
         try {
-            val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
-            for (networkInterface in interfaces) {
-                val addresses = Collections.list(networkInterface.inetAddresses)
-                for (address in addresses) {
-                    if (!address.isLoopbackAddress && address.hostAddress?.indexOf(':') ?: 0 < 0) return address.hostAddress ?: "unknown"
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            if (interfaces != null) {
+                for (networkInterface in interfaces) {
+                    val addresses = networkInterface.inetAddresses
+                    for (address in addresses) {
+                        if (!address.isLoopbackAddress && address.hostAddress?.indexOf(':') ?: 0 < 0) {
+                            return address.hostAddress ?: "unknown"
+                        }
+                    }
                 }
             }
         } catch (e: Exception) { }
