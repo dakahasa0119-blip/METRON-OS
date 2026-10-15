@@ -47,8 +47,13 @@ function processIncomingSignal(rowIndex) {
 
   const success = rewritePhysicalFile(filename, rawCode);
   if (success) {
-    eval(extractPureCode(rawCode));
-    sheet.getRange(rowIndex, 5).setValue("EVOLVED (GW)");
+    try {
+      const fn = new Function(extractPureCode(rawCode));
+      fn();
+      sheet.getRange(rowIndex, 5).setValue("EVOLVED (GW)");
+    } catch (e) {
+      sheet.getRange(rowIndex, 5).setValue("ERROR (GW): " + e.message);
+    }
   } else {
     sheet.getRange(rowIndex, 5).setValue("FAILED (GW)");
   }
