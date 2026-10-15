@@ -95,8 +95,12 @@
      result.textContent="編集可能な入力欄を選択してください";return;
    }
    const response=locate("response");
-   const beforeSend=isSensitive(response)?null:
-     {node:response,text:(response.innerText||response.textContent||"").trim()};
+   // Every explicit send needs its own selected response baseline. The previous
+   // send removes that selection; a second send must wait for manual reselection.
+   if(isSensitive(response)){
+     result.textContent="次の送信の前に「UIを選び直す」で回答欄を選択してください。";return;
+   }
+   const beforeSend={node:response,text:(response.innerText||response.textContent||"").trim()};
    if(field.isContentEditable){
      field.focus();
      field.textContent=prompt.value;
@@ -111,7 +115,7 @@
    if(button instanceof HTMLElement&&!button.hasAttribute("disabled")){
      // A unique selector can still point to an earlier turn after this send.
      // Keep that baseline across full UI reselection; never guess the new turn.
-     if(beforeSend)preSendResponse=beforeSend;
+     preSendResponse=beforeSend;
      sendGeneration++;
      state.selected=state.selected.filter(x=>x.kind!=="response");
      output.textContent=JSON.stringify(state.selected,null,2);
