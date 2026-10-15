@@ -141,9 +141,7 @@ export async function createMiniServer({root,port=8766,workOptions={}}={}){
           if(!["ollama","openai"].includes(body.provider)&&
              !(body.provider==="auto"&&Array.isArray(body.providerOrder)))
             return send(res,400,{error:"explicit_model_choice_required"});
-          if((body.provider==="openai"||
-             (body.provider==="auto"&&body.providerOrder.includes("openai")))&&
-             body.allowExternalCalls!==true)
+          if(body.provider==="openai"&&body.allowExternalCalls!==true)
             return send(res,403,{error:"remote_ai_requires_explicit_consent"});
           const agentRoot=join(runtime.root,"agentic-baku");
           mkdirSync(agentRoot,{recursive:true});

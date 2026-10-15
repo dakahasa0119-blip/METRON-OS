@@ -211,11 +211,11 @@
           </div>
           <label for="agent-model">実行するAI</label>
           <select id="agent-model">
-            <option value="auto">この実行で選択：Ollama → OpenAI（外部送信は下の許可が必要）</option>
+            <option value="auto">自動選択：まずOllama（同意不要）→ OpenAI（同意した今回だけ）</option>
             <option value="ollama">ローカルOllama（METRON_LOCAL_MODEL）</option>
             <option value="openai">OpenAI公式API（認証情報が必要）</option>
           </select>
-          <label class="consent"><input id="agent-cloud-consent" type="checkbox"> 次の1回で、保存した目的・選択したGateway受信本文・採用済み知識と出所・修復対象と修正候補のソース・失敗履歴を、選択したOpenAI公式APIへ送信すること、および課金可能性を許可する</label>
+          <label class="consent"><input id="agent-cloud-consent" type="checkbox"> ローカル実行には不要です。次の1回で、保存した目的・選択したGateway受信本文・採用済み知識と出所・修復対象と修正候補のソース・失敗履歴を、選択したOpenAI公式APIへ送信すること、および課金可能性を許可する</label>
           <button id="try-agentic-repair" class="subtle" type="button" disabled>保存した仕事の次の候補1回を実行</button>
           <p class="hint">1クリックで候補は1回、合計4回まで。未完了の確認検査は保存済み候補だけを再検査し、新しいAI呼び出しを行いません。ページの表示・更新・AIの選択では実行も再試行もしません。モデルが未接続なら未完了の状態を保存します。修正は隔離コピーだけで行い、本体へ適用しません。任意の実プロジェクトを修復できる機能ではありません。</p>
           <pre class="proof-list work-readback" id="agentic-repair-result">保存した仕事を選ぶと、実行結果をここに表示します。</pre>

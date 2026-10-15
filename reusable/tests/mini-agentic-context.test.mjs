@@ -128,11 +128,11 @@ test("changed context or goal cannot be authorized as a provider switch",()=>iso
   }
 }));
 
-test("missing remote consent creates a durable incident/history without any model call",()=>isolated(async root=>{
-  for(const injected of [false,true]){
+test("missing consent for explicit or external-only selection persists history without a model call",()=>isolated(async root=>{
+  for(const choice of [{provider:"openai"},{providerOrder:["openai"]}])for(const injected of [false,true]){
     const runId=id();let calls=0;
     const result=await runAgenticRepair({root,runId,goal,incidentContext:context(),
-      providerOrder:["ollama","openai"],allowExternalCalls:false,
+      ...choice,allowExternalCalls:false,
       env:{METRON_LOCAL_MODEL:"local-model",OPENAI_API_KEY:"secret-not-saved",METRON_REPAIR_MODEL:"remote-model"},
       ...(injected?{askModel:async()=>{calls++;assert.fail("consent also gates an injected remote choice");}}:{}),
       fetcher:async()=>{calls++;assert.fail("no provider call without consent");}});

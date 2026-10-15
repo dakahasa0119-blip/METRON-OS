@@ -296,8 +296,12 @@ export async function runAgenticRepair({
   persistJournal(root,runId,journal);
   if(Number(process.versions.node.split(".")[0])<22)
     return finish("blocked",{reason:"node_22_required_for_permission_constrained_tests"});
-  // Consent is per explicit invocation and is never restored from old history.
-  if(!pendingVerification&&requestedProviders.includes("openai")&&allowExternalCalls!==true)
+  // An auto request may try its local candidate without granting permission
+  // for an external fallback. Consent is never restored from old history.
+  const localCandidate=requestedProviders.includes("ollama")&&
+    (askModel?selected==="ollama":available.ollama===true);
+  const explicitExternal=selected==="openai"&&(!orderedProviders||!!askModel);
+  if(!pendingVerification&&(explicitExternal||(!localCandidate&&available.openai===true))&&allowExternalCalls!==true)
     return finish("blocked",{reason:"external_model_operator_consent_required"});
   if(!pendingVerification&&!askModel&&!requestedProviders.some(name=>available[name]))
     return finish("blocked",{reason:orderedProviders?"no_capable_provider":
@@ -371,6 +375,10 @@ export async function runAgenticRepair({
         incidentContext:journal.incidentContext
       });
       const invoke=async name=>{
+        // Keep the boundary immediately before either the real adapter or a
+        // test hook, independently of failover selection and its retry policy.
+        if(name!=="ollama"&&allowExternalCalls!==true)
+          throw refused("external_model_operator_consent_required");
         const call={id:"call_"+randomUUID().replaceAll("-",""),attempt:n,
           provider:name,model:modelNames[name],type:selection.type,
           startedAt:Date.now(),outcome:"started"};

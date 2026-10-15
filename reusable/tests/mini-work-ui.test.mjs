@@ -165,6 +165,24 @@ test("one explicit run sends only saved-work identity and separate provider cons
   assert.match(h.$("work-history").textContent,/Observed failure/);
   assert.match(h.$("agentic-repair-result").textContent,/Fixture candidate failed public checks/);
   assert.equal(h.$("try-agentic-repair").disabled,false);
+  await h.$("try-agentic-repair").emit("click");
+  assert.equal(h.posts().length,1,"the prior checkbox does not authorize a second OpenAI run");
+});
+
+test("auto can run locally without consent and consumes fallback consent for only one run",async()=>{
+  const h=await fixture({works:[savedWork()],onRun:async(_,work)=>({
+    work:{...work,stage:"unresolved"},result:{status:"unresolved"}})});
+  assert.match(html,/Ollama（同意不要）/);assert.match(html,/ローカル実行には不要です/);
+  await h.$("try-agentic-repair").emit("click");
+  h.$("agent-cloud-consent").checked=true;
+  await h.$("try-agentic-repair").emit("click");
+  assert.equal(h.$("agent-cloud-consent").checked,false);
+  await h.$("try-agentic-repair").emit("click");
+  assert.deepEqual(h.posts().map(p=>({provider:p.body.provider,allowExternalCalls:p.body.allowExternalCalls})),[
+    {provider:"auto",allowExternalCalls:false},
+    {provider:"auto",allowExternalCalls:true},
+    {provider:"auto",allowExternalCalls:false}
+  ]);
 });
 
 test("new work refuses more than five adopted-knowledge selections before saving",async()=>{
