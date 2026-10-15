@@ -123,8 +123,8 @@
         <strong>BAKU本来の自己修復とは：</strong>
         ChatGPTのような実際のAIエージェントが、ソース・Git履歴・障害ログを調査し、
         原因を推論し、コードを修正して、実ビルド・動作テストを行い、
-        失敗なら再修正を続けることです。現在のMiniには、その一連を独立実行する
-        AI修復ワーカーはまだ接続されていません。
+        失敗なら再修正を続けることです。第10章には同梱の2ファイルだけを対象にする
+        実モデル修復経路があります。任意の実プロジェクトを自律修復する機能は未提供です。
         <a href="https://github.com/dakahasa0119-blip/METRON-OS/blob/main/docs/BAKU_AGENTIC_REPAIR_CONTRACT_2026-10-14.md">BAKU修復の本来の仕様</a>
       </div>
       <article class="chapter" id="metron-advanced">
@@ -183,23 +183,52 @@
       <article class="chapter" id="baku-agentic-demo">
         <div class="chapter-number">10</div>
         <div class="chapter-body">
-          <h3>BAKU本体：実際のAIが複数ファイルを修復する</h3>
-          <p>初期状態では2つのソースファイルにまたがって請求計算が壊れています。選択した本物のモデルが実ソースと失敗したテストを確認し、修正案を作成します。失敗すればテスト結果と履歴をモデルに渡して再修正し、別プロセスで公開・確認テストを実行します。</p>
+          <h3>村の仕事を保存し、BAKUで次の候補を実行する</h3>
+          <p>Gatewayに届いた本文、仕事の目的、選んだ採用済み知識を一つの仕事に保存します。選択した本物のAIが、同梱の2ファイルの請求計算プロジェクトを調査・修正し、別プロセスで実テストを行います。保存した仕事を開き直して、結果と履歴を確認してから明示的に再開できます。</p>
           <div class="trust-details" id="agent-health">AI修復ワーカーの接続状態を確認しています。</div>
+          <div class="work-toolbar">
+            <div><label for="work-village">仕事を保存する村</label><select id="work-village"><option value="village-1">第一の村</option><option value="village-2">第二の村</option></select></div>
+            <button id="refresh-work" class="subtle" type="button">保存状態を読み直す</button>
+          </div>
+          <label for="work-saved">新しい仕事を作る / 保存した仕事を開く</label>
+          <select id="work-saved"><option value="">新しい仕事を作る</option></select>
+          <div id="work-notice" class="work-notice" role="status" aria-live="polite">保存された仕事を読み込んでいます…</div>
+          <div id="work-create-fields" class="work-section">
+            <label for="work-source">元にするGateway受信本文</label>
+            <select id="work-source"><option value="">受信本文を選択してください</option></select>
+            <pre id="work-source-preview" class="work-readback">受信本文を選ぶと、本文と保存時のSHA-256を確認できます。</pre>
+            <label for="agent-goal">この仕事の目的</label>
+            <textarea id="agent-goal" maxlength="500" rows="3" placeholder="受信本文をどう役立て、何を確認したいかを記入してください"></textarea>
+            <fieldset class="work-knowledge-field"><legend>この仕事へ取り込む採用済み知識（任意・5件まで）</legend><div id="work-knowledge"></div></fieldset>
+            <p class="hint">仕事の作成時に本文・目的・選んだ知識を固定保存します。本文に書かれた指示で、AIの選択や外部送信の許可が変わることはありません。</p>
+            <button id="create-work" class="subtle" type="button">この内容で仕事を保存</button>
+          </div>
+          <div id="work-selected" class="work-section" hidden>
+            <h4>保存した仕事と次の操作</h4>
+            <pre id="work-readback" class="work-readback"></pre>
+            <label for="agent-resume-id">この仕事に保存された修復実行ID</label>
+            <input id="agent-resume-id" type="text" readonly placeholder="実行後に保存されます" autocomplete="off">
+          </div>
           <label for="agent-model">実行するAI</label>
           <select id="agent-model">
-            <option value="auto">自動切替：Ollama → OpenAI（利用可能なAIへ引き継ぐ）</option>
+            <option value="auto">この実行で選択：Ollama → OpenAI（外部送信は下の許可が必要）</option>
             <option value="ollama">ローカルOllama（METRON_LOCAL_MODEL）</option>
             <option value="openai">OpenAI公式API（認証情報が必要）</option>
           </select>
-          <label for="agent-goal">依頼内容</label>
-          <textarea id="agent-goal" maxlength="500" rows="3">割引後の単価に数量を掛けるべきなのに、請求書の合計が誤っています。複数ファイルを調べて修正してください。</textarea>
-          <label for="agent-resume-id">保存された修復案件ID（任意・再開時に指定）</label>
-          <input id="agent-resume-id" type="text" placeholder="case_..." maxlength="37" autocomplete="off">
-          <label class="consent"><input id="agent-cloud-consent" type="checkbox"> OpenAI公式APIを選んだ場合、この実行での外部送信と課金可能性を許可する</label>
-          <button id="try-agentic-repair" class="subtle" type="button">本物のAIによる調査・修正・テストを開始</button>
-          <div class="proof-list" id="agentic-repair-result"></div>
-          <p class="hint">モデルが未接続なら失敗として終了し、偽のAI修復結果は出しません。修正は独立した一時コピーでのみ行い、本体へ適用しません。現在対応するのは最初から用意した小さな2ファイルの実プロジェクトです。</p>
+          <label class="consent"><input id="agent-cloud-consent" type="checkbox"> 次の1回で、保存した目的・選択したGateway受信本文・採用済み知識と出所・修復対象と修正候補のソース・失敗履歴を、選択したOpenAI公式APIへ送信すること、および課金可能性を許可する</label>
+          <button id="try-agentic-repair" class="subtle" type="button" disabled>保存した仕事の次の候補1回を実行</button>
+          <p class="hint">1クリックで候補は1回、合計4回まで。未完了の確認検査は保存済み候補だけを再検査し、新しいAI呼び出しを行いません。ページの表示・更新・AIの選択では実行も再試行もしません。モデルが未接続なら未完了の状態を保存します。修正は隔離コピーだけで行い、本体へ適用しません。任意の実プロジェクトを修復できる機能ではありません。</p>
+          <pre class="proof-list work-readback" id="agentic-repair-result">保存した仕事を選ぶと、実行結果をここに表示します。</pre>
+          <details id="work-history-section" class="work-history" hidden><summary>この仕事の候補・実行履歴</summary><pre id="work-history" class="work-readback"></pre></details>
+          <div id="work-share-section" class="work-section" hidden>
+            <h4>結果から作る共有候補</h4>
+            <p id="work-share-status" class="hint"></p>
+            <label for="work-share-body">人が確認・編集する共有候補（320文字以内）</label>
+            <textarea id="work-share-body" maxlength="320" rows="4"></textarea>
+            <button id="save-work-share" class="subtle" type="button" disabled>共有候補を手元に保存</button>
+            <p class="hint">ここでは村の手元の下書きだけを保存します。Village Squareへの公開、他の村での受信・採用は行いません。</p>
+            <pre id="work-share-evidence" class="work-readback"></pre>
+          </div>
         </div>
       </article>
       <div class="notice" id="concept-notice" role="status" aria-live="polite">村のデータを読み込んでいます…</div>

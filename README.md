@@ -102,6 +102,17 @@ Read the [original concept and precise evidence boundaries](docs/METRON_CIVILIZA
 
 ## Try the running METRON Mini OS / 実際に起動する
 
+Village work continuity now connects a delivered Gateway reply, the original
+goal and explicitly selected adopted knowledge to the **same persisted BAKU
+incident**. Chapter 10 of `/experience` creates or reopens that work, passes
+its context into the repair prompt and saves candidates, failures, actual
+provider/model records and per-run consent. Restarting does not call a model;
+an explicit provider change can retain the same candidate and history.
+Verified results prepare a local human-review sharing draft without publishing
+it. The repair target remains the bundled two-file fixture. Validation uses
+labelled injected reasoners and local Chromium, not live AI or signed-in ARC
+E2E. See the [work continuity contract](docs/METRON_MINI_WORK_CONTINUITY_2026-10-15.md).
+
 A browser-based **local working reference** now connects two separately
 persisted MotherShip mailboxes, Gateway queued message delivery and ACK,
 BAKU source-fragment inspection, and ARC DOM selector exploration. It

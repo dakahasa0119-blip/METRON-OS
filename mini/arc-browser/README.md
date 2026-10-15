@@ -1,4 +1,4 @@
-# ARC ordinary-login browser adapter (first bounded step)
+# ARC ordinary-login browser adapter (explicit user actions)
 
 The original ARC uses the **ordinary signed-in ChatGPT browser UI**, not
 a CLI or API replacement. This directory contains a Manifest V3 extension
@@ -23,9 +23,19 @@ to a store or request broad website permissions without user approval.
 
 After selecting input, send button and response element, the user may enter
 text in the ARC overlay and click **この文章を送信**. ARC sets the selected input
-and clicks the selected send button once. The user may separately click
-**最後の回答を取得** to read up to 5000 characters of the chosen response
-into the overlay. No polling, background prompts, login automation, cookie
+and clicks the selected send button once. After that click, ARC invalidates
+the previous response selector. Wait for the actual new reply to finish,
+then use **UIを選び直す** to pick the input, send button and that new reply.
+The unchanged pre-send response node is refused even after reselection.
+An explicitly selected new reply may legitimately have the same text as
+the previous reply; equal text alone does not make its DOM target stale.
+The user may separately click **選択した回答を取得** to read up to 5000
+characters of the chosen response into the overlay. ARC does not infer
+the latest turn, prove that the provider accepted the prompt, or detect
+stream completion. Verify the visible prompt/reply and captured preview.
+The initial three picks require an existing response element; use only a
+harmless test conversation, never a private conversation for testing.
+No polling, background prompts, login automation, cookie
 access or automatic Gateway forwarding is performed. A change to ChatGPT's
 DOM may require selecting elements again. This is not yet a complete
 AutoDOM. Gateway forwarding is a separate explicit action below.
@@ -55,8 +65,11 @@ and Chromium-extension end-to-end verification before a full ARC claim.
 
 ## Retry and validation limits
 
-The current overlay suppresses repeat forwarding of an already submitted answer,
-including after recapturing the same text. If the delivery response is lost, it
+The current overlay suppresses repeat forwarding of an already submitted answer
+within the same explicit send operation, including after recapturing the same
+text or reselecting the UI. A new explicit send starts a new capture context,
+so a new reply with identical text can be forwarded after selecting its target.
+If the delivery response is lost, it
 shows an **unconfirmed outcome** and blocks automatic retry of that capture:
 check Mini before sending again. A durable enqueue followed by a server-side
 error returns the existing job receipt where available. This is not durable,
