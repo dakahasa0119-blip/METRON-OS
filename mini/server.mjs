@@ -131,6 +131,10 @@ export async function createMiniServer({root,port=8766,workOptions={}}={}){
         if(url==="/api/work/action"){
           if(body?.action==="create")return send(res,200,work.create(body));
           if(body?.action==="prepare-share")return send(res,200,work.prepareShare(body));
+          if(body?.action==="worker-export")return send(res,200,work.exportWorker(body));
+          if(body?.action==="worker-import")return send(res,200,work.importWorker(body));
+          if(body?.action==="worker-review")return send(res,200,work.reviewWorker(body));
+          if(body?.action==="worker-verify")return send(res,200,await work.verifyWorker(body));
           return send(res,400,{error:"invalid_work_action"});
         }
         if(url==="/api/agent/run"){
@@ -141,9 +145,7 @@ export async function createMiniServer({root,port=8766,workOptions={}}={}){
           if(!["ollama","openai"].includes(body.provider)&&
              !(body.provider==="auto"&&Array.isArray(body.providerOrder)))
             return send(res,400,{error:"explicit_model_choice_required"});
-          if((body.provider==="openai"||
-             (body.provider==="auto"&&body.providerOrder.includes("openai")))&&
-             body.allowExternalCalls!==true)
+          if(body.provider==="openai"&&body.allowExternalCalls!==true)
             return send(res,403,{error:"remote_ai_requires_explicit_consent"});
           const agentRoot=join(runtime.root,"agentic-baku");
           mkdirSync(agentRoot,{recursive:true});
@@ -223,6 +225,7 @@ export async function createMiniServer({root,port=8766,workOptions={}}={}){
   const close=async()=>{
     clearInterval(interval);
     await new Promise(resolve=>server.close(resolve));
+    await work.waitForIdle();
   };
   return {server,runtime,civilization,pouc,work,url:"http://127.0.0.1:"+server.address().port,close};
 }

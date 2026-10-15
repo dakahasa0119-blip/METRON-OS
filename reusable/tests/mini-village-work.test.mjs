@@ -9,6 +9,9 @@ import {createHash} from "node:crypto";
 import {spawn} from "node:child_process";
 import {createMiniServer} from "../../mini/server.mjs";
 import {verifyRumor} from "../../mini/rumor-protocol.mjs";
+import {MetronMiniRuntime} from "../../mini/runtime.mjs";
+import {CivilizationExperienceV3} from "../../mini/civilization-v3.mjs";
+import {VillageWorkflows} from "../../mini/village-work.mjs";
 
 const pricing="export function unitPrice(base, discount) { return base - discount; }\n";
 const invoice='import { unitPrice } from "./pricing.mjs";\n'+
@@ -42,6 +45,30 @@ async function create(app,source,knowledgeIds=[],goal="Fix the discounted invoic
 }
 const run=(app,w,provider="ollama",allowExternalCalls=false)=>post(app,"/api/agent/run",{
   villageId:w.villageId,workId:w.id,provider,allowExternalCalls});
+
+test("village auto local repair needs no external consent and reload never calls a model",()=>isolated(async root=>{
+  let calls=0;
+  const options={runnerOptions:{env:{METRON_LOCAL_MODEL:"fixture-local",OPENAI_API_KEY:"fixture",METRON_REPAIR_MODEL:"fixture-remote"},
+    fetcher:async url=>{
+      calls++;assert.equal(String(url),"http://127.0.0.1:11434/api/generate");
+      return new Response(JSON.stringify({response:proposal(true)}),{status:200});
+    }}};
+  const runtime=new MetronMiniRuntime(root,{now:()=>1000}),world=new CivilizationExperienceV3(root,runtime);
+  const workflow=new VillageWorkflows(world,options);
+  const delivered=runtime.submit({from:"A",to:"B",message:"Injected auto-selection incident",code:""});
+  const work=workflow.create({villageId:"village-1",goal:"Fix the fixture invoice",sourceMessageId:delivered.messageId,
+    knowledgeIds:["origin_village-1"]}).work;
+  const response=await workflow.run({villageId:work.villageId,workId:work.id,provider:"auto",allowExternalCalls:false});
+  assert.equal(response.work.stage,"candidate_verified");assert.equal(calls,1);
+  assert.equal(response.work.executions[0].requestedProvider,"auto");
+  assert.equal(response.work.executions[0].externalConsent,false);
+  assert.equal(response.work.attempts[0].provider,"ollama");assert.equal(response.work.runId,work.runId);
+  const restoredRuntime=new MetronMiniRuntime(root,{now:()=>1000});
+  const restoredWorld=new CivilizationExperienceV3(root,restoredRuntime);
+  const saved=new VillageWorkflows(restoredWorld,options).state({villageId:work.villageId,workId:work.id}).work;
+  assert.equal(saved.stage,"candidate_verified");assert.equal(saved.id,work.id);assert.equal(saved.runId,work.runId);
+  assert.equal(calls,1);assert.equal(saved.sharingCandidate.status,"human_review_required");
+}));
 
 test("same village work passes saved Gateway answer, adopted provenance, candidates and actual failures across restart/AI choice",()=>isolated(async root=>{
   const prompts=[];const askModel=async prompt=>{prompts.push(prompt);return proposal(prompts.length>1);};

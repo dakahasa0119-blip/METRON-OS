@@ -134,6 +134,28 @@ test("valid send requires a new response selection and blocks the unchanged earl
  assert.equal(p.sent.length,1);assert.equal(p.sent[0].text,marker);
 });
 
+test("consecutive sends cannot forward the first reply as the second prompt's response",()=>{
+ const p=picker();p.fields["#response"].textContent="Reply before either prompt";
+ p.fields["#input"].isContentEditable=true;
+ p.prompt.value="First explicit prompt";p.send.click();
+ assert.equal(p.fields["#send"].clicks,1);
+ const firstReply="Artificial reply belonging only to the first prompt";
+ p.appendResponse("first-prompt-reply",firstReply);
+ // The first send removed the response selection. Input/send remain picked,
+ // so try a second explicit prompt before selecting the first prompt's reply.
+ p.prompt.value="Second explicit prompt";p.send.click();
+ const providerSendClicks=p.fields["#send"].clicks;
+ p.reselect.click();p.pickAgain("first-prompt-reply");
+ p.capture.click();p.forward.click();
+ // A safe implementation can refuse the second send until it has a response
+ // baseline, or refuse this stale capture. Refusing the send must still allow
+ // the legitimately selected first reply in the first send's own context.
+ const staleReplyForwarded=providerSendClicks===2&&p.sent.some(msg=>msg.text===firstReply);
+ assert.equal(staleReplyForwarded,false,JSON.stringify({
+  providerSendClicks,forwardedTexts:p.sent.map(msg=>msg.text),capturedPreview:p.result.textContent
+ }));
+});
+
 test("an unavailable send button does not invalidate the selected response",()=>{
  const p=picker();p.fields["#response"].textContent="existing visible reply";
  p.fields["#input"].isContentEditable=true;p.prompt.value="New prompt";

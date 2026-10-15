@@ -74,8 +74,10 @@ function modelProposal(response){
     // Deny added external imports/network/host access. The fixtures need
     // exactly one static local import in invoice.mjs.
     const noSideEffects=/\b(?:process|require|eval|Function|globalThis|fetch|import\s*\(|child_process|fs|net|http|https|worker_threads)\b/;
+    // Accept the same binding/path with an explicit semicolon or an ASI line
+    // boundary/EOF. Do not erase an import followed by same-line extra syntax.
     const moduleBody=p.path==="src/invoice.mjs"?p.content.replace(
-      /\bimport\s+\{\s*unitPrice\s*\}\s+from\s+(["'])\.\/pricing\.mjs\1\s*;/g,""):p.content;
+      /\bimport\s+\{\s*unitPrice\s*\}\s+from\s+(["'])\.\/pricing\.mjs\1[^\S\r\n\u2028\u2029]*(?:;|(?=[\r\n\u2028\u2029]|$))/g,""):p.content;
     if(noSideEffects.test(p.content)||/\b(?:import|from)\b/.test(moduleBody))
       throw refused("unsafe_patch_content");
   }
@@ -294,8 +296,12 @@ export async function runAgenticRepair({
   persistJournal(root,runId,journal);
   if(Number(process.versions.node.split(".")[0])<22)
     return finish("blocked",{reason:"node_22_required_for_permission_constrained_tests"});
-  // Consent is per explicit invocation and is never restored from old history.
-  if(!pendingVerification&&requestedProviders.includes("openai")&&allowExternalCalls!==true)
+  // An auto request may try its local candidate without granting permission
+  // for an external fallback. Consent is never restored from old history.
+  const localCandidate=requestedProviders.includes("ollama")&&
+    (askModel?selected==="ollama":available.ollama===true);
+  const explicitExternal=selected==="openai"&&(!orderedProviders||!!askModel);
+  if(!pendingVerification&&(explicitExternal||(!localCandidate&&available.openai===true))&&allowExternalCalls!==true)
     return finish("blocked",{reason:"external_model_operator_consent_required"});
   if(!pendingVerification&&!askModel&&!requestedProviders.some(name=>available[name]))
     return finish("blocked",{reason:orderedProviders?"no_capable_provider":
@@ -369,6 +375,10 @@ export async function runAgenticRepair({
         incidentContext:journal.incidentContext
       });
       const invoke=async name=>{
+        // Keep the boundary immediately before either the real adapter or a
+        // test hook, independently of failover selection and its retry policy.
+        if(name!=="ollama"&&allowExternalCalls!==true)
+          throw refused("external_model_operator_consent_required");
         const call={id:"call_"+randomUUID().replaceAll("-",""),attempt:n,
           provider:name,model:modelNames[name],type:selection.type,
           startedAt:Date.now(),outcome:"started"};
