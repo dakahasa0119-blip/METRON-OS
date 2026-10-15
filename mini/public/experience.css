@@ -9,3 +9,19 @@ font-size:13px;font-weight:750}
 border-radius:10px;margin:10px 0 18px;font-size:12px;line-height:1.7;
 color:#b5c8dc}
 .trust-details strong{color:#efb78b}
+.work-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}
+.work-toolbar label{margin-top:0}.work-toolbar button{margin-bottom:0}
+.work-section{margin:16px 0;padding:15px;border:1px solid #36526b;border-radius:12px;background:#0e1d30}
+.work-section h4{margin:0 0 10px;color:#c5e5d8;font-size:13px}
+.work-notice{margin:12px 0;color:#a9ddcc;font-size:12px;line-height:1.6}
+.work-notice.error{color:#ffc1cc}
+.work-readback{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:340px;overflow:auto;font:11px/1.7 ui-monospace,Consolas,monospace;color:#b7d2dc;margin:12px 0}
+.work-knowledge-field{min-width:0;margin:17px 0 8px;padding:10px 12px;border:1px solid #36526b;border-radius:9px}
+.work-knowledge-field legend{font-size:12px;color:#a8c7d2;padding:0 5px}
+.work-knowledge-option{display:flex;align-items:flex-start;gap:9px;font-weight:400;line-height:1.6}
+.work-knowledge-option input{flex:0 0 auto;width:auto;margin:4px 0 0}
+.work-knowledge-option span{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;color:#bbd1df}
+.work-history{margin:15px 0;border-top:1px solid #36526b;padding-top:12px}
+.work-history summary{cursor:pointer;color:#a8dcca;font-size:12px}
+#baku-agentic-demo input[readonly]{color:#9cb5c9;background:#0b1726}
+@media(max-width:600px){.work-toolbar{grid-template-columns:1fr}.work-toolbar button{justify-self:start}.work-section{padding:11px}}

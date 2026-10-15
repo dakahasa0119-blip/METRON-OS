@@ -60,7 +60,7 @@
  prompt.maxLength=1500;prompt.rows=3;
  prompt.style.cssText="display:block;width:98%;margin:7px 0";
  const send=document.createElement("button");send.textContent="この文章を送信";
- const capture=document.createElement("button");capture.textContent="最後の回答を取得";
+ const capture=document.createElement("button");capture.textContent="選択した回答を取得";
  const forward=document.createElement("button");forward.textContent="選択した回答をGatewayへ渡す";
  const result=document.createElement("pre");
  result.style.cssText="white-space:pre-wrap;max-height:160px;overflow:auto;font-size:11px";
@@ -70,6 +70,8 @@
  const reselect=document.createElement("button");reselect.textContent="UIを選び直す";
  session.append(prompt,send,capture,portLabel,forward,result,reselect);
  let lastCaptured=null;
+ let preSendResponse=null;
+ let sendGeneration=0;
  let forwarding=false;
  const submittedCaptures=new Set();
  const picked=kind=>state.selected.find(x=>x.kind===kind);
@@ -92,6 +94,9 @@
    if(!field.isContentEditable&&field.tagName!=="TEXTAREA"&&field.tagName!=="INPUT"){
      result.textContent="編集可能な入力欄を選択してください";return;
    }
+   const response=locate("response");
+   const beforeSend=isSensitive(response)?null:
+     {node:response,text:(response.innerText||response.textContent||"").trim()};
    if(field.isContentEditable){
      field.focus();
      field.textContent=prompt.value;
@@ -104,8 +109,14 @@
      field.dispatchEvent(new Event("input",{bubbles:true}));
    }
    if(button instanceof HTMLElement&&!button.hasAttribute("disabled")){
+     // A unique selector can still point to an earlier turn after this send.
+     // Keep that baseline across full UI reselection; never guess the new turn.
+     if(beforeSend)preSendResponse=beforeSend;
+     sendGeneration++;
+     state.selected=state.selected.filter(x=>x.kind!=="response");
+     output.textContent=JSON.stringify(state.selected,null,2);
      button.click();
-     result.textContent="送信操作を実行。回答が表示されたら取得してください。";
+     result.textContent="送信操作を実行。回答が表示されたら「UIを選び直す」で新しい回答欄を選択してください。";
    }else result.textContent="送信ボタンが使用できません。";
  });
  capture.addEventListener("click",()=>{
@@ -113,29 +124,33 @@
    const response=locate("response");
    if(isSensitive(response)){result.textContent="回答欄を再選択してください";return;}
    const text=(response.innerText||response.textContent||"").trim();
+   if(preSendResponse&&response===preSendResponse.node&&text===preSendResponse.text){
+     result.textContent="送信前と同じ回答欄です。新しい質問への回答欄を選択してください。";return;
+   }
    if(text.length>5000){result.textContent="回答が長すぎます。短い回答欄を選択してください。";return;}
-   lastCaptured=text||null;
+   // A later explicit send may legitimately receive the same text again.
+   lastCaptured=text?{text,key:JSON.stringify([sendGeneration,text])}:null;
    result.textContent=text||"回答はまだ取得できません";
  });
  forward.addEventListener("click",()=>{
    if(forwarding)return;
    if(!lastCaptured){result.textContent="先に回答を取得してください";return;}
-   if(submittedCaptures.has(lastCaptured)){result.textContent="この回答は配送済み・待機中・結果未確認です。Miniで確認してください。";return;}
+   if(submittedCaptures.has(lastCaptured.key)){result.textContent="この回答は配送済み・待機中・結果未確認です。Miniで確認してください。";return;}
    const gatewayPort=Number(port.value);
    if(!Number.isInteger(gatewayPort)||gatewayPort<1||gatewayPort>65535){result.textContent="Miniのポートは1〜65535で指定してください";return;}
-   if(lastCaptured.length>950){
+   if(lastCaptured.text.length>950){
      result.textContent="回答が長すぎます。UIを選び直し、950文字以内の回答要素を選択してください。";
      return;
    }
    const captured=lastCaptured;
    forwarding=true;forward.disabled=true;
-   chrome.runtime.sendMessage({type:"arc_gateway_handoff",text:captured,port:gatewayPort},reply=>{
+   chrome.runtime.sendMessage({type:"arc_gateway_handoff",text:captured.text,port:gatewayPort},reply=>{
      forwarding=false;forward.disabled=false;
      if(chrome.runtime.lastError){
-       submittedCaptures.add(captured);
+       submittedCaptures.add(captured.key);
        result.textContent="Gateway結果未確認。再送せずMiniで確認してください: "+chrome.runtime.lastError.message;return;
      }
-     if(reply?.submitted||reply?.accepted||reply?.uncertain)submittedCaptures.add(captured);
+     if(reply?.submitted||reply?.accepted||reply?.uncertain)submittedCaptures.add(captured.key);
      result.textContent=reply?.accepted?
        "Gateway配送済み: "+reply.messageId:
        reply?.submitted?"Gateway受付済み・配送待ち: "+reply.messageId:

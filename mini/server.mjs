@@ -1,6 +1,6 @@
 /**
- * Local-only HTTP UI for the METRON Mini reference.
- * Fixed-route static serving, no filesystem browsing, no provider/API access.
+ * Loopback HTTP UI and explicitly requested repair/provider routes.
+ * Fixed-route static serving; no arbitrary filesystem browsing.
  */
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
@@ -15,6 +15,7 @@ import {join} from "node:path";
 import {mkdirSync} from "node:fs";
 import { modelAvailability,consultAndJudge } from "./ai-consensus.mjs";
 import {ArcHandoff} from "./arc-handoff.mjs";
+import {VillageWorkflows} from "./village-work.mjs";
 
 const UI=new Map([
   ["/",["./public/index.html","text/html; charset=utf-8"]],
@@ -52,18 +53,25 @@ async function readJson(req){
   catch{throw Object.assign(new Error("invalid JSON"),{code:"invalid_json"});}
 }
 /** Start only on loopback. Caller must enforce single writer for the data root. */
-export async function createMiniServer({root,port=8766}={}){
+export async function createMiniServer({root,port=8766,workOptions={}}={}){
   if(!Number.isInteger(port)||port<0||port>65535)
     throw new Error("port must be 0-65535");
   const runtime=new MetronMiniRuntime(root);
   const civilization=new CivilizationExperienceV3(runtime.root,runtime);
   const pouc=new PoUCLedger(runtime.root);
   const arcHandoff=new ArcHandoff(runtime);
+  const work=new VillageWorkflows(civilization,workOptions);
   const server=createServer(async(req,res)=>{
     const currentPort=server.address()?.port||port;
     if(!hostAllowed(req.headers.host,currentPort))
       return send(res,403,{error:"invalid_host"});
     const url=req.url?.split("?")[0]||"";
+    if(req.method==="GET"&&url==="/api/work/state"){
+      try{
+        const query=new URL(req.url,"http://127.0.0.1").searchParams;
+        return send(res,200,work.state({villageId:query.get("villageId"),workId:query.get("workId")}));
+      }catch(e){return send(res,400,{error:e.code||"work_state_failed"});}
+    }
     if(req.method==="GET"&&STATIC.has(url)){
       const item=STATIC.get(url);
       res.writeHead(200,{"Content-Type":item.type,
@@ -110,7 +118,7 @@ export async function createMiniServer({root,port=8766}={}){
       return send(res,200,runtime.state());
     if(req.method==="GET"&&url==="/api/health")
       return send(res,200,{status:"ok",mode:"local-only"});
-    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action","/api/advanced/action","/api/agent/run"].includes(url)){
+    if(req.method==="POST"&&["/api/mission","/api/drain","/api/civilization/action","/api/advanced/action","/api/agent/run","/api/work/action"].includes(url)){
       if(req.headers["x-metron-mini"]!=="1")
         return send(res,403,{error:"explicit_local_request_header_required"});
       const origin=req.headers.origin;
@@ -120,9 +128,16 @@ export async function createMiniServer({root,port=8766}={}){
         return send(res,415,{error:"json_required"});
       try{
         const body=await readJson(req);
+        if(url==="/api/work/action"){
+          if(body?.action==="create")return send(res,200,work.create(body));
+          if(body?.action==="prepare-share")return send(res,200,work.prepareShare(body));
+          return send(res,400,{error:"invalid_work_action"});
+        }
         if(url==="/api/agent/run"){
           if(!body||typeof body!=="object"||Array.isArray(body))
             return send(res,400,{error:"invalid_agent_request"});
+          if(Object.hasOwn(body,"workId")||Object.hasOwn(body,"villageId"))
+            return send(res,200,await work.run(body));
           if(!["ollama","openai"].includes(body.provider)&&
              !(body.provider==="auto"&&Array.isArray(body.providerOrder)))
             return send(res,400,{error:"explicit_model_choice_required"});
@@ -209,5 +224,5 @@ export async function createMiniServer({root,port=8766}={}){
     clearInterval(interval);
     await new Promise(resolve=>server.close(resolve));
   };
-  return {server,runtime,civilization,pouc,url:"http://127.0.0.1:"+server.address().port,close};
+  return {server,runtime,civilization,pouc,work,url:"http://127.0.0.1:"+server.address().port,close};
 }
