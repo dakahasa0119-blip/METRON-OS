@@ -7,6 +7,7 @@ import {createHash,randomUUID} from "node:crypto";
 import {readCheckpoint,writeAtomicJson} from "../reusable/gateway-jobs/checkpoint.mjs";
 import {runAgenticRepair} from "./agentic-runner.mjs";
 import {createRumor,verifyRumor} from "./rumor-protocol.mjs";
+import {ExternalWorkerHandoff,validateExternalRecord,recoverExternalRecord} from "./external-worker.mjs";
 
 const VILLAGES=["village-1","village-2"];
 const STAGES=new Set(["ready","running","blocked","interrupted","unresolved",
@@ -44,6 +45,7 @@ function validateWork(w,villageId,id){
       throw fail("invalid_work_sharing_candidate");
     verifyRumor(c.rumor);
   }
+  validateExternalRecord(w);
   return w;
 }
 const outcomeStage=status=>({verified_candidate:"candidate_verified",holdout_rejected:"candidate_rejected",
@@ -55,8 +57,9 @@ const nextFor=stage=>({ready:"select_ai_and_run",running:"wait_for_current_expli
   readback_failed:"inspect_readback_failure",attempt_budget_exhausted:"review_attempt_budget"}[stage]);
 
 export class VillageWorkflows {
-  constructor(civilization,{runnerOptions={}}={}){
+  constructor(civilization,{runnerOptions={},workerPlans=[]}={}){
     this.world=civilization;
+    this.externalWorker=new ExternalWorkerHandoff(workerPlans);this.externalTasks=new Set();
     // Test injection is server construction only, never an HTTP/body field.
     this.runnerOptions=Object.fromEntries(["askModel","env","fetcher"].filter(k=>k in runnerOptions).map(k=>[k,runnerOptions[k]]));
     this.active=new Set();
@@ -65,6 +68,7 @@ export class VillageWorkflows {
       // Reconcile saved intent/result only. No reasoner/tests/retries here.
       for(const id of this.#ids(villageId)){
         const work=this.#read(villageId,id);
+        if(work.externalRepair){if(recoverExternalRecord(work))this.#save(work);continue;}
         if(work.stage==="running"){
           const journal=readCheckpoint(this.#journalPath(work));
           this.#syncJournal(work,journal);
@@ -149,6 +153,7 @@ export class VillageWorkflows {
       throw fail("work_adopted_knowledge_changed");
   }
   #syncJournal(w,j){
+    if(w.externalRepair)return;
     if(!j)return;
     if(j.id!==w.runId||j.goal!==w.goal||
        stable(j.incidentContext)!==stable(w.incidentContext))
@@ -183,6 +188,17 @@ export class VillageWorkflows {
   #draft(w,body){
     if(w.stage!=="candidate_verified"||w.result?.status!=="verified_candidate")
       throw fail("work_verified_result_required_for_share");
+    if(w.externalRepair){
+      validateExternalRecord(w);const t=w.externalRepair,v=t.verifications.at(-1);
+      if(t.status!=="verified")throw fail("independent_worker_verification_required");
+      const rumor=createRumor({originVillage:w.villageId,parentRumorId:null,
+        body:body??`外部修復ワーカーの候補 ${v.candidateCommit.slice(0,12)}。仕事 ${w.id}。元の再現と回帰を独立検証。元checkout未反映、共有・採用は人の確認待ち。`});
+      w.sharingCandidate={status:"human_review_required",body:rumor.body,workId:w.id,runId:w.runId,rumor,
+        evidence:{scope:"human_reviewed_external_worker",requestDigest:t.request.requestDigest,
+          baseCommit:v.baseCommit,candidateCommit:v.candidateCommit,diffSha256:v.diffSha256,
+          verificationId:v.id,evidenceDigest:v.evidenceDigest,productionChanged:false}};
+      return;
+    }
     const last=w.attempts.at(-1);
     const text=body??(`教材2ファイルの修復候補。仕事 ${w.id}。${(last?.diagnosis||"").slice(0,110)} `+
       `公開検査=${last?.publicPassed===true?"PASS":"未確認"}、確認検査=${last?.holdoutPassed===true?"PASS":"未確認"}。本番未適用、汎用性未検証。`);
@@ -239,6 +255,7 @@ export class VillageWorkflows {
   async run(input){
     fields(input,["action","villageId","workId","provider","allowExternalCalls"]);
     const w=this.#read(input.villageId,input.workId),key=w.villageId+":"+w.id;
+    if(w.externalRepair)throw fail("external_worker_explicit_workflow_required");
     if(this.active.has(key)||w.stage==="running")throw fail("work_run_already_active");
     if(TERMINAL.has(w.stage))throw fail("work_result_requires_review_not_rerun");
     if(typeof input.provider!=="string"||!/^[-a-z0-9]{1,32}$/.test(input.provider)||
@@ -289,4 +306,46 @@ export class VillageWorkflows {
       throw error;
     }finally{this.active.delete(key);}
   }
+  #workerWork(input,allowed){
+    fields(input,["action","villageId","workId",...allowed]);
+    const w=this.#read(input.villageId,input.workId);
+    if(this.active.has(w.villageId+":"+w.id)||w.stage==="running")throw fail("work_run_already_active");
+    this.#checkBindings(w);return w;
+  }
+  exportWorker(input){
+    const w=this.#workerWork(input,["planId","allowWorker","symptom","reproduction","evidence"]);
+    if(TERMINAL.has(w.stage)&&!w.externalRepair)throw fail("work_result_requires_review_not_rerun");
+    const {action,...body}=input,request=this.externalWorker.export(w,body);
+    if(!w.executions.some(x=>x.workerRequestId===request.requestId))w.executions.push({
+      id:"exec_"+randomUUID().replaceAll("-",""),requestedProvider:"external-worker",
+      workerRequestId:request.requestId,workerConsent:true,externalConsent:false,
+      status:"exported",authority:"explicit_local_operator_request",startedAt:Date.now()});
+    w.scope="human_reviewed_external_worker";this.#save(w);return {work:clone(w),request};
+  }
+  importWorker(input){
+    const w=this.#workerWork(input,["report"]);
+    try{
+      const imported=this.externalWorker.import(w,input.report);this.#save(w);
+      return {work:clone(w),...imported};
+    }catch(error){
+      if(w.externalRepair&&w.externalRepair.history.length<100){
+        w.externalRepair.history.push({action:"import_rejected",reason:error.code||"invalid_worker_report",at:Date.now()});this.#save(w);
+      }
+      throw error;
+    }
+  }
+  reviewWorker(input){
+    const w=this.#workerWork(input,[]);return this.externalWorker.review(w);
+  }
+  async verifyWorker(input){
+    const w=this.#workerWork(input,["reviewedDiffSha256","allowValidation","verifier"]),key=w.villageId+":"+w.id;
+    this.active.add(key);
+    const task=this.externalWorker.verify(w,input,()=>this.#save(w));this.externalTasks.add(task);
+    try{
+      const verification=await task;
+      if(verification.status==="verified"&&!w.sharingCandidate)this.#draft(w);
+      this.#save(w);return {work:clone(w),verification};
+    }finally{this.active.delete(key);this.externalTasks.delete(task);}
+  }
+  async waitForIdle(){await Promise.allSettled([...this.externalTasks]);}
 }
