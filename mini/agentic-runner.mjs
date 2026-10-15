@@ -74,8 +74,10 @@ function modelProposal(response){
     // Deny added external imports/network/host access. The fixtures need
     // exactly one static local import in invoice.mjs.
     const noSideEffects=/\b(?:process|require|eval|Function|globalThis|fetch|import\s*\(|child_process|fs|net|http|https|worker_threads)\b/;
+    // Accept the same binding/path with an explicit semicolon or an ASI line
+    // boundary/EOF. Do not erase an import followed by same-line extra syntax.
     const moduleBody=p.path==="src/invoice.mjs"?p.content.replace(
-      /\bimport\s+\{\s*unitPrice\s*\}\s+from\s+(["'])\.\/pricing\.mjs\1\s*;/g,""):p.content;
+      /\bimport\s+\{\s*unitPrice\s*\}\s+from\s+(["'])\.\/pricing\.mjs\1[^\S\r\n\u2028\u2029]*(?:;|(?=[\r\n\u2028\u2029]|$))/g,""):p.content;
     if(noSideEffects.test(p.content)||/\b(?:import|from)\b/.test(moduleBody))
       throw refused("unsafe_patch_content");
   }

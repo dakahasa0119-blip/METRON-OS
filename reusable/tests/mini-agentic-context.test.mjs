@@ -252,6 +252,71 @@ test("an injected ESM re-export patch is rejected before candidate execution or 
   assert.ok(!journalText(root,result.runId).includes("holdout.test.mjs"));
 }));
 
+test("approved static invoice import accepts a missing semicolon at a line boundary",()=>isolated(async root=>{
+  const semicolonless='import { unitPrice } from "./pricing.mjs"\n'+
+    'export function invoiceTotal(base, discount, quantity) { return unitPrice(base, discount) * quantity; }\n';
+  const result=await runAgenticRepair({root,goal,maxAttempts:1,env:{},askModel:async()=>JSON.stringify({
+    diagnosis:"Use the same allowed local binding with automatic semicolon insertion",
+    changes:[{path:"src/pricing.mjs",content:pricing},{path:"src/invoice.mjs",content:semicolonless}]
+  })});
+  assert.equal(result.status,"verified_candidate");
+  assert.equal(result.attempts.length,1);
+  assert.equal(result.attempts[0].publicPassed,true);
+  assert.equal(result.attempts[0].holdoutPassed,true);
+  assert.equal(result.productionChanged,false);
+}));
+
+test("approved invoice import preserves single quotes, multiline whitespace and JavaScript line terminators",async()=>{
+  const body='export function invoiceTotal(base, discount, quantity) { return unitPrice(base, discount) * quantity; }\n';
+  for(const prefix of [
+    "import { unitPrice } from './pricing.mjs'\t\r\n",
+    'import {\n  unitPrice\n} from "./pricing.mjs"\n',
+    'import { unitPrice } from "./pricing.mjs"\u2028',
+    'import { unitPrice } from "./pricing.mjs"\u2029',
+    'import { unitPrice } from "./pricing.mjs"\n;\n'
+  ])await isolated(async root=>{
+    const result=await runAgenticRepair({root,goal,maxAttempts:1,env:{},askModel:async()=>JSON.stringify({
+      diagnosis:"Keep the approved local import with a valid statement boundary",
+      changes:[{path:"src/pricing.mjs",content:pricing},{path:"src/invoice.mjs",content:prefix+body}]
+    })});
+    assert.equal(result.status,"verified_candidate",JSON.stringify({prefix,reason:result.reason}));
+    assert.equal(result.attempts[0].publicPassed,true);
+    assert.equal(result.attempts[0].holdoutPassed,true);
+  });
+});
+
+test("an approved import at EOF reaches public validation instead of the unsafe-import gate",()=>isolated(async root=>{
+  const result=await runAgenticRepair({root,goal,maxAttempts:1,env:{},askModel:async()=>proposal("src/invoice.mjs",
+    'import { unitPrice } from "./pricing.mjs"',"Syntactically valid but deliberately missing the required invoice export")});
+  assert.equal(result.status,"unresolved");assert.equal(result.attempts.length,1);
+  assert.equal(result.attempts[0].publicPassed,false);
+  assert.equal(result.attempts[0].holdoutPassed,undefined);
+}));
+
+test("semicolonless approval cannot hide additional imports, re-exports, paths or invalid same-line continuation",async()=>{
+  const body='export function invoiceTotal(base, discount, quantity) { return unitPrice(base, discount) * quantity; }\n';
+  const approved='import { unitPrice } from "./pricing.mjs"\n';
+  for(const content of [
+    'import { unitPrice } from "./pricing.mjs" '+body,
+    'import { unitPrice } from "../tests/holdout.test.mjs"\n'+body,
+    'import { otherPrice } from "./pricing.mjs"\n'+body,
+    'import { unitPrice as otherPrice } from "./pricing.mjs"\n'+body,
+    'import * as pricing from "./pricing.mjs"\n'+body,
+    approved+'import { hidden } from "../tests/holdout.test.mjs"\n'+body,
+    approved+'export * from "../tests/holdout.test.mjs"\n'+body,
+    approved+'import("../tests/holdout.test.mjs");\n'+body,
+    approved+'import.meta;\n'+body
+  ])await isolated(async root=>{
+    const result=await runAgenticRepair({root,goal,maxAttempts:1,env:{},
+      askModel:async()=>proposal("src/invoice.mjs",content,"Reject imports outside the exact fixture boundary")});
+    assert.equal(result.status,"blocked");assert.equal(result.reason,"unsafe_patch_content");
+    assert.equal(result.attempts.length,0);
+    assert.equal(result.invocationHistory[0].calls[0].outcome,"failed");
+    assert.equal(journal(root,result.runId).lastCandidate,undefined);
+    assert.equal(readdirSync(root).some(name=>name.startsWith("baku-scratch-")),false);
+  });
+});
+
 test("a hidden-test rejection stays terminal and is never fed back for model revision",()=>isolated(async root=>{
   let calls=0;
   const result=await runAgenticRepair({root,goal,incidentContext:context(),askModel:async()=>{
