@@ -2542,9 +2542,13 @@ function doPost(e) {
     // ARCが完了し、次がMOTHERSHIP連携の場合（例：特定の応答接頭辞やモードなどから判定）
     // 現状はシンプルな「MOTHERSHIPに自律評価を依頼する」サンプル実装
     if (status === "ARC_DONE" || status === "ARC_ERROR") {
-      // TODO: 本来はプロンプトのメタデータやBAKUからの指示（followup）に依存させる
-      // 今回はイベント駆動検証のため、"[@metron]" が含まれていればMOTHERSHIPへ渡す
-      if (norm(targetRow[2]).indexOf("[@metron]") >= 0) {
+      const bakuReport = parseBakuStructuredReport(responseText);
+      const promptCmd = parseCommandTags(norm(targetRow[2]));
+      const routeMothership = (bakuReport && bakuReport.followup && bakuReport.followup.route === "MOTHERSHIP") ||
+                              promptCmd.route === "MOTHERSHIP" ||
+                              norm(targetRow[2]).indexOf("[@metron]") >= 0; // fallback
+
+      if (routeMothership) {
         const msgId = "MS_" + targetRowIndex + "_" + Date.now();
         const contentContext = `Action: ${status}\nMission: ${missionId}\nResult: ${responseText.slice(0, 1000)}`;
         sheets.mothership.appendRow([new Date(), msgId, "gateway_chained", contentContext, "pending"]);
@@ -2557,8 +2561,8 @@ function doPost(e) {
 
     // MOTHERSHIPが完了し、次がARC実行の場合
     if (status === "DONE" && targetRow[1] === "MOTHERSHIP") {
-      // MOTHERSHIPの応答が "[@arc]" などのコマンドを含んでいれば即時ルート
-      if (responseText.indexOf("[@arc]") >= 0 || responseText.indexOf("#arc") >= 0) {
+      const responseCmd = parseCommandTags(responseText);
+      if (responseCmd.route === "ARC" || responseText.indexOf("[@arc]") >= 0 || responseText.indexOf("#arc") >= 0) {
         // MOTHERSHIPの応答を新たなユーザー入力とみなしてルート
         const chainedRow = [new Date(), "MOTHERSHIP", responseText, "NEW", "", missionId];
         const res = routeOneChatRow(targetRowIndex, chainedRow);
