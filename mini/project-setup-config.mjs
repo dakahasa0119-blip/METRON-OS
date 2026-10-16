@@ -18,11 +18,11 @@ export function setupDirectory(value,{missing=false}={}){
   const path=resolve(value),parts=relative(parse(path).root,path).split(sep).filter(Boolean);let current=parse(path).root;
   for(let i=0;i<parts.length;i++){
     current=join(current,parts[i]);
-    if(missing&&i===parts.length-1&&!existsSync(current))return join(realpathSync(dirname(current)),parts[i]);
+    if(missing&&i===parts.length-1&&!existsSync(current))return join(realpathSync.native(dirname(current)),parts[i]);
     const stat=lstatSync(current);
     if(stat.isSymbolicLink()||!stat.isDirectory())throw fail("project_setup_invalid_root");
   }
-  return realpathSync(path);
+  return realpathSync.native(path);
 }
 export function setupReadFile(path,limit=2*1024*1024){
   setupDirectory(dirname(path));const stat=lstatSync(path);let fd;

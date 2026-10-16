@@ -134,7 +134,12 @@ async function browserDriver(config){
     check($('village-create').disabled&&!$('village-preview-reviewed').checked,'creation lacked explicit review');await click('village-preview-reviewed');await click('village-create');
     await until(()=>bundle()?.status==='prepared','prepared bundle');check((await metrics()).childCount===0,'create launched child');
     await villageAction('launch','running');const firstPid=(await metrics()).childPid;check(firstPid&&firstPid!==config.parentPid,'Runtime child PID absent');
-    await click('village-open-work');await until(m=>$('work-village').value===config.villageId&&m.sources.some(s=>s.body===config.sourceBody),'explicit same-screen work navigation');
+    // The selection and backend sources can be visible while openVillageWork
+    // still awaits the frontend load. Wait for the inherited goal and editable
+    // controls before checking that this navigation cleared model consent.
+    await click('village-open-work');await until(m=>$('work-village').value===config.villageId&&
+      m.sources.some(s=>s.body===config.sourceBody)&&!$('work-village').disabled&&
+      !$('agent-goal').disabled&&$('agent-goal').value===config.goal,'explicit same-screen work navigation');
     check($('agent-goal').value===config.goal&&!$('agent-cloud-consent').checked,'goal or fresh model consent mismatch');
     const active=await metrics(),seedSource=active.sources.find(s=>s.body===config.sourceBody),selectedReference=active.knowledge.find(k=>k.inheritance?.kind==='selected_reference');
     check(selectedReference&&selectedReference.adoptedIn===null,'inheritance falsely adopted');

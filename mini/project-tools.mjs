@@ -37,7 +37,8 @@ function rootDirectory(value){
   if(typeof value!=="string"||!isAbsolute(value))throw fail("project_absolute_root_required");
   regularAncestors(value,true);const stat=lstatSync(value);
   if(!stat.isDirectory()||stat.isSymbolicLink())throw fail("project_directory_required");
-  return realpathSync(value);
+  // Native realpath also expands Windows 8.3 names, as Git does for worktrees.
+  return realpathSync.native(value);
 }
 function environment(temp){
   const env={};for(const key of ["PATH","SystemRoot","WINDIR","COMSPEC"])
@@ -59,6 +60,7 @@ function git(root,args,{binary=false,hooksRoot}={}){
   return result.stdout;
 }
 const blob=(plan,commit,path)=>git(plan.repositoryRoot,["show",commit+":"+safePath(path)],{binary:true});
+const gitDirectory=(root,flag)=>rootDirectory(resolve(root,git(root,["rev-parse",flag]).trim()));
 function commitTree(plan,commit){
   if(!fullSha(commit))throw fail("project_full_commit_required");
   const entries=git(plan.repositoryRoot,["ls-tree","-rz","--full-tree",commit]).split("\0").filter(Boolean);
@@ -97,8 +99,8 @@ function readRegular(root,path){
 const gitObject=bytes=>createHash("sha1").update(Buffer.from("blob "+bytes.length+"\0")).update(bytes).digest("hex");
 function checkoutProof(plan,root,commit){
   root=rootDirectory(root);
-  if(resolve(git(root,["rev-parse","--show-toplevel"]).trim())!==resolve(root)||
-     resolve(root,git(root,["rev-parse","--git-common-dir"]).trim())!==plan.commonRoot||
+  if(gitDirectory(root,"--show-toplevel")!==root||
+     gitDirectory(root,"--git-common-dir")!==plan.commonRoot||
      git(root,["rev-parse","HEAD"]).trim()!==commit)throw fail("project_checkout_identity_changed");
   if(git(root,["status","--porcelain=v1","--untracked-files=all"]).trim())throw fail("project_checkout_not_clean");
   const entries=commitTree(plan,commit),paths=entries.map(e=>e.path).sort();
@@ -133,7 +135,7 @@ export function createRegisteredProjectPlan(input){
   for(let i=0;i<values.length;i++)for(let j=0;j<i;j++)
     if(values[i]===values[j]||contained(values[i],values[j])||contained(values[j],values[i]))throw fail("project_roots_overlap");
   const plan={schemaVersion:1,id:input.id,label:input.label,baseCommit:input.baseCommit,...roots};
-  plan.commonRoot=resolve(plan.repositoryRoot,git(plan.repositoryRoot,["rev-parse","--git-common-dir"]).trim());
+  plan.commonRoot=gitDirectory(plan.repositoryRoot,"--git-common-dir");
   if(!Array.isArray(input.allowedEdits)||!input.allowedEdits.length||input.allowedEdits.length>64)
     throw fail("project_edit_allowlist_required");
   const seen=new Set();
@@ -223,7 +225,7 @@ export function inspectRegisteredProjectRevision(previousPlan,newPlan,{previousC
   const repositories=[];
   for(const plan of [previousPlan,newPlan]){
     const root=rootDirectory(plan.repositoryRoot);
-    if(resolve(root,git(root,["rev-parse","--git-common-dir"]).trim())!==plan.commonRoot)
+    if(gitDirectory(root,"--git-common-dir")!==plan.commonRoot)
       throw fail("project_revision_registration_mismatch");
     // Keep live directory checks even when reusing an immutable-object proof.
     repositories.push(...[rootDirectory(plan.commonRoot),rootDirectory(join(plan.commonRoot,"objects"))].map(path=>{

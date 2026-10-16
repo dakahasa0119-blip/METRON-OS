@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
 import {createHash,randomBytes} from "node:crypto";
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,rmSync,symlinkSync} from "node:fs";
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,readdirSync,existsSync,rmSync,symlinkSync,realpathSync} from "node:fs";
 import {join,resolve,relative,isAbsolute,sep} from "node:path";
 import {fileURLToPath} from "node:url";
+import {tmpdir} from "node:os";
 import {ProjectSetup} from "../../mini/project-setup.mjs";
 import {loadProjectSetupStartup,validateProjectSetupSlots,validateProjectSetupCompatibility} from "../../mini/project-setup-config.mjs";
 
@@ -18,8 +19,8 @@ function git(root,args){
   {cwd:root,shell:false,windowsHide:true,encoding:"utf8",timeout:15000});
   assert.equal(result.status,0,result.stderr);return result.stdout.trim();
 }
-function fixture(t){
-  const root=mkdtempSync(join(phase,"s-")),repo=join(root,"r"),sealed=join(root,"s"),runtime=join(root,"d"),allocation=join(root,"o");
+function fixture(t,parent=phase){
+  const root=mkdtempSync(join(parent,"s-")),repo=join(root,"r"),sealed=join(root,"s"),runtime=join(root,"d"),allocation=join(root,"o");
   for(const p of [repo,sealed,runtime,join(root,"empty-template")])mkdirSync(p);
   mkdirSync(join(repo,"src"));mkdirSync(join(repo,"tests"));
   writeFileSync(join(repo,"src","value.mjs"),"export const value = 1;\n");
@@ -31,7 +32,7 @@ function fixture(t){
     allowedEdits:[{path:"src/value.mjs",operations:["edit"]}],publicTests:["tests/public.test.mjs"],postApplyTests:["tests/smoke.test.mjs"],
     acceptanceRoot:sealed,acceptanceTests:["owner.test.mjs"],allocationRoot:allocation};
   t.after(()=>{
-    const rel=relative(phase,resolve(root));assert.ok(rel&&!isAbsolute(rel)&&rel!==".."&&!rel.startsWith(".."+sep));
+    const rel=relative(resolve(parent),resolve(root));assert.ok(rel&&!isAbsolute(rel)&&rel!==".."&&!rel.startsWith(".."+sep));
     rmSync(root,{recursive:true,force:true});
   });
   return {root,repo,sealed,runtime,allocation,slot,baseCommit};
@@ -54,8 +55,10 @@ test("startup manifest remains independent, exact and bounded",t=>{
 });
 
 test("explicit setup creates three detached worktrees and only a registered plan",async t=>{
-  const f=fixture(t),source=sha(readFileSync(join(f.repo,"src","value.mjs"))),sealed=sha(readFileSync(join(f.sealed,"owner.test.mjs")));let issued;
-  const setup=new ProjectSetup({root:f.runtime,slots:[f.slot],onPrepared:plan=>{
+  const f=fixture(t,tmpdir()),source=sha(readFileSync(join(f.repo,"src","value.mjs"))),sealed=sha(readFileSync(join(f.sealed,"owner.test.mjs")));let issued;
+  const slot={...f.slot,...Object.fromEntries(["repositoryRoot","acceptanceRoot","allocationRoot"].map(key=>
+    [key,process.platform==="win32"?f.slot[key].toUpperCase():f.slot[key]]))};
+  const setup=new ProjectSetup({root:f.runtime,slots:[slot],onPrepared:plan=>{
     const persisted=JSON.parse(readFileSync(join(f.runtime,"project-setup",f.slot.id+".json"),"utf8"));
     assert.equal(persisted.job.status,"ready");assert.equal(persisted.job.planDigest,plan.planDigest);issued=plan;
   }});t.after(()=>setup.close());
@@ -64,6 +67,7 @@ test("explicit setup creates three detached worktrees and only a registered plan
   assert.equal(setup.prepare(input).duplicate,true);await setup.waitForIdle();
   const state=setup.state({slotId:f.slot.id});assert.equal(state.job.status,"ready",JSON.stringify(state));assert.equal(treeCount(f.repo),4);
   assert.equal(issued.id,f.slot.id);assert.equal(state.job.planDigest,issued.planDigest);
+  assert.equal(issued.repositoryRoot,realpathSync.native(f.repo));assert.equal(issued.acceptanceRoot,realpathSync.native(f.sealed));
   for(const name of ["a","b","c"]){assert.equal(git(join(f.allocation,name),["rev-parse","HEAD"]),f.baseCommit);assert.equal(git(join(f.allocation,name),["branch","--show-current"]),"");}
   assert.equal(git(f.repo,["rev-parse","HEAD"]),f.baseCommit);assert.equal(sha(readFileSync(join(f.repo,"src","value.mjs"))),source);
   assert.equal(sha(readFileSync(join(f.sealed,"owner.test.mjs"))),sealed);assert.equal(git(f.repo,["status","--porcelain"]),"");
@@ -105,7 +109,7 @@ test("cancellation before launch and restart never prepare or run checks",async 
 });
 
 test("host scope rejects overlap, case collisions, unsafe paths and symlink roots",t=>{
-  const f=fixture(t);
+  const f=fixture(t,tmpdir());
   for(const change of [{allocationRoot:join(f.repo,"nested")},{acceptanceRoot:f.repo},{allowedEdits:[{path:"../outside",operations:["edit"]}]},
     {allowedEdits:[{path:"src/value.mjs",operations:["edit"]},{path:"SRC/VALUE.MJS",operations:["edit"]}]},
     {publicTests:["tests/public.test.mjs","TESTS/PUBLIC.test.mjs"]}])assert.throws(()=>validateProjectSetupSlots([{...f.slot,...change}]));

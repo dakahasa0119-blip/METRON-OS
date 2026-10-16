@@ -3,18 +3,18 @@ import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import childProcess from "node:child_process";
 import {syncBuiltinESMExports} from "node:module";
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,readdirSync,renameSync} from "node:fs";
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,readdirSync,renameSync,realpathSync} from "node:fs";
 import {tmpdir} from "node:os";
-import {join,dirname,resolve,sep} from "node:path";
+import {join,dirname,basename,resolve,relative,isAbsolute,sep} from "node:path";
 import {createRegisteredProjectPlan,projectPlanPublic,createRegisteredAttempt,inspectRegisteredCandidate,
   commitRegisteredWorkspace,runRegisteredChecks,applyRegisteredCandidate,rollbackRegisteredCandidate,inspectRegisteredApply,
   inspectRegisteredProjectRevision} from "../../mini/project-tools.mjs";
 
 const put=(root,path,text)=>{const full=join(root,...path.split("/"));mkdirSync(dirname(full),{recursive:true});writeFileSync(full,text);};
-const git=(root,args)=>execFileSync("git",["-c","core.autocrlf=false","-c","core.fsmonitor=false",
+const git=(root,args,env)=>execFileSync("git",["-c","core.autocrlf=false","-c","core.fsmonitor=false",
   "-c","core.hooksPath="+join(root,".git","disabled-fixture-hooks"),
   "-c","commit.gpgsign=false","-c","user.name=Project Tools Fixture","-c","user.email=fixture@local.invalid",...args],
-  {cwd:root,windowsHide:true,shell:false,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
+  {cwd:root,env:env?{...process.env,...env}:process.env,windowsHide:true,shell:false,encoding:"utf8",stdio:["ignore","pipe","pipe"]}).trim();
 const broken='export const cleanName = value => value.trim();\n';
 const fixed='export const cleanName = value => value.trim().toLowerCase();\n';
 const publicTest=`import test from "node:test";import assert from "node:assert/strict";
@@ -27,7 +27,7 @@ async function isolated(fn){
     rmSync(root,{recursive:true,force:true});
   }
 }
-function fixture(root,{publicBody=publicTest,extraEdits=[]}={}){
+function fixture(root,{publicBody=publicTest,extraEdits=[],baselineDate}={}){
   const paths=Object.fromEntries(["repositoryRoot","baselineRoot","candidateRoot","applyRoot","evidenceRoot","tempRoot","acceptanceRoot"]
     .map(key=>[key,join(root,key)]));
   Object.values(paths).forEach(path=>mkdirSync(path));
@@ -39,7 +39,8 @@ function fixture(root,{publicBody=publicTest,extraEdits=[]}={}){
   put(paths.repositoryRoot,"tests/public.test.mjs",publicBody);
   put(paths.repositoryRoot,"tests/smoke.test.mjs",publicTest);
   put(paths.repositoryRoot,"README.md","A generic customer-message project.\n");
-  git(paths.repositoryRoot,["add","."]);git(paths.repositoryRoot,["commit","-qm","generic project baseline"]);
+  git(paths.repositoryRoot,["add","."]);git(paths.repositoryRoot,["commit","-qm","generic project baseline"],
+    baselineDate?{GIT_AUTHOR_DATE:baselineDate,GIT_COMMITTER_DATE:baselineDate}:undefined);
   const baseCommit=git(paths.repositoryRoot,["rev-parse","HEAD"]);
   for(const key of ["baselineRoot","candidateRoot","applyRoot"])
     git(paths.repositoryRoot,["worktree","add","--detach",paths[key],baseCommit]);
@@ -97,7 +98,11 @@ test("requirements revision proves ancestry and unchanged source without disclos
   assert.throws(()=>inspectRegisteredProjectRevision(plan,{...next,baseCommit:prior},{previousCandidateCommit:prior}),
     {code:"project_revision_requirements_unchanged"});
   const objects=join(plan.commonRoot,"objects"),savedObjects=join(plan.commonRoot,"saved-test-objects");
-  for(const path of [objects,savedObjects])assert.ok(resolve(path).startsWith(resolve(root)+sep));
+  for(const path of [objects,savedObjects]){
+    const actual=existsSync(path)?realpathSync.native(path):join(realpathSync.native(dirname(path)),basename(path));
+    const rel=relative(realpathSync.native(root),actual);
+    assert.ok(rel&&!isAbsolute(rel)&&rel!==".."&&!rel.startsWith(".."+sep));
+  }
   renameSync(objects,savedObjects);mkdirSync(objects);
   try{
     assert.throws(()=>inspectRegisteredProjectRevision(plan,next,{previousCandidateCommit:prior}),{code:"project_git_failed"},
@@ -119,6 +124,21 @@ test("owner registration freezes public metadata, opaque private-test digest and
   assert.throws(()=>createRegisteredProjectPlan({...config,allowedEdits:[{path:"tests/smoke.test.mjs",operations:["edit"]}]}),{code:"project_tests_not_pinned"});
   put(config.acceptanceRoot,"acceptance/private.test.mjs","// Changed private input\n");
   assert.notEqual(createRegisteredProjectPlan(config).planDigest,plan.planDigest);
+}));
+
+test("native directory identity accepts Windows aliases while a same-commit foreign checkout stays refused",()=>isolated(root=>{
+  const alternate=process.platform==="win32"?root.toUpperCase():root;
+  const options={baselineDate:"2000-01-01T00:00:00Z"},{config,plan}=fixture(alternate,options);
+  for(const [key,path] of Object.entries(config).filter(([key])=>key.endsWith("Root")))
+    assert.equal(plan[key],realpathSync.native(path));
+  assert.equal(plan.commonRoot,realpathSync.native(join(config.repositoryRoot,".git")));
+  const worker=attempt(plan);
+  assert.equal(inspectRegisteredCandidate(plan,plan.baseCommit,{workerRoot:worker.root}).candidateCommit,plan.baseCommit);
+  const foreignRoot=join(root,"foreign-fixture");mkdirSync(foreignRoot);
+  const foreignPlan=fixture(foreignRoot,options).plan,foreign=foreignPlan.baselineRoot;
+  assert.notEqual(foreignPlan.commonRoot,plan.commonRoot);
+  assert.equal(git(foreign,["rev-parse","HEAD"]),plan.baseCommit);
+  assert.throws(()=>createRegisteredProjectPlan({...config,baselineRoot:foreign}),{code:"project_checkout_identity_changed"});
 }));
 
 test("full-length runtime IDs use bounded attempt paths, never reuse roots and inherit committed history",()=>isolated(root=>{

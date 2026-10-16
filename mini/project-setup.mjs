@@ -56,7 +56,7 @@ function inventory(root,expectedPaths){
 const acceptanceManifest=slot=>slot.acceptanceTests.map(path=>({path,sha256:sha(setupReadFile(join(slot.acceptanceRoot,...path.split("/"))))}));
 function sourcePreflight(slot){
   const root=setupDirectory(slot.repositoryRoot);
-  if(resolve(gitRead(root,["rev-parse","--show-toplevel"]).trim()).toLowerCase()!==root.toLowerCase())throw fail("project_setup_repository_root_required");
+  if(setupDirectory(resolve(root,gitRead(root,["rev-parse","--show-toplevel"]).trim()))!==root)throw fail("project_setup_repository_root_required");
   const common=setupDirectory(resolve(root,gitRead(root,["rev-parse","--git-common-dir"]).trim()));
   if(setupRootsOverlap(slot.allocationRoot,common)||setupRootsOverlap(slot.acceptanceRoot,common))throw fail("project_setup_roots_overlap");
   // Built-in config reads do not execute configured hooks, filters or monitors.
@@ -119,7 +119,11 @@ export class ProjectSetup{
     if(typeof root!=="string"||!root||!isAbsolute(root))
       throw fail("project_setup_invalid_root");
     this.slots=validateProjectSetupSlots(slots);this.records=new Map();this.plans=new Map();this.pending=new Set();this.children=new Set();this.closed=false;
-    this.onPrepared=onPrepared;this.root=resolve(root,"project-setup");
+    this.onPrepared=onPrepared;
+    let existing=resolve(root,"project-setup");const missing=[];
+    while(!existsSync(existing)){missing.unshift(basename(existing));existing=dirname(existing);}
+    // Compare real existing ancestors before creating the runtime or its suffix.
+    this.root=join(setupDirectory(existing),...missing);
     const commonRoots=this.slots.map(slot=>setupDirectory(resolve(slot.repositoryRoot,gitRead(slot.repositoryRoot,["rev-parse","--git-common-dir"]).trim())));
     for(const [index,slot] of this.slots.entries()){
       const common=commonRoots[index];
@@ -129,8 +133,6 @@ export class ProjectSetup{
     }
     for(const slot of this.slots)for(const common of commonRoots)
       if(setupRootsOverlap(slot.allocationRoot,common)||setupRootsOverlap(slot.acceptanceRoot,common))throw fail("project_setup_roots_overlap");
-    // Runtime root is owner supplied; verify all existing ancestors before creation.
-    let existing=this.root;while(!existsSync(existing))existing=dirname(existing);setupDirectory(existing);
     mkdirSync(this.root,{recursive:true,mode:0o700});setupDirectory(this.root);
     this.definitions=new Map(this.slots.map(slot=>[slot.id,{slot,setupDigest:digest({slot,acceptanceManifest:acceptanceManifest(slot)})}]));
     for(const slot of this.slots){
