@@ -22,7 +22,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,7 +31,10 @@ jobs:
       - name: Require desktop Chromium for integration test (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: command -v google-chrome || command -v google-chrome-stable || command -v chromium
+        run: |
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
+          test -n "$browser"
+          printf 'CHROME_BIN=%s\n' "$browser" >> "$GITHUB_ENV"
       - name: Require desktop Chromium for integration test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -44,6 +47,8 @@ jobs:
             throw "No supported Chromium browser is available on the runner"
           }
       - name: Run unit, historical-source and Chromium integration tests
+        env:
+          METRON_RUN_VILLAGE_BROWSER: "1"
         run: node --test --test-concurrency=1 reusable/tests/*.test.mjs
       - name: Validate independently distributable packages
         if: runner.os == 'Linux'

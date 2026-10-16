@@ -19,6 +19,62 @@ METRON investigates how independent AI-enabled systems can preserve goals, conte
 
 These components evolved separately. **Their full end-to-end integration is not verified.** In particular, the observed MotherShip-A/B `Dispatcher` is a same-spreadsheet, tab-based prototype; it does not itself prove direct cross-spreadsheet or P2P messaging. Separate spreadsheet artifacts exist and their complete direct-communication path requires further verification.
 
+## Use registered projects from the Mini work screen
+
+The existing `/experience` work screen can select an owner-configured registered
+project, reproduce its public failure, explicitly request one Codex candidate,
+show progress and failures, review the actual diff, run independent checks and
+apply only to the registered disposable checkout. It reuses the existing work
+and reviewed Rumor publication/adoption path. Reading or restarting never calls
+a model; each worker attempt requires fresh confirmation.
+
+Start with `METRON_PROJECT_REGISTRY` pointing at the owner's local registration
+JSON and optionally `METRON_CODEX_EXECUTABLE` pointing at the installed official
+CLI. Open the private owner URL printed by `node mini/start.mjs`. Its operation
+key stays in page memory. The owner still selects the source, pinned base,
+allowlist and independent sealed tests. An optional host-authored
+`METRON_PROJECT_SETUP_MANIFEST` lets the screen create the three local worktrees
+after explicit review; arbitrary filesystem registration is not exposed over
+HTTP. See the [local setup and user flow](docs/METRON_MINI_PROJECT_USER_FLOW_2026-10-15.md),
+also served at `/project-guide-source`.
+
+Prepared targets are selected by name. The main screen shows editable files,
+check boundaries and the disposable apply scope before an explicit scope
+acknowledgment; internal IDs and JSON stay in expandable audit details.
+The readable `/project-guide` separates everyday use from the owner's initial
+setup instructions at `/project-guide-source`.
+
+The earlier [UI and official Codex verification](docs/METRON_MINI_UI_REAL_CODEX_2026-10-15.md)
+completed two approved, reused synthetic cases through candidate generation,
+independent checks, disposable application and persisted readback. Windows
+regression passed 364/364. It used isolated Chromium and the installed official
+Codex CLI; the earlier injected-worker UI trial and CLI revision trials remain
+separate evidence. Normally signed-in ChatGPT ARC, another real coding provider,
+and METRON's complete self-repair, replication and autonomous evolution remain
+unverified.
+
+The local implementation also adds explicit creation of a separate
+single-village A/B + Gateway runtime, with selected text/provenance inheritance
+and a transient owned child process. Actual isolated-browser delivery and clean
+restart through three separate parent Node processes are verified. Windows
+regression passed 402/402 after the process-exit accounting fix. An additional
+unchanged Delivery-v2 trial used the actual preparation UI and one official
+Codex process, passed independent public/sealed and post-apply checks, and
+freshly read back the clean disposable apply root with zero POSTs. Its first
+candidate passed, so a natural failed-candidate retry remains unobserved.
+Subsequent local changes connect owned new villages to the existing work,
+registered-project repair and Rumor flows. Selected inheritance remains reference
+data; each external attempt and recipient adoption requires a fresh explicit
+decision. See the [dynamic village workflow and its validation scope](docs/METRON_MINI_DYNAMIC_VILLAGE_FLOW_2026-10-15.md)
+and the
+[same-PC village and project preparation guide](docs/METRON_MINI_LOCAL_VILLAGE_SETUP_2026-10-15.md)
+for the exact scope, test results and remaining steps.
+
+Verified registered-project candidates also have an explicit local PoUC action:
+redo the fixed checks, compare their inputs and outcomes, and save a deduplicated
+receipt bound to the work and verification. It makes no additional model call.
+See the [PoUC work flow and limits](docs/METRON_MINI_POUC_WORK_FLOW_2026-10-15.md).
+
 ## BAKU now has an optional real LLM-driven multi-file repair worker
 
 METRON Mini includes a guarded **agentic BAKU workflow**:
@@ -101,6 +157,13 @@ remain unimplemented.
 Read the [original concept and precise evidence boundaries](docs/METRON_CIVILIZATION_EXPERIENCE_2026-10-14.md).
 
 ## Try the running METRON Mini OS / 実際に起動する
+
+Verified work can now prepare a reviewed repair-evidence Rumor, explicitly
+publish its exact bytes to the local Village Square, and preserve the other
+village's adoption/provenance in a later work. Restart does not publish;
+uncertain publication requires an explicit same-payload continuation. This
+does not establish signed-in ARC E2E or a general autonomous coding agent.
+See the [repair-knowledge path and trust limits](docs/METRON_MINI_REPAIR_KNOWLEDGE_2026-10-15.md).
 
 Village work continuity now connects a delivered Gateway reply, the original
 goal and explicitly selected adopted knowledge to the **same persisted BAKU

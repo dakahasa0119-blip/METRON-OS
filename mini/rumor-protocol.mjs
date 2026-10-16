@@ -10,43 +10,80 @@ import { join } from "node:path";
 import { writeAtomicJson } from "../reusable/gateway-jobs/checkpoint.mjs";
 
 const RUMOR_VERSION="metron-rumor-v1";
+const REPAIR_RUMOR_VERSION="metron-rumor-v2";
 const idValid=value=>typeof value==="string"&&/^[A-Za-z0-9_-]{1,64}$/.test(value);
-const villageValid=value=>value==="village-1"||value==="village-2";
+// Syntax only: the owning world separately authorizes registered origins/recipients.
+const villageValid=value=>typeof value==="string"&&/^[a-z][a-z0-9_-]{0,47}$/.test(value);
 const blocked=reason=>Object.assign(new Error(reason),{code:reason});
+const hex=(value,length)=>typeof value==="string"&&new RegExp("^[a-f0-9]{"+length+"}$").test(value);
+const exact=(value,keys)=>value&&typeof value==="object"&&!Array.isArray(value)&&
+  Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+const trimmed=(value,max)=>typeof value==="string"&&value.length>0&&value.length<=max&&value===value.trim();
+const canonical=value=>JSON.stringify(value,(_,entry)=>entry&&typeof entry==="object"&&!Array.isArray(entry)?
+  Object.fromEntries(Object.keys(entry).sort().map(key=>[key,entry[key]])):entry);
+// Public, bounded sender claims only. A digest establishes content integrity,
+// never sender authentication or independent validation by a receiving village.
+export function validateRepairEvidence(e){
+  const keys=["schemaVersion","scope","diagnosis","applicability","limitations","candidateCommit",
+    "candidateDigest","diffSha256","verificationDigest","modelProvenance","checks","productionApplied"];
+  if(!exact(e,keys)||e.schemaVersion!==1||
+     !["human_reviewed_external_worker","first_party_disposable_two_file_fixture_only","registered_project_coding_agent"].includes(e.scope)||
+     ![e.diagnosis,e.applicability,e.limitations].every(value=>trimmed(value,500))||
+     !(e.candidateCommit===null||hex(e.candidateCommit,40))||
+     !(e.candidateDigest===null||hex(e.candidateDigest,64))||
+     !(e.diffSha256===null||hex(e.diffSha256,64))||
+     (e.candidateCommit===null&&e.candidateDigest===null)||
+     !hex(e.verificationDigest,64)||!trimmed(e.modelProvenance,120)||
+     !Array.isArray(e.checks)||e.checks.length<1||e.checks.length>8||
+     Array.from(e.checks).some(check=>!exact(check,["id","outcome","outputSha256"])||
+       typeof check.id!=="string"||!/^[a-z][a-z0-9_]{0,63}$/.test(check.id)||
+       !["passed","expected_failure"].includes(check.outcome)||!hex(check.outputSha256,64))||
+     e.productionApplied!==false)
+    throw blocked("invalid_repair_evidence");
+  return structuredClone(e);
+}
 function payload(e){
   return JSON.stringify([
     e.schemaVersion,e.id,e.originVillage,e.originCore,
     e.kind,e.body,e.createdAt,e.parentRumorId
   ]);
 }
-function digest(e){return createHash("sha256").update("METRON_RUMOR_V1\n"+payload(e)).digest("hex");}
+function digest(e){
+  const input=e.schemaVersion===REPAIR_RUMOR_VERSION?
+    "METRON_RUMOR_V2\n"+payload(e)+"\n"+canonical(e.repairEvidence):"METRON_RUMOR_V1\n"+payload(e);
+  return createHash("sha256").update(input).digest("hex");
+}
 export function createRumor({originVillage,originCore="A",body,
-  parentRumorId=null,createdAt=Date.now()}={}){
+  parentRumorId=null,createdAt=Date.now(),repairEvidence}={}){
   if(!villageValid(originVillage)||!["A","B"].includes(originCore)||
      typeof body!=="string"||!body.trim()||body.length>320||
      !Number.isSafeInteger(createdAt)||createdAt<0||
      (parentRumorId!==null&&!idValid(parentRumorId)))
     throw blocked("invalid_rumor_input");
   const entry={
-    schemaVersion:RUMOR_VERSION,id:"r_"+randomUUID().replaceAll("-",""),
+    schemaVersion:repairEvidence===undefined?RUMOR_VERSION:REPAIR_RUMOR_VERSION,id:"r_"+randomUUID().replaceAll("-",""),
     originVillage,originCore,kind:"KNOWLEDGE",body:body.trim(),
     createdAt,parentRumorId
   };
+  if(repairEvidence!==undefined)entry.repairEvidence=validateRepairEvidence(repairEvidence);
   return {...entry,sha256:digest(entry)};
 }
 export function verifyRumor(e){
+  const repair=e?.schemaVersion===REPAIR_RUMOR_VERSION;
+  const keys=["schemaVersion","id","originVillage","originCore","kind","body","createdAt","parentRumorId","sha256"];
+  if(repair)keys.push("repairEvidence");
   if(!e||typeof e!=="object"||Array.isArray(e)||
-     Object.keys(e).length!==9||
-     !["schemaVersion","id","originVillage","originCore",
-       "kind","body","createdAt","parentRumorId","sha256"].every(k=>Object.hasOwn(e,k))||
-     e.schemaVersion!==RUMOR_VERSION||!idValid(e.id)||
+     !exact(e,keys)||
+     ![RUMOR_VERSION,REPAIR_RUMOR_VERSION].includes(e.schemaVersion)||!idValid(e.id)||
      !villageValid(e.originVillage)||!["A","B"].includes(e.originCore)||
      e.kind!=="KNOWLEDGE"||typeof e.body!=="string"||
      !e.body.trim()||e.body.length>320||
      e.body!==e.body.trim()||!Number.isSafeInteger(e.createdAt)||e.createdAt<0||
      (e.parentRumorId!==null&&!idValid(e.parentRumorId))||
-     typeof e.sha256!=="string"||e.sha256!==digest(e))
+     typeof e.sha256!=="string")
     throw blocked("invalid_or_modified_rumor");
+  if(repair)validateRepairEvidence(e.repairEvidence);
+  if(e.sha256!==digest(e))throw blocked("invalid_or_modified_rumor");
   return structuredClone(e);
 }
 export class FileVillageSquare{

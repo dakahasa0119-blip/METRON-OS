@@ -151,12 +151,107 @@ async function browserDriver(config){
   }catch(error){await finish(false,error.stack||String(error));}
 }
 
+// The repair is seeded by the labelled fixture reasoner before this browser
+// starts. Saving and publishing below use only the production DOM controls.
+async function publicationBrowserDriver(config){
+  const $=id=>document.getElementById(id),key="metron-publication-browser-test";
+  const saved=JSON.parse(sessionStorage.getItem(key)||"null")||{phase:"private-save",startedAt:Date.now(),snapshots:[]};
+  const check=(condition,message)=>{if(!condition)throw Error(message);};
+  const summaryIds={diagnosis:"work-share-diagnosis",applicability:"work-share-applicability",limitations:"work-share-limitations"};
+  async function waitFor(predicate,label){
+    const deadline=Math.min(Date.now()+12000,saved.startedAt+50000);
+    while(Date.now()<deadline){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,40));}
+    throw Error("Timed out waiting for "+label+"; notice="+$("work-notice")?.textContent);
+  }
+  const change=(id,value)=>{$(id).value=value;$(id).dispatchEvent(new Event("input",{bubbles:true}));};
+  const prepared=()=>JSON.parse($("work-share-evidence").textContent).rumor;
+  const readback=()=>({workId:$("work-saved").value,runId:$("agent-resume-id").value,
+    body:$("work-share-body").value,summary:Object.fromEntries(Object.entries(summaryIds).map(([name,id])=>[name,$(id).value])),
+    evidence:$("work-share-evidence").textContent,publication:$("work-publication-status").textContent,
+    reviewChecked:$("work-publish-reviewed").checked,publishDisabled:$("publish-work-share").disabled});
+  async function metrics(){
+    const response=await fetch("/__work-browser/metrics",{cache:"no-store"});check(response.ok,"Harness metrics failed");
+    return await response.json();
+  }
+  async function unchangedAgent(){
+    const counts=await metrics();
+    check(counts.calls===config.initialModelCalls&&counts.runs===0,"Publication flow called or resumed the reasoner");
+    return counts;
+  }
+  function checkSavedDraft(){
+    check($("work-saved").value===config.workId&&$("agent-resume-id").value===config.runId,"Selected saved work identity changed");
+    check($("work-share-body").value===config.body,"Saved public body changed");
+    for(const [name,id] of Object.entries(summaryIds))check($(id).value===config.summary[name],"Saved summary missing "+name);
+    const rumor=prepared();
+    check(rumor.schemaVersion==="metron-rumor-v2","Prepared draft lacks V2 repair evidence");
+    check(rumor.id===saved.rumorId&&rumor.sha256===saved.rumorSha256,"Prepared Rumor identity changed");
+    for(const name of Object.keys(summaryIds))check(rumor.repairEvidence[name]===config.summary[name],"Prepared evidence changed "+name);
+    check($("work-share-evidence").querySelector("b,img")===null,"Repair evidence was interpreted as HTML");
+  }
+  function reload(phase){
+    saved.phase=phase;sessionStorage.setItem(key,JSON.stringify(saved));location.reload();
+  }
+  async function finish(ok,error){
+    const marker=document.createElement("pre");marker.id="work-browser-verification";marker.dataset.result=ok?"pass":"fail";
+    marker.textContent=JSON.stringify({ok,error,phase:saved.phase,workId:config.workId});document.body.append(marker);
+    await fetch("/__work-browser/complete",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ok,error,...saved,workId:config.workId,runId:config.runId,final:readback()})});
+  }
+  try{
+    await waitFor(()=>$("work-saved")?.value===config.workId&&!$("work-village").disabled,"seeded verified work");
+    check($("try-agentic-repair").disabled,"Verified work unexpectedly permits a model run");
+    check(!$("work-publish-reviewed").checked,"Page load restored publication review");
+    check($("publish-work-share").disabled,"Page load authorized publication");
+    let counts=await unchangedAgent();
+    if(saved.phase==="private-save"){
+      check(counts.publishes===0,"Initial read published a Rumor");
+      change("work-share-body",config.body);
+      for(const [name,id] of Object.entries(summaryIds))change(id,config.summary[name]);
+      await waitFor(()=>!$("save-work-share").disabled,"private draft save control");
+      $("save-work-share").click();
+      await waitFor(()=>!$("save-work-share").disabled&&$("work-share-evidence").textContent.includes('"metron-rumor-v2"')&&
+        $("work-share-evidence").textContent.includes(config.summary.diagnosis),"persisted reviewed V2 summary");
+      const rumor=prepared();saved.rumorId=rumor.id;saved.rumorSha256=rumor.sha256;checkSavedDraft();
+      counts=await unchangedAgent();check(counts.publishes===0,"Saving a private draft published it");
+      check($("publish-work-share").disabled&&!$("work-publish-reviewed").checked,"Save granted publication review");
+      saved.snapshots.push({phase:"private-saved",...readback(),modelCalls:counts.calls,publishes:counts.publishes});
+      reload("review-publish");return;
+    }
+    checkSavedDraft();
+    if(saved.phase==="review-publish"){
+      check(counts.publishes===0,"Reload published a private draft");
+      saved.snapshots.push({phase:"private-reloaded",...readback(),modelCalls:counts.calls,publishes:counts.publishes});
+      $("agent-cloud-consent").click();
+      check($("publish-work-share").disabled,"AI consent authorized publication");
+      $("work-publish-reviewed").click();
+      await waitFor(()=>!$("publish-work-share").disabled,"separate reviewed publication control");
+      $("publish-work-share").click();$("publish-work-share").click();
+      await waitFor(()=>$("work-publication-status").textContent.includes(saved.rumorId)&&
+        $("work-share-body").disabled&&$("publish-work-share").disabled,"published stable Rumor identity");
+      counts=await unchangedAgent();check(counts.publishes===1&&counts.workPublishes===1,"Explicit publication was missing or duplicated");
+      check(!$("work-publish-reviewed").checked,"Publication did not consume one-time review");
+      check($("square-proposals").textContent.includes(config.summary.diagnosis),"Published repair evidence absent from Village Square");
+      check($("square-proposals").querySelector("b,img")===null,"Published body or evidence was interpreted as HTML");
+      saved.snapshots.push({phase:"published",...readback(),modelCalls:counts.calls,publishes:counts.publishes});
+      reload("published-readback");return;
+    }
+    check(saved.phase==="published-readback","Unexpected publication driver phase");
+    await waitFor(()=>$("work-publication-status").textContent.includes(saved.rumorId),"persisted publication identity after reload");
+    check(!$("work-publish-reviewed").checked&&$("work-publish-reviewed").disabled,"Reload retained publication review");
+    for(const id of ["work-share-body",...Object.values(summaryIds),"save-work-share","publish-work-share"])
+      check($(id).disabled,"Published draft control remains editable: "+id);
+    counts=await unchangedAgent();check(counts.publishes===1&&counts.workPublishes===1,"Reload resent publication");
+    saved.snapshots.push({phase:"published-reloaded",...readback(),modelCalls:counts.calls,publishes:counts.publishes});
+    await finish(true);
+  }catch(error){await finish(false,error.stack||String(error));}
+}
+
 async function bodyOf(req){
   const chunks=[];let bytes=0;
   for await(const chunk of req){bytes+=chunk.length;if(bytes>256000)throw Error("Harness body too large");chunks.push(chunk);}
   return Buffer.concat(chunks);
 }
-async function browserHarness(app,config,modelCalls){
+async function browserHarness(app,config,modelCalls,driver=browserDriver){
   const requests=[],barriers=new Set(),origin=new URL(app.url);let report=null;
   const proxy=createServer(async(req,res)=>{
     try{
@@ -168,7 +263,7 @@ async function browserHarness(app,config,modelCalls){
       const pathname=new URL(req.url,proxyOrigin).pathname;
       if(pathname==="/__work-browser/driver.js"){
         res.writeHead(200,{"Content-Type":"text/javascript; charset=utf-8","Cache-Control":"no-store"});
-        res.end("("+browserDriver.toString()+")("+JSON.stringify(config)+");");return;
+        res.end("("+driver.toString()+")("+JSON.stringify(config)+");");return;
       }
       if(pathname==="/__work-browser/load-barrier.svg"){
         const complete=()=>{res.writeHead(200,{"Content-Type":"image/svg+xml","Cache-Control":"no-store"});res.end('<svg xmlns="http://www.w3.org/2000/svg"/>');};
@@ -177,8 +272,9 @@ async function browserHarness(app,config,modelCalls){
       }
       if(pathname==="/__work-browser/metrics"){
         res.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});
+        const workPublishes=requests.filter(x=>x.path==="/api/work/action"&&x.body?.action==="publish-share").length;
         res.end(JSON.stringify({calls:modelCalls(),runs:requests.filter(x=>x.path==="/api/agent/run").length,
-          publishes:requests.filter(x=>x.path==="/api/civilization/action").length}));return;
+          workPublishes,publishes:workPublishes+requests.filter(x=>x.path==="/api/civilization/action"&&x.body?.action==="publish").length}));return;
       }
       const body=req.method==="POST"?await bodyOf(req):Buffer.alloc(0);
       if(pathname==="/__work-browser/complete"&&req.method==="POST"){
@@ -217,6 +313,75 @@ async function browserHarness(app,config,modelCalls){
     close:async()=>{for(const complete of barriers)complete();barriers.clear();
       proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}};
 }
+
+test("real Chromium controls save privately, explicitly publish one repair Rumor and reload its stable identity",
+  {skip:!availableChromium(),timeout:90000},async t=>{
+    const parent=process.env.METRON_WORK_EVIDENCE_DIR||tmpdir();mkdirSync(parent,{recursive:true});
+    const root=mkdtempSync(join(parent,"metron-work-publication-browser-"));
+    const dataRoot=join(root,"data"),prompts=[];let app,harness;
+    try{
+      app=await createMiniServer({root:dataRoot,port:0,workOptions:{runnerOptions:{env:{},
+        askModel:async prompt=>{prompts.push(prompt);return proposal(true);}}}});
+      const sourceId="publication_browser_source",goal="Repair the disposable invoice fixture before preparing reviewed local knowledge.";
+      assert.equal(app.runtime.submit({messageId:sourceId,from:"A",to:"B",message:"Observed discounted invoice total failure."}).job.state,"done");
+      const created=app.work.create({villageId:"village-1",goal,sourceMessageId:sourceId,knowledgeIds:[]}).work;
+      const verified=await app.work.run({villageId:created.villageId,workId:created.id,provider:"ollama",allowExternalCalls:false});
+      assert.equal(verified.work.stage,"candidate_verified");assert.equal(verified.work.result.modelProvenance,"test_injected_not_real_ai");
+      assert.equal(prompts.length,1);assert.equal(app.civilization.square.list().length,0);
+      const config={workId:created.id,runId:created.runId,initialModelCalls:prompts.length,
+        body:"Reviewed <b>fixture</b> repair; local validation passed and production remains unchanged.",
+        summary:{diagnosis:"Invoice quantity multiplication was missing <img> after unit-price correction.",
+          applicability:"Only the version-pinned disposable pricing and invoice fixture has been tested.",
+          limitations:"Injected fixture reasoner only; no live AI validation, production application or general repair claim."}};
+      harness=await browserHarness(app,config,()=>prompts.length,publicationBrowserDriver);
+      const browser=availableChromium();
+      const args=["--headless=new","--disable-gpu","--disable-background-networking","--no-first-run",
+        "--no-default-browser-check","--disable-extensions","--user-data-dir="+join(root,"browser-profile"),
+        "--dump-dom",harness.url+"/experience"];
+      if(process.getuid?.()===0)args.unshift("--no-sandbox");
+      const {stdout,stderr}=await execAsync(browser,args,{timeout:65000,maxBuffer:8*1024*1024,windowsHide:true});
+      writeFileSync(join(root,"browser-dom.html"),stdout);
+      const report=harness.report();
+      assert.ok(report,"Chromium did not complete the publication DOM driver: "+stderr.slice(-2000));
+      assert.equal(report.ok,true,report.error);
+      assert.match(stdout,/<pre id="work-browser-verification" data-result="pass">/);
+      assert.equal(prompts.length,1,"Publication and reload must not invoke the reasoner");
+      const state=await fetch(app.url+"/api/work/state?villageId=village-1&workId="+created.id).then(r=>r.json()),work=state.work;
+      assert.equal(work.id,created.id);assert.equal(work.runId,created.runId);assert.equal(work.stage,"candidate_verified");
+      assert.equal(work.attempts.length,1);assert.equal(work.result.productionChanged,false);
+      assert.equal(work.publication.status,"published");
+      assert.deepEqual(work.publication.rumor,work.sharingCandidate.rumor);
+      const rumor=verifyRumor(work.publication.rumor);
+      assert.equal(rumor.schemaVersion,"metron-rumor-v2");assert.equal(rumor.id,report.rumorId);
+      assert.equal(rumor.sha256,report.rumorSha256);assert.equal(work.publication.rumorSha256,rumor.sha256);
+      assert.equal(rumor.body,config.body);
+      for(const [name,value] of Object.entries(config.summary))assert.equal(rumor.repairEvidence[name],value);
+      assert.equal(rumor.repairEvidence.modelProvenance,"test_injected_not_real_ai");
+      assert.equal(rumor.repairEvidence.productionApplied,false);
+      assert.deepEqual(app.civilization.square.list(),[rumor],"Exactly one prepared Rumor must be published");
+      const posts=harness.requests.filter(x=>x.method==="POST");
+      assert.deepEqual(posts.map(x=>[x.path,x.body.action]),[
+        ["/api/work/action","prepare-share"],["/api/work/action","publish-share"]]);
+      assert.deepEqual(posts[0].body,{action:"prepare-share",villageId:work.villageId,workId:work.id,body:config.body,repairSummary:config.summary});
+      assert.deepEqual(posts[1].body,{action:"publish-share",villageId:work.villageId,workId:work.id,reviewedRumorSha256:rumor.sha256,allowPublish:true});
+      for(const post of posts){assert.equal(post.forwardedHost,new URL(app.url).host);assert.equal(post.forwardedOrigin,app.url);assert.equal(post.browserOrigin,harness.url);}
+      assert.deepEqual(report.snapshots.map(x=>[x.phase,x.modelCalls,x.publishes]),[
+        ["private-saved",1,0],["private-reloaded",1,0],["published",1,1],["published-reloaded",1,1]]);
+      assert.equal(report.final.reviewChecked,false);assert.equal(report.final.publishDisabled,true);
+      assert.match(report.final.publication,new RegExp(rumor.id));
+      assert.deepEqual(JSON.parse(readFileSync(join(dataRoot,"work-ledger",work.id+".json"),"utf8")),work);
+      const evidence={label:"REAL_LOCAL_CHROMIUM_PUBLICATION_UI_WITH_INJECTED_FIXTURE_REASONER_NOT_REAL_AI",
+        browser,isolatedProfile:true,realChromium:true,liveChatGpt:false,arcExtension:false,
+        harness:"test-only loopback proxy with synthetic exact Host/Origin translation; production CSP unchanged",
+        workId:work.id,runId:work.runId,modelCalls:prompts.length,prompts,report,requests:harness.requests,final:work,
+        publishedRumorCount:app.civilization.square.list().length};
+      writeFileSync(join(root,"browser-publication-evidence.json"),JSON.stringify(evidence,null,2));
+      if(process.env.METRON_WORK_EVIDENCE_DIR)t.diagnostic("Saved real Chromium publication evidence: "+root);
+    }finally{
+      if(harness)await harness.close();if(app)await app.close();
+      if(!process.env.METRON_WORK_EVIDENCE_DIR)rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:100});
+    }
+  });
 
 test("real Chromium controls create, reload, explicitly resume and edit a persistent local village work",
   {skip:!availableChromium(),timeout:90000},async t=>{

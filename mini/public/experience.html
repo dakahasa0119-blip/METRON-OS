@@ -7,6 +7,9 @@
   <title>METRON — 本来の構想を体験</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/experience.css">
+  <script src="/project-ui.js"></script>
+  <script src="/village-ui.js"></script>
+  <script src="/setup-ui.js"></script>
   <script type="module" src="/experience.js"></script>
 </head>
 <body>
@@ -16,7 +19,8 @@
     <div class="eyebrow">METRON / ORIGINAL ARCHITECTURE · OFFLINE ADAPTER</div>
     <h1>一つの村に母艦A/B。<br><em>村同士が知識を交換する。</em></h1>
     <p>各ユーザーが独立した村を持ち、その中に母艦群・Gateway・ARC・BAKUが存在します。Village Squareは村と村を結び、Rumor JSONが情報を運びます。</p>
-    <div class="trustline"><span class="live-dot"></span> 原構想の縮小実装 · 実際のJSON交換 · 外部AI合議・P2Pネットワークは未接続</div>
+    <div class="trustline"><span class="live-dot"></span> 原構想の縮小実装 · 実際のJSON交換 · 外部AIは設定と明示同意に依存 · P2P未接続</div>
+    <div class="action-pair project-entry"><a href="#project-desk">登録プロジェクトの仕事へ進む ↓</a><a href="#village-desk">新しい村を準備する ↓</a><a href="/project-guide" target="_blank" rel="noopener">はじめて使う方へ ↗</a></div>
   </header>
 
   <section class="concept-map" aria-label="村の境界と内部母艦">
@@ -46,8 +50,8 @@
   </section>
   <section class="concept-subsystems">
     <div><b>Gateway</b><span>村内の依頼・結果・記憶とRumorの巡回</span></div>
-    <div><b>ARC / PROXY-HAND</b><span>外部AIとの接触を担う無記憶の手足（外部接続は未実装）</span></div>
-    <div><b>BAKU</b><span>壊れたコード・記憶の断片救済（現在は静的抽出）</span></div>
+    <div><b>ARC / PROXY-HAND</b><span>外部AIとの接触を担う無記憶の手足（接続・選択は別途必要）</span></div>
+    <div><b>BAKU</b><span>断片の静的抽出・隔離した修復候補の独立検証</span></div>
   </section>
 
   <main class="experience-grid">
@@ -70,6 +74,7 @@
         <div class="chapter-body">
           <h3>第一の村からRumor JSONを公開</h3>
           <p>村内の母艦間連携を記録し、実際にVillage Squareフォルダーへバージョン付きJSONを書き込みます。隣の村には自動で記憶されません。</p>
+          <label for="rumor-source-village">公開元の村</label><select id="rumor-source-village"><option value="village-1">自分の村</option><option value="village-2">隣の村</option></select>
           <label for="rumor-text">Rumorの本文</label>
           <textarea id="rumor-text" rows="3" maxlength="320">作業継続のため、目的と失敗の履歴を残す。</textarea>
           <button id="share-knowledge" type="button">Rumor JSONを公開する →</button>
@@ -82,6 +87,7 @@
         <div class="chapter-body">
           <h3>第二の村のGatewayが巡回・確認</h3>
           <p>別の村としてJSONを読み込み、自身のGatewayに届けます。ノイズ検査の強度は利用者が選び、最終的に取り入れるかも利用者が判断します。</p>
+          <label for="rumor-recipient-village">受信・採用する村</label><select id="rumor-recipient-village"><option value="village-1">自分の村</option><option value="village-2" selected>隣の村</option></select>
           <label for="filter-level">Rumorノイズ検査（教材用の簡易ヒューリスティック）</label>
           <div class="action-pair">
             <select id="filter-level">
@@ -100,7 +106,7 @@
         <div class="chapter-body">
           <h3>外部AIとの合議は、本来の機能として別に扱う</h3>
           <p>原構想ではGatewayのプロトコルに沿ってChatGPT・Gemini・Copilotなどに意見を求め、母艦が比較・統合し、ローカルLLMが最終判断します。</p>
-          <div class="trust-details">外部AI接続 / 合議 / ローカルLLM最終判断：<strong>未接続</strong><br>固定文章を生成して「AIが考えた」と見せる処理は設けていません。</div>
+          <div class="trust-details">外部AI接続・合議・ローカルLLM判断は、各機能の接続設定と実行状態を下で確認してください。設定の存在だけでは実AIの応答や合議成功を意味しません。</div>
           <a href="/" class="backlink">ARCのローカルDOM探索を試す ↗</a>
         </div>
       </article>
@@ -184,7 +190,7 @@
         <div class="chapter-number">10</div>
         <div class="chapter-body">
           <h3>村の仕事を保存し、BAKUで次の候補を実行する</h3>
-          <p>Gatewayに届いた本文、仕事の目的、選んだ採用済み知識を一つの仕事に保存します。選択した本物のAIが、同梱の2ファイルの請求計算プロジェクトを調査・修正し、別プロセスで実テストを行います。保存した仕事を開き直して、結果と履歴を確認してから明示的に再開できます。</p>
+          <p>Gatewayに届いた本文、仕事の目的、選んだ採用済み知識を一つの仕事に保存します。登録済みプロジェクトは所有者キーで対象を選び、候補作成・差分確認・独立検証・隔離適用を順に明示操作します。同梱の2ファイル教材を実行する経路も下に残しています。保存した仕事を開き直して、結果と履歴を確認してから続けられます。</p>
           <div class="trust-details" id="agent-health">AI修復ワーカーの接続状態を確認しています。</div>
           <div class="work-toolbar">
             <div><label for="work-village">仕事を保存する村</label><select id="work-village"><option value="village-1">第一の村</option><option value="village-2">第二の村</option></select></div>
@@ -197,19 +203,111 @@
             <label for="work-source">元にするGateway受信本文</label>
             <select id="work-source"><option value="">受信本文を選択してください</option></select>
             <pre id="work-source-preview" class="work-readback">受信本文を選ぶと、本文と保存時のSHA-256を確認できます。</pre>
+            <p class="hint">受信元がない場合は<a id="project-console-link" href="/" target="_blank" rel="noopener">Consoleでメッセージを送信</a>し、この画面へ戻って保存状態を読み直してください。Consoleは第一の村へ配達します。第二の村では既存のRumor受信・採用後の本文を選びます。</p>
             <label for="agent-goal">この仕事の目的</label>
             <textarea id="agent-goal" maxlength="500" rows="3" placeholder="受信本文をどう役立て、何を確認したいかを記入してください"></textarea>
-            <fieldset class="work-knowledge-field"><legend>この仕事へ取り込む採用済み知識（任意・5件まで）</legend><div id="work-knowledge"></div></fieldset>
+            <fieldset class="work-knowledge-field"><legend>この仕事へ取り込む知識・継承参照（任意・5件まで）</legend><div id="work-knowledge"></div></fieldset>
             <p class="hint">仕事の作成時に本文・目的・選んだ知識を固定保存します。本文に書かれた指示で、AIの選択や外部送信の許可が変わることはありません。</p>
             <button id="create-work" class="subtle" type="button">この内容で仕事を保存</button>
           </div>
           <div id="work-selected" class="work-section" hidden>
             <h4>保存した仕事と次の操作</h4>
+            <details class="project-audit"><summary>受信本文・出所・実行IDを確認する（監査用）</summary>
             <pre id="work-readback" class="work-readback"></pre>
             <label for="agent-resume-id">この仕事に保存された修復実行ID</label>
             <input id="agent-resume-id" type="text" readonly placeholder="実行後に保存されます" autocomplete="off">
+            </details>
           </div>
-          <label for="agent-model">実行するAI</label>
+          <section id="project-desk" class="work-section project-desk" aria-label="登録プロジェクトの仕事">
+            <h4>名前から対象を選び、修復する範囲を確認</h4>
+            <p class="hint">用意された対象を名前から選びます。修復操作にパス・内部ID・JSONの入力は不要です。初回の対象と検査範囲の指定は所有者側で必要です。所有者が準備候補を用意した場合、隔離用Git作業領域は下の画面から準備できます。</p>
+            <p id="project-setup-state" class="project-setup-next" role="status">対象の準備状況を確認しています。</p>
+            <p id="project-setup-next" class="project-setup-next">所有者の起動リンクでこの画面を開き、名前から対象を選んでください。</p>
+            <p class="hint"><a href="/project-guide" target="_blank" rel="noopener">起動設定・操作手順と残る前提 ↗</a></p>
+            <details class="project-manual-key"><summary>所有者キーを手動で使う（必要な場合）</summary>
+            <p class="hint">所有者の起動リンクから開いた場合、手入力は不要です。キーはこの起動の操作権限で、ChatGPTやCodexのログイン情報とは別です。</p>
+            <label for="project-operator-key">この起動の所有者キー</label>
+            <input id="project-operator-key" type="password" autocomplete="off" spellcheck="false" maxlength="64" placeholder="専用の64文字キー。ページを閉じると忘れます">
+            <div class="action-pair"><button id="project-load-catalog" class="subtle" type="button">キーを確認して登録対象を読む</button><button id="project-lock" class="subtle" type="button">キーを忘れる</button></div>
+            </details>
+            <p id="project-owner-status" class="hint" role="status">キーはブラウザーの保存領域へ記録しません。</p>
+            <section id="project-setup-desk" class="owner-management" aria-label="登録対象の隔離用Git準備">
+              <h5>所有者が指定した対象の隔離用コピーを準備する</h5>
+              <p class="hint">対象の選定・元のGit履歴・編集許可・公開/非公開検査の指定は所有者が事前に行います。ここではその指定どおりの作業領域を準備するだけです。AI、検査、修復、適用は開始しません。</p>
+              <label for="setup-slot">準備する対象の名前</label><select id="setup-slot"><option value="">所有者接続後に読み込みます</option></select>
+              <div id="setup-scope" class="project-scope-card"></div>
+              <label class="consent"><input id="setup-reviewed" type="checkbox"> この対象と検査の境界を確認し、専用の隔離用コピーを準備する</label>
+              <div class="action-pair"><button id="setup-prepare" class="subtle" type="button" disabled>この対象のGit作業領域を準備</button><button id="setup-reload" class="subtle" type="button" disabled>準備状態を読む</button></div>
+              <p id="setup-notice" class="work-notice" role="status" aria-live="polite">準備済みはAI接続・修復成功を意味しません。</p>
+              <details class="project-audit"><summary>結果不明の要求と監査情報</summary><pre id="setup-audit" class="work-readback"></pre>
+                <label class="consent"><input id="setup-retry-reviewed" type="checkbox"> 保存状態を読み、前と同じ準備要求だけを再確認した</label>
+                <div class="action-pair"><button id="setup-retry" class="subtle" type="button" disabled>同じ要求IDで明示再送</button><button id="setup-dismiss" class="subtle" type="button" disabled>再送を閉じる</button></div>
+              </details>
+            </section>
+            <label for="project-plan">修復する対象の名前（要件追加では新しい登録を選択）</label>
+            <select id="project-plan"><option value="">所有者キーで登録対象を読み込んでください</option></select>
+            <div class="project-overview">
+              <section id="project-target-card" class="project-scope-card" aria-label="選んだ対象と修復範囲">
+                <h5 id="project-target-name">対象を名前から選んでください</h5>
+                <p id="project-target-description"></p>
+                <h5>編集できるファイルと操作</h5><ul id="project-edit-files"></ul>
+                <div id="project-check-boundaries" class="project-scope-grid">
+                  <section><h5>AIが読める公開検査</h5><p>検査ファイル：<span id="project-public-count">未選択</span></p><p>故障を再現し、候補が失敗したときは実際の公開失敗を次の修正に使います。</p></section>
+                  <section><h5>独立した非公開受入検査</h5><p>検査ファイル：<span id="project-acceptance-count">未選択</span></p><p>候補とは別の固定検査です。ファイル名・内容・出力をAIへ渡しません。この画面でも内容は表示しません。</p></section>
+                  <section><h5>使い捨ての隔離用コピーへ適用</h5><p>適用後の検査ファイル：<span id="project-smoke-count">未選択</span></p><p>所有者が事前に用意した隔離用コピーだけへ反映し、動作と読み戻しを確認します。公開mainや利用者の本番へ反映する操作ではありません。</p></section>
+                  <section><h5>今回Codexへ送る範囲</h5><p>登録コードと履歴、仕事の目的、選んだ受信本文・採用知識と出所、症状・公開証拠、公開テストの失敗内容です。</p><p>仕事の文脈に機密が混じっていないか、人が送信前に確認してください。任意の機密を自動判定で除外する機能はありません。</p></section>
+                </div>
+                <p id="project-worker-status" class="hint"></p>
+                <label class="consent project-scope-check"><input id="project-scope-reviewed" type="checkbox"> この対象と範囲を確認した（編集・検査・隔離適用・送信）</label>
+              </section>
+            </div>
+            <details id="project-plan-audit" class="project-audit"><summary>対象の内部ID・基点・検査設定を読む（監査用）</summary><pre id="project-plan-summary" class="work-readback"></pre></details>
+            <label for="project-symptom">今回の症状（2000文字以内）</label>
+            <textarea id="project-symptom" rows="3" maxlength="2000"></textarea>
+            <label for="project-evidence">公開してよい再現情報（1行1件、10件まで・各1000文字以内）</label>
+            <textarea id="project-evidence" rows="3"></textarea>
+            <div class="action-pair"><button id="project-start" class="subtle" type="button" disabled>この仕事で登録対象の失敗を再現</button><button id="project-refresh" class="subtle" type="button" disabled>プロジェクトの保存状態を読む</button></div>
+            <section id="project-state-card" class="project-plain-status" role="status" aria-live="polite">
+              <h5 id="project-state-title">まだプロジェクトの実行はありません</h5>
+              <p id="project-state-goal"></p><p id="project-next-step"></p><p id="project-state-attempts"></p>
+              <ul id="project-check-results"></ul><ol id="project-progress" class="project-progress"></ol>
+            </section>
+            <details id="project-status-audit" class="project-audit"><summary>セッション・検査・公開失敗の技術記録を読む（監査用）</summary><pre id="project-status" class="work-readback">まだプロジェクトの実行はありません。</pre></details>
+            <p class="hint">公開テストの失敗を確認してから候補を作ります。非公開受入テストの内容・ログはAIへ渡しません。画面の読込みや再起動ではAI・検証・適用・共有を自動実行しません。</p>
+            <label class="consent"><input id="project-codex-consent" type="checkbox"> 上の送信範囲を確認し、次の1回だけ、通常ログイン済みの公式Codex CLIからOpenAIへ送ることと、利用枠・費用が発生し得ることを許可する</label>
+            <button id="project-dispatch" class="subtle" type="button" disabled>Codexで次の候補を1回だけ作る</button>
+            <label for="project-cancel-reason">停止理由</label><input id="project-cancel-reason" type="text" maxlength="500" value="利用者が停止を要求">
+            <button id="project-cancel" class="subtle" type="button" disabled>このプロジェクトの作業を停止</button>
+            <label class="consent"><input id="project-resume-reviewed" type="checkbox"> 未確定の前回結果と停止状態を確認した。古い作業領域を再利用せず再開する</label>
+            <button id="project-resume" class="subtle" type="button" disabled>停止した仕事を明示的に再開</button>
+            <h4>候補の差分と独立検証</h4>
+            <button id="project-review-diff" class="subtle" type="button" disabled>保存した候補の実際の差分を読む</button>
+            <ul id="project-diff-files"></ul><pre id="project-diff-view" class="work-readback">差分はまだ取得していません。</pre>
+            <details id="project-diff-audit" class="project-audit"><summary>候補commit・差分ハッシュ・内部IDを読む（監査用）</summary><pre id="project-diff" class="work-readback">差分はまだ取得していません。</pre></details>
+            <label class="consent"><input id="project-diff-reviewed" type="checkbox"> 表示したファイル差分と変更範囲を確認した（検証する候補は保存記録に固定します）</label>
+            <label for="project-reviewer">検証・適用を確認する人の名前（120文字以内）</label><input id="project-reviewer" type="text" maxlength="120" autocomplete="off">
+            <button id="project-validate" class="subtle" type="button" disabled>この差分を固定テストで独立検証</button>
+            <h4>有用な検査を再計算して残す（PoUC）</h4>
+            <p class="hint">検証済みの同じ候補で、登録された固定公開・非公開検査をローカル再実行し、入力と結果を元の検証と照合します。外部AIを呼び出しません。記録はこの仕事・候補・検証に結び付きます。既存の公開Rumorは書き換えず、受信側の採用も自動化しません。</p>
+            <label class="consent"><input id="project-pouc-reviewed" type="checkbox"> 表示した検証済み候補を確認し、固定検査を再計算してPoUC記録を保存する</label>
+            <button id="project-pouc" class="subtle" type="button" disabled>この候補の検査を再計算して記録</button>
+            <p id="project-pouc-result" class="hint" role="status">PoUCの再計算記録はまだありません。</p>
+            <h4>登録された隔離適用先だけへ反映</h4>
+            <p class="hint">検証済み候補でも適用は別操作です。候補・差分・検証ID・期待HEADを固定します。公開リポジトリのmainや利用者の本番環境へは反映しません。</p>
+            <label class="consent"><input id="project-apply-reviewed" type="checkbox"> 表示された検証済み候補と期待HEADを確認し、この登録の隔離適用先への適用を承認する</label>
+            <button id="project-apply" class="subtle" type="button" disabled>確認した候補を隔離適用先へ適用</button>
+            <label class="consent"><input id="project-rollback-reviewed" type="checkbox"> 現在の候補HEADを確認し、この登録の基点へのrollbackを承認する</label>
+            <button id="project-rollback" class="subtle" type="button" disabled>隔離適用先を基点へrollback</button>
+            <details><summary>同じ仕事へ要件を追加する</summary>
+              <p class="hint">所有者が旧候補と同じソースにREADME・公開テスト・smoke testの要件だけを追加し、新しい対象として登録してから選んでください。旧成功と公開済みRumorは履歴に残ります。旧版は2件まで、候補作成は系列全体で3回までです。</p>
+              <label for="project-requirements">追加した要件（2000文字以内）</label><textarea id="project-requirements" rows="3" maxlength="2000"></textarea>
+              <label class="consent"><input id="project-revision-reviewed" type="checkbox"> 旧検証候補・新しい登録・追加要件を確認し、同じ仕事の改訂を開始する</label>
+              <button id="project-revise" class="subtle" type="button" disabled>旧成功を保持して新要件の失敗を再現</button>
+            </details>
+            <section class="project-scope-card"><h5>以前の結果と公開履歴</h5><ul id="project-history-list"></ul></section>
+            <details class="project-audit"><summary>プロジェクトの試行・旧版・公開IDを読む（監査用）</summary><pre id="project-history" class="work-readback"></pre></details>
+          </section>
+          <label for="agent-model">同梱2ファイル教材で実行するAI</label>
           <select id="agent-model">
             <option value="auto">自動選択：まずOllama（同意不要）→ OpenAI（同意した今回だけ）</option>
             <option value="ollama">ローカルOllama（METRON_LOCAL_MODEL）</option>
@@ -217,7 +315,7 @@
           </select>
           <label class="consent"><input id="agent-cloud-consent" type="checkbox"> ローカル実行には不要です。次の1回で、保存した目的・選択したGateway受信本文・採用済み知識と出所・修復対象と修正候補のソース・失敗履歴を、選択したOpenAI公式APIへ送信すること、および課金可能性を許可する</label>
           <button id="try-agentic-repair" class="subtle" type="button" disabled>保存した仕事の次の候補1回を実行</button>
-          <p class="hint">1クリックで候補は1回、合計4回まで。未完了の確認検査は保存済み候補だけを再検査し、新しいAI呼び出しを行いません。ページの表示・更新・AIの選択では実行も再試行もしません。モデルが未接続なら未完了の状態を保存します。修正は隔離コピーだけで行い、本体へ適用しません。任意の実プロジェクトを修復できる機能ではありません。</p>
+          <p class="hint">このボタンは同梱2ファイル教材用です。1クリックで候補は1回、合計4回まで。未完了の確認検査は保存済み候補だけを再検査し、新しいAI呼び出しを行いません。ページの表示・更新・AIの選択では実行も再試行もしません。モデルが未接続なら未完了の状態を保存します。登録済み対象の操作には上のプロジェクトパネルを使います。</p>
           <pre class="proof-list work-readback" id="agentic-repair-result">保存した仕事を選ぶと、実行結果をここに表示します。</pre>
           <details id="work-history-section" class="work-history" hidden><summary>この仕事の候補・実行履歴</summary><pre id="work-history" class="work-readback"></pre></details>
           <div id="work-share-section" class="work-section" hidden>
@@ -225,10 +323,66 @@
             <p id="work-share-status" class="hint"></p>
             <label for="work-share-body">人が確認・編集する共有候補（320文字以内）</label>
             <textarea id="work-share-body" maxlength="320" rows="4"></textarea>
+            <fieldset class="work-repair-summary">
+              <legend>公開用の修理要約（各500文字以内）</legend>
+              <p class="hint">原因・適用条件・限界をすべて記入して保存すると、検証記録付きの公開候補になります。すべて空欄なら従来の非公開下書きとして保存します。</p>
+              <label for="work-share-diagnosis">確認した原因</label>
+              <textarea id="work-share-diagnosis" maxlength="500" rows="3"></textarea>
+              <label for="work-share-applicability">適用できる条件</label>
+              <textarea id="work-share-applicability" maxlength="500" rows="3"></textarea>
+              <label for="work-share-limitations">限界・未確認の点</label>
+              <textarea id="work-share-limitations" maxlength="500" rows="3"></textarea>
+            </fieldset>
             <button id="save-work-share" class="subtle" type="button" disabled>共有候補を手元に保存</button>
             <p class="hint">ここでは村の手元の下書きだけを保存します。Village Squareへの公開、他の村での受信・採用は行いません。</p>
             <pre id="work-share-evidence" class="work-readback"></pre>
+            <div class="work-publication">
+              <h4>確認した候補をローカルのVillage Squareへ公開</h4>
+              <p class="hint">公開は下書きの保存と別の操作です。本文と検証記録を人が確認してください。チェックサムは改変の検出用で、送信元の認証ではありません。送信元の検証主張は受信側の検証を意味しません。</p>
+              <label class="consent"><input id="work-publish-reviewed" type="checkbox"> この候補の公開本文・原因・適用条件・限界・検証記録を人として確認した</label>
+              <button id="publish-work-share" class="subtle" type="button" disabled>ローカルのVillage Squareへ公開</button>
+              <p id="work-publication-status" class="hint" role="status" aria-live="polite"></p>
+            </div>
           </div>
+        </div>
+      </article>
+      <article class="chapter" id="village-desk">
+        <div class="chapter-number">11</div><div class="chapter-copy">
+          <div class="eyebrow">OWNER-SELECTED / LOCAL VILLAGE BUNDLE</div><h3>新しい目的のために、一つの村を準備する</h3>
+          <p>一つの新しい村に母艦A/BとGatewayを作ります。所有者接続は上の登録プロジェクト欄と共通です。自動増殖やAI実行はせず、この管理欄の明示操作だけで作成・起動・停止します。</p>
+          <p class="hint">稼働中の新しい村は「この村の仕事へ」から同じ画面の仕事・BAKU操作へ進めます。Rumorの公開元・受信先も村ごとに選びます。継承参照は、この村で採用・独立検証した知識とは区別します。外部AIの設定、資格情報・ログイン・実行許可は自動継承しません。選ぶ本文や知識に機密が含まれていないか、人が確認してください。</p>
+          <p id="village-base-root" class="hint">専用保存の親フォルダーは所有者接続後に表示します。</p>
+          <div class="village-form-grid">
+            <div><label for="village-new-id">自分で指定する新村ID</label><input id="village-new-id" type="text" value="my-new-village" maxlength="48" autocomplete="off" spellcheck="false"></div>
+            <div><label for="village-directory">専用保存フォルダー名（上の親フォルダー内）</label><input id="village-directory" type="text" value="my-new-village" maxlength="48" autocomplete="off" spellcheck="false"></div>
+          </div>
+          <p class="hint">英小文字で始まる短い名前に、数字・_・-を使えます。候補を編集し、プレビューで新村IDと最終保存先を明示確認してください。既存名や予約名は使用できません。</p>
+          <label for="village-purpose">この新しい村の目的（500文字以内）</label><textarea id="village-purpose" rows="3" maxlength="500" placeholder="元の仕事とは別に、この村で進めたい目的を書いてください"></textarea>
+          <label for="village-source-village">選別する元の村</label><select id="village-source-village"><option value="village-1">第一の村</option><option value="village-2">第二の村</option></select>
+          <label for="village-source-work">元の仕事（目的と受信本文は個別に選べます）</label><select id="village-source-work"><option value="">引き継ぐ元の仕事を選択（任意）</option></select>
+          <pre id="village-source-summary" class="work-readback"></pre>
+          <label class="consent"><input id="village-inherit-goal" type="checkbox"> 選んだ元の目的を、由来付きの参考データとして引き継ぐ</label>
+          <label class="consent"><input id="village-inherit-source" type="checkbox"> 選んだ元の受信本文を、由来付きの参考データとして引き継ぐ</label>
+          <fieldset class="work-knowledge-field"><legend>この村へ渡す採用済み知識だけを選択（任意・5件まで）</legend><div id="village-knowledge"></div></fieldset>
+          <button id="village-preview" class="subtle" type="button" disabled>選別内容と保存先をプレビュー</button>
+          <section id="village-preview-card" class="project-scope-card" aria-label="作成前の全選別内容と保存先"></section>
+          <label class="consent project-scope-check"><input id="village-preview-reviewed" type="checkbox"> 新村ID・専用保存先・新目的・引き継ぐ各本文と由来を確認した</label>
+          <button id="village-create" class="subtle" type="button" disabled>確認した一つの新村を作成（まだ起動しない）</button>
+          <details class="project-audit"><summary>プレビューのdigestと完全な由来を見る（監査用）</summary><pre id="village-preview-audit" class="work-readback"></pre></details>
+          <hr><label for="village-saved">作成した村を選ぶ</label><select id="village-saved"><option value="">保存された新しい村を選ぶ</option></select>
+          <button id="village-reload" class="subtle" type="button" disabled>村と選別元の保存状態を読む</button>
+          <h4 id="village-bundle-status">新しい村はまだ選択していません。</h4><p id="village-bundle-summary" class="owner-readable"></p><p id="village-runtime" class="hint"></p>
+          <button id="village-open-work" class="subtle" type="button" disabled>この村の仕事へ</button>
+          <label for="village-message">この村の内部へ送るメッセージ（1024文字以内・AIへは送りません）</label><textarea id="village-message" rows="2" maxlength="1024"></textarea>
+          <label for="village-reason">作成を保留する理由</label><input id="village-reason" type="text" value="所有者が保留を要求" maxlength="500">
+          <label class="consent"><input id="village-action-reviewed" type="checkbox"> 選択した村の保存先・現在の状態・次に押す操作を確認した</label>
+          <div class="action-pair"><button id="village-launch" class="subtle" type="button" disabled>この村だけを起動</button><button id="village-stop" class="subtle" type="button" disabled>この村だけを停止</button><button id="village-send" class="subtle" type="button" disabled>この村の内部へ一回送信</button></div>
+          <div class="action-pair"><button id="village-cancel" class="subtle" type="button" disabled>起動前の作成を保留</button><button id="village-resume" class="subtle" type="button" disabled>保存状態を確認して明示再開</button></div>
+          <p class="hint">再開は作成・停止状態の整理であり、起動は別操作です。終了未確認は勝手に安全と見なさず、所有者が実プロセスを確認してください。</p>
+          <p id="village-notice" class="work-notice" role="status" aria-live="polite">画面の読込みでは作成・起動しません。</p>
+          <details class="project-audit"><summary>結果不明の要求と保存記録を確認（監査用）</summary><pre id="village-state-audit" class="work-readback"></pre>
+            <div class="action-pair"><button id="village-retry" class="subtle" type="button" disabled>同じ要求IDの操作を明示再送</button><button id="village-dismiss" class="subtle" type="button" disabled>再送を閉じる</button></div>
+          </details>
         </div>
       </article>
       <div class="notice" id="concept-notice" role="status" aria-live="polite">村のデータを読み込んでいます…</div>
