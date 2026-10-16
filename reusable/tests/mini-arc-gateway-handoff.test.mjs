@@ -29,7 +29,9 @@ test("one-time ARC handoff delivers real response to same-village MotherShip B",
 }));
 
 test("bounded drain returns a pending ARC receipt and eventually delivers once",()=>temp(root=>{
- const runtime=new MetronMiniRuntime(root);
+ // This checks the max-100/durable-pending/exactly-once contract, independent
+ // of wall-clock readiness or lease expiry (covered by separate queue tests).
+ const runtime=new MetronMiniRuntime(root,{now:()=>0});
  const handoff=new ArcHandoff(runtime);
  // Exercise the real persistent queue synchronously, without the HTTP server's
  // periodic worker racing the backlog between awaited network calls. Endpoint

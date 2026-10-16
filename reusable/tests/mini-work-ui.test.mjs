@@ -15,7 +15,7 @@ function savedWork(villageId="village-1",extra={}){
     runId:"case_saved",stage:"interrupted",nextAction:"select_ai_and_explicitly_resume",
     attempts:[],executions:[],result:null,sharingCandidate:null,...extra};
 }
-async function fixture({works=[],onRun,onCivilizationAction}={}){
+async function fixture({works=[],onRun,onCivilizationAction,onPublish}={}){
   const elements=new Map(),all=[];
   class Element{
     constructor(tag){
@@ -78,9 +78,18 @@ async function fixture({works=[],onRun,onCivilizationAction}={}){
           stage:"ready",nextAction:"select_ai_and_run",runId:null});
         stored.set(work.id,work);return response({work});
       }
-      assert.equal(body.action,"prepare-share");
       const work=stored.get(body.workId);
+      if(body.action==="publish-share"){
+        assert.ok(onPublish,"A fixture must explicitly opt into publication");
+        const result=await onPublish(body,copy(work));
+        if(result.work)stored.set(result.work.id,copy(result.work));
+        return response(result);
+      }
+      assert.equal(body.action,"prepare-share");
       work.sharingCandidate={...work.sharingCandidate,body:body.body,status:"human_review_required"};
+      if(body.repairSummary)work.sharingCandidate.rumor={...work.sharingCandidate.rumor,
+        schemaVersion:"metron-rumor-v2",originVillage:work.villageId,body:body.body,
+        sha256:"b".repeat(64),repairEvidence:{schemaVersion:1,...body.repairSummary}};
       return response({work});
     }
     if(target.pathname==="/api/agent/run"){
@@ -100,10 +109,139 @@ async function fixture({works=[],onRun,onCivilizationAction}={}){
   const context=vm.createContext({document,fetch,URLSearchParams});
   vm.runInContext(script,context);
   await settle();
-  return {$,context,requests,stored,villages,
+  return {$,context,requests,stored,villages,civilization,
     posts:()=>requests.filter(item=>item.method==="POST"),
     knowledgeInputs:()=>$("work-knowledge").children.filter(item=>item.tagName==="LABEL").map(item=>item.children[0])};
 }
+
+function verifiedShareWork(villageId="village-1",extra={}){
+  const work=savedWork(villageId,{stage:"candidate_verified",result:{status:"verified_candidate"},...extra});
+  const repairEvidence={schemaVersion:1,scope:"human_reviewed_external_worker",
+    diagnosis:"Observed <img> root cause",applicability:"Only the pinned local project",limitations:"Production remains unverified",
+    candidateCommit:"c".repeat(40),candidateDigest:null,diffSha256:"d".repeat(64),verificationDigest:"e".repeat(64),
+    modelProvenance:"protocol_fixture_not_real_ai",checks:[{id:"regression",outcome:"passed",outputSha256:"f".repeat(64)}],
+    productionApplied:false};
+  const rumor={schemaVersion:"metron-rumor-v2",id:"r_reviewed",originVillage:villageId,originCore:"A",kind:"KNOWLEDGE",
+    body:"Human-reviewed repair result",parentRumorId:"r_parent",createdAt:1,sha256:"a".repeat(64),repairEvidence};
+  work.sharingCandidate={status:"human_review_required",workId:work.id,runId:work.runId,body:rumor.body,rumor};
+  return work;
+}
+const publishReview=async h=>{h.$("work-publish-reviewed").checked=true;await h.$("work-publish-reviewed").emit("change");};
+const publishedResponse=(body,work)=>({work:{...work,publication:{schemaVersion:1,status:"published",
+  rumor:work.sharingCandidate.rumor,rumorSha256:body.reviewedRumorSha256,intentAt:1,completedAt:2}},
+  rumor:work.sharingCandidate.rumor,duplicate:false});
+const textOf=node=>node.textContent+node.children.map(textOf).join("\n");
+
+test("repair summary is all-or-empty, saved privately, and editing consumes publication review",async()=>{
+  const work=verifiedShareWork(),h=await fixture({works:[work]});
+  for(const id of ["work-share-diagnosis","work-share-applicability","work-share-limitations"])
+    h.$(id).value="";
+  h.$("work-share-diagnosis").value="Observed cause";await h.$("work-share-diagnosis").emit("input");
+  await h.$("save-work-share").emit("click");await settle();
+  assert.equal(h.posts().length,0);assert.match(h.$("work-notice").textContent,/すべて/);
+  h.$("work-share-applicability").value="Pinned project only";
+  h.$("work-share-limitations").value="No production application";
+  await h.$("work-share-limitations").emit("input");
+  await h.$("save-work-share").emit("click");await settle();
+  assert.deepEqual(h.posts().map(x=>x.body),[{action:"prepare-share",villageId:work.villageId,workId:work.id,
+    body:work.sharingCandidate.body,repairSummary:{diagnosis:"Observed cause",applicability:"Pinned project only",limitations:"No production application"}}]);
+  assert.equal(h.$("work-publish-reviewed").checked,false);assert.equal(h.$("publish-work-share").disabled,true);
+  await publishReview(h);assert.equal(h.$("publish-work-share").disabled,false);
+  h.$("work-share-limitations").value="Changed limitation";await h.$("work-share-limitations").emit("input");
+  assert.equal(h.$("work-publish-reviewed").checked,false);assert.equal(h.$("publish-work-share").disabled,true);
+  await h.$("refresh-work").emit("click");await settle();
+  assert.equal(h.$("work-share-limitations").value,"Changed limitation");
+  assert.equal(h.posts().length,1,"saving or reading a draft must not publish");
+});
+
+test("publication requires exact prepared bytes and separate review, then freezes the stable Rumor",async()=>{
+  const work=verifiedShareWork(),h=await fixture({works:[work],onPublish:publishedResponse});
+  assert.equal(h.posts().length,0);assert.match(h.$("work-share-evidence").textContent,/verificationDigest/);
+  assert.equal(h.$("work-share-diagnosis").value,work.sharingCandidate.rumor.repairEvidence.diagnosis);
+  h.$("agent-cloud-consent").checked=true;
+  assert.equal(h.$("publish-work-share").disabled,true,"AI consent cannot authorize publication");
+  await publishReview(h);assert.equal(h.$("publish-work-share").disabled,false);
+  h.$("work-share-body").value="Unprepared replacement";
+  await h.$("publish-work-share").emit("click");await settle();
+  assert.equal(h.posts().length,0,"a programmatic value change cannot publish old prepared bytes");
+  assert.equal(h.$("work-publish-reviewed").checked,false);
+  h.$("work-share-body").value=work.sharingCandidate.body;await publishReview(h);
+  await h.$("publish-work-share").emit("click");await settle();
+  assert.deepEqual(h.posts().map(x=>x.body),[{action:"publish-share",villageId:work.villageId,workId:work.id,
+    reviewedRumorSha256:work.sharingCandidate.rumor.sha256,allowPublish:true}]);
+  assert.equal(h.$("work-publish-reviewed").checked,false);
+  for(const id of ["work-share-body","work-share-diagnosis","work-share-applicability","work-share-limitations","save-work-share","publish-work-share"])
+    assert.equal(h.$(id).disabled,true,id);
+  assert.match(h.$("work-publication-status").textContent,/r_reviewed/);
+  await h.$("refresh-work").emit("click");await settle();
+  assert.equal(h.posts().length,1);assert.match(h.$("work-publication-status").textContent,/r_reviewed/);
+});
+
+test("publication rejects V1, unverified stages, dirty drafts and mismatched selected work",async()=>{
+  for(const change of [work=>{work.sharingCandidate.rumor.schemaVersion="metron-rumor-v1";},
+    work=>{work.stage="unresolved";},work=>{work.result.status="unresolved";}]){
+    const work=verifiedShareWork();change(work);const h=await fixture({works:[work]});
+    await publishReview(h);assert.equal(h.$("publish-work-share").disabled,true);assert.equal(h.posts().length,0);
+  }
+  const dirty=await fixture({works:[verifiedShareWork()]});await publishReview(dirty);
+  await dirty.$("work-share-body").emit("input");
+  assert.equal(dirty.$("publish-work-share").disabled,true);assert.equal(dirty.$("work-publish-reviewed").checked,false);
+  for(const target of ["work-village","work-saved"]){
+    const h=await fixture({works:[verifiedShareWork()]});await publishReview(h);
+    h.$(target).value=target==="work-village"?"village-2":"different_work_id";
+    h.$("publish-work-share").disabled=false;
+    await h.$("publish-work-share").emit("click");await settle();assert.equal(h.posts().length,0,target);
+  }
+});
+
+test("uncertain publication requires a fresh explicit same-SHA retry and never resends on refresh",async()=>{
+  let attempts=0;const work=verifiedShareWork(),h=await fixture({works:[work],onPublish:(body,current)=>{
+    if(++attempts===1)throw Error("Fixture connection lost after request");
+    return publishedResponse(body,current);
+  }});
+  await publishReview(h);await h.$("publish-work-share").emit("click");await settle();
+  assert.equal(h.posts().length,1);assert.equal(h.$("work-publish-reviewed").checked,false);
+  assert.equal(h.$("publish-work-share").disabled,true);assert.equal(h.$("work-share-body").disabled,true);
+  assert.match(h.$("work-publication-status").textContent,/自動で再送しません/);
+  await h.$("refresh-work").emit("click");await settle();assert.equal(h.posts().length,1);
+  await publishReview(h);await h.$("publish-work-share").emit("click");await settle();
+  assert.equal(h.posts().length,2);assert.deepEqual(h.posts()[1].body,h.posts()[0].body);
+  assert.equal(h.$("work-publish-reviewed").checked,false);
+});
+
+test("saved publication intent permits only the same SHA, while selection changes consume review",async()=>{
+  const work=verifiedShareWork();work.publication={schemaVersion:1,status:"intent",rumor:work.sharingCandidate.rumor,
+    rumorSha256:work.sharingCandidate.rumor.sha256,intentAt:1,completedAt:null};
+  const h=await fixture({works:[work,verifiedShareWork("village-2")],onPublish:publishedResponse});
+  assert.equal(h.posts().length,0);assert.equal(h.$("work-share-body").disabled,true);
+  await publishReview(h);assert.equal(h.$("publish-work-share").disabled,false);
+  h.$("work-village").value="village-2";await h.$("work-village").emit("change");await settle();
+  assert.equal(h.$("work-publish-reviewed").checked,false);assert.equal(h.posts().length,0);
+  await publishReview(h);h.$("work-saved").value="";await h.$("work-saved").emit("change");await settle();
+  assert.equal(h.$("work-publish-reviewed").checked,false);assert.equal(h.posts().length,0);
+  const changed=verifiedShareWork();changed.publication={...work.publication,rumorSha256:"0".repeat(64)};
+  const mismatch=await fixture({works:[changed]});await publishReview(mismatch);
+  assert.equal(mismatch.$("publish-work-share").disabled,true);assert.equal(mismatch.posts().length,0);
+});
+
+test("repair evidence remains plain text with origin, parent and receiver-verification boundaries",async()=>{
+  const work=verifiedShareWork(),rumor=work.sharingCandidate.rumor,h=await fixture({works:[work]});
+  const item={id:"knowledge_repair",text:rumor.body,sourceVillage:rumor.originVillage,parentRumorId:rumor.id,
+    rumorSha256:rumor.sha256,repairEvidence:rumor.repairEvidence};
+  h.civilization.square.push(rumor);
+  h.civilization.villages["village-2"].incoming.push({rumorId:rumor.id,sourceVillage:rumor.originVillage,status:"adopted"});
+  h.civilization.villages["village-2"].knowledge.push(item);
+  h.villages["village-1"].knowledge.push(item);
+  vm.runInContext("render("+JSON.stringify(h.civilization)+")",h.context);
+  await h.$("refresh-work").emit("click");await settle();
+  for(const id of ["square-proposals","village-incoming","village-memories","work-knowledge"]){
+    const text=textOf(h.$(id));
+    assert.match(text,/Observed <img> root cause/,id);assert.match(text,/送信元の認証ではありません/,id);
+    assert.match(text,/受信側で検証済みという意味ではありません/,id);assert.match(text,/village-1/,id);
+    assert.match(text,id==="square-proposals"||id==="village-incoming"?/r_parent/:/r_reviewed/,id);
+  }
+  assert.equal(h.posts().length,0);
+});
 
 test("work reload reads saved context and model changes never start or resume AI",async()=>{
   const work=savedWork("village-1",{sourceMessage:{id:"historic_reply",body:"<img> persisted source",bodySha256:"saved_sha"}});

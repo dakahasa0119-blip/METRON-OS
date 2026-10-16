@@ -3,7 +3,42 @@
  * Rumor is actual JSON exchanged via a shared folder, not AI cognition.
  */
 const $=id=>document.getElementById(id);
-let latest=null,busy=false;
+let latest=null,busy=false,worldLoadVersion=0;
+const villageEntries=()=>Object.entries(latest?.villages||{}).map(([id,v])=>({...v,id:v.id||id}));
+const villageInfo=id=>latest?.villages?.[id];
+const villageName=id=>villageInfo(id)?.name||id;
+const villageUnavailable=id=>villageInfo(id)?.dynamic===true&&villageInfo(id)?.available!==true;
+const canMutateVillage=id=>Boolean(villageInfo(id))&&!villageUnavailable(id)&&
+  (!villageInfo(id).dynamic||projectUi?.hasOperator());
+const rumorSource=()=>$("rumor-source-village")?.value||"village-1";
+const rumorRecipient=()=>$("rumor-recipient-village")?.value||"village-2";
+function villageMutationHeaders(ids){
+  if(ids.some(id=>!canMutateVillage(id)))throw Error("この村の操作には、稼働状態と現在の所有者接続を確認してください。");
+  return ids.some(id=>villageInfo(id)?.dynamic)?projectUi.headers():{"Content-Type":"application/json","X-Metron-Mini":"1"};
+}
+function renderVillageOptions(){
+  for(const [id,fallback] of [["work-village","village-1"],["village-source-village","village-1"],
+    ["rumor-source-village","village-1"],["rumor-recipient-village","village-2"]]){
+    const select=$(id);if(!select)continue;const current=select.value;
+    select.replaceChildren();
+    for(const village of villageEntries()){
+      const option=document.createElement("option");option.value=village.id;
+      option.textContent=(village.name||village.id)+(villageUnavailable(village.id)?"（停止中・読み取りのみ）":"");select.append(option);
+    }
+    select.value=villageInfo(current)?current:villageInfo(fallback)?fallback:villageEntries()[0]?.id||"";
+  }
+}
+function syncVillageControls(){
+  if($("share-knowledge"))$("share-knowledge").disabled=busy||!canMutateVillage(rumorSource());
+  if($("save-filter"))$("save-filter").disabled=busy||!canMutateVillage(rumorRecipient());
+  if($("filter-level"))$("filter-level").disabled=busy||!canMutateVillage(rumorRecipient());
+  for(const id of ["rumor-source-village","rumor-recipient-village"])if($(id))$(id).disabled=busy;
+}
+function clearVillageApprovals(){
+  $("agent-cloud-consent").checked=false;resetPublishReview();publicationAttempt=null;
+  for(const id of ["project-scope-reviewed","project-codex-consent","project-diff-reviewed","project-apply-reviewed",
+    "project-rollback-reviewed","project-resume-reviewed","project-revision-reviewed"])if($(id))$(id).checked=false;
+}
 const notify=(message,failed=false)=>{
   $("concept-notice").textContent=message;
   $("concept-notice").classList.toggle("error",failed);
@@ -19,105 +54,98 @@ function button(text,fn,secondary=false){
   b.type="button"; b.addEventListener("click",fn);
   return b;
 }
+function repairEvidenceBox(record){
+  const evidence=record?.repairEvidence;
+  if(!evidence)return null;
+  const box=el("div","repair-evidence");
+  box.append(el("strong","","修理の検証記録"));
+  box.append(el("p","hint","送信元の検証主張です。受信側で検証済みという意味ではありません。SHA-256は改変の検出用で、送信元の認証ではありません。"));
+  box.append(el("p","","元の村: "+(record.originVillage||record.sourceVillage||"不明")+
+    " / 親Rumor: "+(record.parentRumorId||"なし")));
+  box.append(el("p","","原因: "+evidence.diagnosis));
+  box.append(el("p","","適用条件: "+evidence.applicability));
+  box.append(el("p","","限界: "+evidence.limitations));
+  box.append(el("pre","work-readback",JSON.stringify(evidence,null,2)));
+  return box;
+}
 function renderVillage(v){
   const section=el("section");
   section.append(el("strong","",v.name+" · 母艦A/B"));
   const list=el("ul");
-  for(const item of v.knowledge.slice(-5))list.append(el("li","",item.text));
+  for(const item of (v.knowledge||[]).slice(-5)){
+    const row=el("li","",(item.inheritance?.kind==="selected_reference"?"継承参照: ":"")+item.text),evidence=repairEvidenceBox(item);
+    if(evidence)row.append(evidence);
+    list.append(row);
+  }
   section.append(list);
   return section;
 }
 function rumorBox(r,received){
-  const card=el("div","proposal");
-  const title=el("div","title-line");
-  title.append(el("span","",r.originVillage+" / 母艦"+r.originCore));
-  title.append(el("span","","Rumor JSON · "+r.id.slice(0,14)));
-  card.append(title);
-  card.append(el("p","",r.body));
-  card.append(el("small","",r.sha256.slice(0,16)+"… SHA-256 / 改ざん検査用であり認証ではありません"));
-  const actions=el("div","proposal-actions");
-  if(r.originVillage==="village-1"){
-    if(received){
-      card.append(el("small","","第二の村: "+(received.status==="pending"?"受信・審査待ち":
-        received.status==="adopted"?"採用済み":"隔離済み")));
-    }else{
-      actions.append(button("第二の村のGatewayで受信",()=>act("receive",{
-        villageId:"village-2",rumorId:r.id
-      })));
-    }
+  const card=el("div","proposal"),title=el("div","title-line"),recipient=rumorRecipient();
+  title.append(el("span","",villageName(r.originVillage)+" / 母艦"+r.originCore));
+  title.append(el("span","","Rumor JSON ・ "+r.id.slice(0,14)));card.append(title,el("p","",r.body));
+  const evidence=repairEvidenceBox(r);if(evidence)card.append(evidence);
+  card.append(el("small","",r.sha256.slice(0,16)+"… SHA-256 / 改変検出用であり認証ではありません"));
+  if(r.originVillage!==recipient){
+    if(received)card.append(el("small","",villageName(recipient)+": "+
+      (received.status==="pending"?"受信・人の判断待ち":received.status==="adopted"?"採用済み":"隔離済み")));
+    else{const actions=el("div","proposal-actions"),receive=button(villageName(recipient)+"のGatewayで受信",()=>act("receive",{villageId:recipient,rumorId:r.id}));
+      receive.disabled=busy||!canMutateVillage(recipient);actions.append(receive);card.append(actions);}
   }
-  if(actions.childElementCount)card.append(actions);
   return card;
 }
-function incomingCard(entry,state){
-  const root=el("div","proposal status-"+entry.status);
-  const rumor=state.square.find(x=>x.id===entry.rumorId);
-  root.append(el("div","title-line",entry.sourceVillage+" → 第二の村 / "+
-    (entry.status==="pending"?"審査待ち":entry.status==="adopted"?"採用済み":"隔離済み")));
+function incomingCard(entry,state,recipient=rumorRecipient()){
+  const root=el("div","proposal status-"+entry.status),rumor=state.square.find(x=>x.id===entry.rumorId);
+  root.append(el("div","title-line",villageName(entry.sourceVillage)+" → "+villageName(recipient)+" / "+
+    (entry.status==="pending"?"人の判断待ち":entry.status==="adopted"?"採用済み":"隔離済み")));
   root.append(el("p","",rumor?.body??"[Rumorが見つかりません]"));
-  if(entry.noiseFlags?.length){
-    root.append(el("small","","Gatewayノイズ注意候補: "+entry.noiseFlags.join(", ")));
-  }
+  const evidence=repairEvidenceBox(rumor||entry);if(evidence)root.append(evidence);
+  if(entry.noiseFlags?.length)root.append(el("small","","Gatewayノイズ注意: "+entry.noiseFlags.join(", ")));
   if(entry.status==="pending"){
     const actions=el("div","proposal-actions");
-    actions.append(button("採用して村の記憶に入れる",()=>act("review",{
-      villageId:"village-2",rumorId:entry.rumorId,decision:"adopt"
-    })));
-    actions.append(button("隔離する",()=>act("review",{
-      villageId:"village-2",rumorId:entry.rumorId,decision:"quarantine"
-    }),true));
-    root.append(actions);
-  }
-  return root;
+    for(const [label,decision] of [["採用して村の記憶に加える","adopt"],["隔離する","quarantine"]]){
+      const control=button(label,()=>act("review",{villageId:recipient,rumorId:entry.rumorId,decision}),decision==="quarantine");
+      control.disabled=busy||!canMutateVillage(recipient);actions.append(control);
+    }root.append(actions);
+  }return root;
 }
 function render(state){
-  latest=state;
-  const one=state.villages["village-1"];
-  const two=state.villages["village-2"];
-  $("memory-a-count").textContent="村内知識 "+one.knowledge.length+
-    " · A/B保存 "+(one.transport.motherAInbox+one.transport.motherBInbox);
-  $("memory-b-count").textContent="村内知識 "+two.knowledge.length+
-    " · A/B保存 "+(two.transport.motherAInbox+two.transport.motherBInbox);
-  $("village-memories").replaceChildren(renderVillage(one),renderVillage(two));
+  latest=state;renderVillageOptions();
+  const villages=villageEntries(),one=state.villages["village-1"]||villages[0],recipient=rumorRecipient(),two=state.villages[recipient];
+  if(!one||!two)return;
+  $("memory-a-count").textContent="独立知識 "+(one.knowledge||[]).length+" ・ A/B保存 "+((one.transport?.motherAInbox||0)+(one.transport?.motherBInbox||0));
+  $("memory-b-count").textContent=villageName(recipient)+"の独立知識 "+(two.knowledge||[]).length+" ・ A/B保存 "+((two.transport?.motherAInbox||0)+(two.transport?.motherBInbox||0));
+  $("village-memories").replaceChildren(...villages.map(renderVillage));
   $("stat-ideas").textContent=state.square.length;
-  $("stat-accepted").textContent=two.incoming.filter(x=>x.status==="adopted").length;
-  $("stat-deliveries").textContent=state.transport?.gatewayJobs ??
-    one.transport.gatewayJobs+two.transport.gatewayJobs;
+  $("stat-accepted").textContent=(two.incoming||[]).filter(x=>x.status==="adopted").length;
+  $("stat-deliveries").textContent=state.transport?.gatewayJobs??villages.reduce((n,v)=>n+(v.transport?.gatewayJobs||0),0);
   $("stat-salvages").textContent=4;
-  const square=$("square-proposals");
-  square.replaceChildren();
+  const square=$("square-proposals");square.replaceChildren();
   const shown=state.square.slice().reverse().slice(0,12);
   if(!shown.length)square.append(el("p","hint","まだRumorはありません。上で公開してください。"));
-  for(const rumor of shown)square.append(rumorBox(rumor,
-    two.incoming.find(x=>x.rumorId===rumor.id)));
-  const received=$("village-incoming");
-  received.replaceChildren();
-  if(!two.incoming.length)received.append(el("p","hint",
-    "公開されたRumorを「第二の村のGatewayで受信」すると、ここへ届きます。"));
-  for(const item of two.incoming.slice().reverse().slice(0,12))
-    received.append(incomingCard(item,state));
+  for(const rumor of shown)square.append(rumorBox(rumor,(two.incoming||[]).find(x=>x.rumorId===rumor.id)));
+  const received=$("village-incoming");received.replaceChildren();
+  if(!(two.incoming||[]).length)received.append(el("p","hint",villageName(recipient)+"でRumorを明示的に受信すると、ここに表示されます。"));
+  for(const item of (two.incoming||[]).slice().reverse().slice(0,12))received.append(incomingCard(item,state,recipient));
   $("filter-level").value=String(two.gatewayFilterLevel);
-  const log=$("concept-timeline");
-  log.replaceChildren();
-  const events=[
-    ...one.events.map(x=>({...x,village:"第一の村"})),
-    ...two.events.map(x=>({...x,village:"第二の村"}))
-  ];
+  const log=$("concept-timeline");log.replaceChildren();
+  const events=villages.flatMap(v=>(v.events||[]).map(x=>({...x,village:v.name})));
   if(!events.length)log.append(el("p","empty","イベントはまだありません。"));
   for(const entry of events.slice(-18).reverse()){
-    const row=el("div","feed-row");
-    row.append(el("strong","",entry.village+" · "+entry.kind));
-    row.append(el("span","",entry.detail));
-    log.append(row);
+    const row=el("div","feed-row");row.append(el("strong","",entry.village+" ・ "+entry.kind),el("span","",entry.detail));log.append(row);
   }
+  syncVillageControls();syncWorkControls();
 }
 async function refresh(){
+  const version=++worldLoadVersion;
   const res=await fetch("/api/civilization/state",{cache:"no-store"});
   if(!res.ok)throw Error("状態の取得に失敗");
-  render(await res.json());
+  const state=await res.json();if(version===worldLoadVersion)render(state);return state;
 }
 async function act(action,payload={}){
   if(busy)return;
+  const villageIds=[payload.from,payload.villageId].filter(Boolean);
+  let headers;try{headers=villageMutationHeaders(villageIds);}catch(error){return notify(error.message,true);}
   busy=true;
   syncWorkControls();
   const controls=document.querySelectorAll("button");
@@ -125,9 +153,7 @@ async function act(action,payload={}){
   notify("保存ファイルとGatewayを更新しています…");
   try{
     const response=await fetch("/api/civilization/action",{
-      method:"POST",headers:{
-        "Content-Type":"application/json","X-Metron-Mini":"1"
-      },body:JSON.stringify({action,...payload})
+      method:"POST",headers,body:JSON.stringify({action,...payload})
     });
     const result=await response.json();
     if(!response.ok)throw Error(result.message||result.error||"処理できませんでした");
@@ -154,16 +180,17 @@ async function act(action,payload={}){
   }catch(e){notify(e.message,true);}
   finally{
     busy=false;controls.forEach(b=>b.disabled=false);
-    syncWorkControls();
+    if(latest)render(latest);else syncWorkControls();
   }
 }
 $("share-knowledge").addEventListener("click",()=>{
   const text=$("rumor-text").value.trim();
   if(!text||text.length>320)return notify("320文字以内のRumorを入力してください",true);
-  act("publish",{from:"village-1",text});
+  act("publish",{from:rumorSource(),text});
 });
 $("save-filter").addEventListener("click",()=>
-  act("filter",{villageId:"village-2",level:Number($("filter-level").value)}));
+  act("filter",{villageId:rumorRecipient(),level:Number($("filter-level").value)}));
+for(const id of ["rumor-source-village","rumor-recipient-village"])if($(id))$(id).addEventListener("change",()=>{if(latest)render(latest);});
 $("try-salvage").addEventListener("click",()=>
   act("salvage",{code:$("salvage-code").value}));
 $("try-recovery").addEventListener("click",()=>act("recovery"));
@@ -320,41 +347,76 @@ const terminalWorkStages=new Set([
   "readback_failed","attempt_budget_exhausted"
 ]);
 let villageWorkState={villageId:"village-1",sources:[],knowledge:[],works:[],work:null};
+let projectUi=null,villageUi=null,setupUi=null;
 let workLoading=false,workMutating=false,workLoadVersion=0,workRefreshPending=false;
 let workKnowledgeInputs=[],sharingDirty=false,sharingWorkId=null;
+let sharingRumorSha=null,publicationAttempt=null;
+const repairSummaryFields={diagnosis:"work-share-diagnosis",
+  applicability:"work-share-applicability",limitations:"work-share-limitations"};
+const currentRepairSummary=()=>Object.fromEntries(Object.entries(repairSummaryFields)
+  .map(([key,id])=>[key,$(id).value.trim()]));
+const resetPublishReview=()=>{$("work-publish-reviewed").checked=false;};
+const workIdentity=work=>work?work.villageId+":"+work.id:null;
+const publicationUncertain=work=>publicationAttempt?.workIdentity===workIdentity(work);
+const shareFrozen=work=>Boolean(work?.publication)||publicationUncertain(work);
 const workNotice=(message,failed=false)=>{
   $("work-notice").textContent=message;
   $("work-notice").classList.toggle("error",failed);
 };
-const workAttemptCount=work=>Array.isArray(work?.attempts)?work.attempts.length:
-  Number(work?.attemptsCount)||0;
+const workAttemptCount=work=>work?.projectRepair?.attemptCount??(Array.isArray(work?.attempts)?work.attempts.length:
+  Number(work?.attemptsCount)||0);
 const canVerifySavedCandidate=work=>work?.verificationPending===true&&
   work.stage!=="running"&&(!terminalWorkStages.has(work.stage)||work.stage==="attempt_budget_exhausted");
-const cannotRunWork=work=>!work||work.stage==="running"||
+const cannotRunWork=work=>!work||Boolean(work.projectRepair)||work.stage==="running"||
   (terminalWorkStages.has(work.stage)&&!canVerifySavedCandidate(work))||
   (workAttemptCount(work)>=4&&!canVerifySavedCandidate(work));
 const selectedWorkMatches=work=>work?.villageId===$("work-village").value&&
   work.id===$("work-saved").value;
 const canPrepareWorkShare=work=>work?.stage==="candidate_verified"&&
-  work.result?.status==="verified_candidate";
+  work.result?.status==="verified_candidate"&&work.projectRegistrationRequired!==true;
+function preparedShareMatches(work){
+  const candidate=work?.sharingCandidate,rumor=candidate?.rumor,evidence=rumor?.repairEvidence;
+  const summary=currentRepairSummary();
+  return rumor?.schemaVersion==="metron-rumor-v2"&&candidate.status==="human_review_required"&&
+    candidate.workId===work.id&&candidate.runId===work.runId&&rumor.originVillage===work.villageId&&
+    /^[a-f0-9]{64}$/.test(rumor.sha256||"")&&candidate.body===rumor.body&&
+    $("work-share-body").value.trim()===candidate.body&&
+    Object.keys(repairSummaryFields).every(key=>summary[key]&&summary[key].length<=500&&summary[key]===evidence?.[key]);
+}
+function canPublishWorkShare(work,reviewed=$("work-publish-reviewed").checked){
+  const rumor=work?.sharingCandidate?.rumor,publication=work?.publication;
+  const retry=!publication||(publication.status==="intent"&&publication.rumorSha256===rumor?.sha256);
+  return canPrepareWorkShare(work)&&(!work.projectRepair||projectUi?.hasOperator())&&selectedWorkMatches(work)&&!sharingDirty&&
+    preparedShareMatches(work)&&reviewed&&retry&&
+    (!publicationUncertain(work)||publicationAttempt.rumorSha256===rumor.sha256);
+}
 function syncWorkControls(){
   const work=villageWorkState.work;
-  const locked=busy||workLoading||workMutating;
+  const locked=Boolean(busy||workLoading||workMutating||projectUi?.isBusy()||villageUi?.isBusy()||setupUi?.isBusy());
+  const mutationLocked=locked||!canMutateVillage($("work-village").value);
   for(const id of ["work-village","work-saved","refresh-work"])
     $(id).disabled=locked;
-  $("work-source").disabled=locked||Boolean(work);
-  $("agent-goal").disabled=locked||Boolean(work);
-  for(const input of workKnowledgeInputs)input.disabled=locked||Boolean(work);
+  $("work-source").disabled=mutationLocked||Boolean(work);
+  $("agent-goal").disabled=mutationLocked||Boolean(work);
+  for(const input of workKnowledgeInputs)input.disabled=mutationLocked||Boolean(work);
   const goal=$("agent-goal").value.trim();
-  $("create-work").disabled=locked||Boolean(work)||!$("work-source").value||
+  $("create-work").disabled=mutationLocked||Boolean(work)||!$("work-source").value||
     !goal||goal.length>500;
-  $("agent-model").disabled=locked||!work;
-  $("agent-cloud-consent").disabled=locked||!work||canVerifySavedCandidate(work);
-  $("try-agentic-repair").disabled=locked||cannotRunWork(work)||!selectedWorkMatches(work);
-  const shareReady=canPrepareWorkShare(work)&&selectedWorkMatches(work);
-  $("work-share-body").disabled=locked||!shareReady;
+  $("agent-model").disabled=mutationLocked||!work||Boolean(work.projectRepair);
+  $("agent-cloud-consent").disabled=mutationLocked||!work||Boolean(work.projectRepair)||canVerifySavedCandidate(work);
+  $("try-agentic-repair").disabled=mutationLocked||cannotRunWork(work)||!selectedWorkMatches(work);
+  const shareReady=canPrepareWorkShare(work)&&(!work.projectRepair||projectUi?.hasOperator())&&selectedWorkMatches(work)&&!shareFrozen(work);
+  $("work-share-body").disabled=mutationLocked||!shareReady;
+  for(const id of Object.values(repairSummaryFields))$(id).disabled=mutationLocked||!shareReady;
   const shareBody=$("work-share-body").value.trim();
-  $("save-work-share").disabled=locked||!shareReady||!shareBody||shareBody.length>320;
+  $("save-work-share").disabled=mutationLocked||!shareReady||!shareBody||shareBody.length>320;
+  $("work-publish-reviewed").disabled=mutationLocked||!canPrepareWorkShare(work)||
+    !selectedWorkMatches(work)||sharingDirty||!preparedShareMatches(work)||work?.publication?.status==="published";
+  $("publish-work-share").disabled=mutationLocked||!canPublishWorkShare(work);
+  projectUi?.sync();
+  villageUi?.sync();setupUi?.sync();syncVillageControls();
+  if(mutationLocked)for(const id of ["project-start","project-dispatch","project-validate","project-apply","project-rollback","project-resume","project-revise"])
+    if($(id))$(id).disabled=true;
 }
 function renderWorkSource(){
   const source=villageWorkState.sources.find(x=>x.id===$("work-source").value);
@@ -365,30 +427,38 @@ function renderWorkSource(){
 }
 function renderSavedWork(){
   const work=villageWorkState.work;
+  projectUi?.update(work);
   $("work-create-fields").hidden=Boolean(work);
   $("work-selected").hidden=!work;
   $("work-history-section").hidden=!work;
   $("work-share-section").hidden=!work;
   $("agent-resume-id").value=work?.runId||"";
   if(!work){
+    resetPublishReview();
+    for(const id of Object.values(repairSummaryFields))$(id).value="";
+    $("work-publication-status").textContent="";
     $("work-readback").textContent="";
     $("agentic-repair-result").textContent="仕事を保存するか、保存済みの仕事を選択してください。";
     $("work-history").textContent="";
     $("work-share-body").value="";
-    sharingWorkId=null;sharingDirty=false;
+    sharingWorkId=null;sharingRumorSha=null;sharingDirty=false;
     syncWorkControls();return;
   }
   const source=work.sourceMessage||{};
   const knowledge=(work.knowledge||[]).map(x=>
-    x.id+" / "+(x.sourceVillage||"この村")+"\n"+x.text).join("\n\n");
+    (x.inheritance?.kind==="selected_reference"?"継承参照（この村での採用・独立検証ではありません） / ":"")+x.id+" / "+(x.sourceVillage||"この村")+"\n"+x.text).join("\n\n");
   $("work-readback").textContent=[
+    ...(work.knowledge||[]).filter(x=>x.repairEvidence).map(x=>
+      "採用した修理記録（送信元の検証主張・受信側では未検証）:\n"+
+      JSON.stringify({sourceVillage:x.sourceVillage,parentRumorId:x.parentRumorId,
+        rumorSha256:x.rumorSha256,repairEvidence:x.repairEvidence},null,2)),
     "仕事ID: "+work.id+" / 保存先: "+work.villageId,
     "保存状態: "+(workStageLabels[work.stage]||work.stage),
     "次の操作: "+(workNextLabels[work.nextAction]||work.nextAction||"保存結果を確認"),
-    "候補回数: "+workAttemptCount(work)+" / 4",
+    "候補回数: "+workAttemptCount(work)+(work.projectRepair?" / 3（要件改訂を含む系列全体）":" / 4"),
     "保存した目的:\n"+work.goal,
     "元のGateway本文ID: "+source.id+"\nSHA-256: "+source.bodySha256+"\n"+source.body,
-    "作成時に固定保存した採用済み知識:\n"+(knowledge||"選択なし")
+    "作成時に固定保存した選択知識・継承参照:\n"+(knowledge||"選択なし")
   ].join("\n\n");
   $("try-agentic-repair").textContent=canVerifySavedCandidate(work)?
     "保存した候補の確認検査を再開":["blocked","interrupted","unresolved"].includes(work.stage)?
@@ -400,19 +470,34 @@ function renderSavedWork(){
       "この仕事の実行結果はまだありません。AIを選んで明示的に実行してください。";
   $("work-history").textContent=JSON.stringify({
     attempts:work.attempts||[],executions:work.executions||[],
-    invocationHistory:work.invocationHistory||[]
+    invocationHistory:work.invocationHistory||[],projectRepair:work.projectRepair,
+    projectHistory:work.projectHistory
   },null,2);
   const candidate=work.sharingCandidate;
-  if(sharingWorkId!==work.id||!sharingDirty)
+  const identity=workIdentity(work),changedWork=sharingWorkId!==identity;
+  if(changedWork||sharingRumorSha!==candidate?.rumor?.sha256)resetPublishReview();
+  if(changedWork||!sharingDirty){
     $("work-share-body").value=candidate?.body||"";
-  sharingWorkId=work.id;
-  $("work-share-status").textContent=canPrepareWorkShare(work)?
+    for(const [key,id] of Object.entries(repairSummaryFields))
+      $(id).value=candidate?.rumor?.repairEvidence?.[key]||"";
+  }
+  sharingWorkId=identity;sharingRumorSha=candidate?.rumor?.sha256??null;
+  $("work-share-status").textContent=work.projectRegistrationRequired?
+    "保存された修復記録を表示しています。元の所有者登録を復元するまで共有候補の編集・公開はできません。":canPrepareWorkShare(work)?
     "手元の共有候補です。人による内容確認が必要です。編集後は保存してください。":
     "確認テストに合格した候補が得られると、結果を元に共有候補を確認・編集できます。";
   $("work-share-evidence").textContent=candidate?JSON.stringify({
     status:candidate.status,workId:candidate.workId,runId:candidate.runId,
     evidence:candidate.evidence,rumor:candidate.rumor
   },null,2):"共有候補はまだありません。";
+  const publication=work.publication;
+  $("work-publication-status").textContent=publication?.status==="published"?
+    "公開済みのRumor ID: "+publication.rumor.id+" / SHA-256: "+publication.rumorSha256:
+    publication?.status==="intent"||publicationUncertain(work)?
+      "公開結果の確認が必要です。自動で再送しません。保存状態を読み直し、同じ候補の本文と検証記録を再確認してから明示的に再試行できます。":
+      candidate?.rumor?.schemaVersion==="metron-rumor-v2"?
+        "検証記録付きの候補は保存済みです。確認欄にチェックして公開ボタンを押すまで、ローカルのVillage Squareには公開しません。":
+        "公開するには原因・適用条件・限界をすべて記入して、検証記録付きの候補を保存してください。";
   syncWorkControls();
 }
 function renderWorkState(info,work){
@@ -444,7 +529,9 @@ function renderWorkState(info,work){
     const row=el("label","work-knowledge-option");
     const input=document.createElement("input");
     input.type="checkbox";input.value=item.id;input.checked=selectedKnowledge.has(item.id);
-    row.append(input,el("span","",item.text+"\n"+item.id+" / "+(item.sourceVillage||"この村")));
+    const reference=item.inheritance?.kind==="selected_reference";
+    row.append(input,el("span","",(reference?"継承参照（この村での採用・独立検証ではありません）\n":"")+item.text+"\n"+item.id+" / "+(item.sourceVillage||"この村")));
+    const evidence=repairEvidenceBox(item);if(evidence)row.append(evidence);
     knowledge.append(row);workKnowledgeInputs.push(input);
   }
   if(!workKnowledgeInputs.length)
@@ -489,7 +576,7 @@ function ensureSelectedWork(work){
   if(selectedWorkMatches(work))return true;
   const villageId=$("work-village").value;
   const workId=work?.villageId===villageId?$("work-saved").value:"";
-  sharingDirty=false;$("agent-cloud-consent").checked=false;
+  sharingDirty=false;$("agent-cloud-consent").checked=false;resetPublishReview();publicationAttempt=null;
   renderWorkState({villageId,sources:[],knowledge:[],works:[]},null);
   refreshWorkState({workId,preferLatest:!workId,announce:false});
   workNotice("村・仕事の選択と表示が一致しないため実行しません。保存状態を読み直します。表示された選択を確認してから操作してください。",true);
@@ -502,12 +589,13 @@ function finishWorkMutation(){
   }
 }
 async function saveWorkAction(action,payload){
-  if(busy||workLoading||workMutating)return;
+  if(busy||workLoading||workMutating||!canMutateVillage(payload.villageId))return;
+  resetPublishReview();
   workMutating=true;++workLoadVersion;syncWorkControls();
   workNotice(action==="create"?"仕事の内容を保存しています…":"共有候補を手元に保存しています…");
   try{
     const response=await fetch("/api/work/action",{
-      method:"POST",headers:{"Content-Type":"application/json","X-Metron-Mini":"1"},
+      method:"POST",headers:workMutationHeaders(villageWorkState.work),
       body:JSON.stringify({action,...payload})
     });
     const result=await response.json();
@@ -518,16 +606,25 @@ async function saveWorkAction(action,payload){
   }catch(error){workNotice(error.message,true);}
   finally{finishWorkMutation();}
 }
+function workMutationHeaders(work){
+  const villageId=work?.villageId||$("work-village").value;
+  if(!canMutateVillage(villageId))throw Error("選択した村は現在操作できません。稼働状態と所有者接続を確認してください。");
+  if(work?.projectRepair||villageInfo(villageId)?.dynamic){
+    if(!projectUi?.hasOperator())throw Error("登録プロジェクトの共有には、この起動の所有者キーを確認してください。");
+    return projectUi.headers();
+  }
+  return {"Content-Type":"application/json","X-Metron-Mini":"1"};
+}
 $("work-village").addEventListener("change",()=>{
   if(workLoading||workMutating||busy)return;
-  sharingDirty=false;$("agent-cloud-consent").checked=false;
+  sharingDirty=false;clearVillageApprovals();
   $("agent-goal").value="";
   renderWorkState({villageId:$("work-village").value,sources:[],knowledge:[],works:[]},null);
   refreshWorkState({preferLatest:true});
 });
 $("work-saved").addEventListener("change",()=>{
   if(workLoading||workMutating||busy)return;
-  sharingDirty=false;$("agent-cloud-consent").checked=false;
+  sharingDirty=false;$("agent-cloud-consent").checked=false;resetPublishReview();publicationAttempt=null;
   if(!$("work-saved").value){renderWorkState(villageWorkState,null);return;}
   refreshWorkState();
 });
@@ -536,7 +633,10 @@ $("refresh-work").addEventListener("click",()=>{
 });
 $("work-source").addEventListener("change",()=>{renderWorkSource();syncWorkControls();});
 $("agent-goal").addEventListener("input",syncWorkControls);
-$("work-share-body").addEventListener("input",()=>{sharingDirty=true;syncWorkControls();});
+const editWorkShare=()=>{sharingDirty=true;resetPublishReview();syncWorkControls();};
+$("work-share-body").addEventListener("input",editWorkShare);
+for(const id of Object.values(repairSummaryFields))$(id).addEventListener("input",editWorkShare);
+$("work-publish-reviewed").addEventListener("change",syncWorkControls);
 $("create-work").addEventListener("click",()=>{
   const goal=$("agent-goal").value.trim(),sourceMessageId=$("work-source").value;
   if(!sourceMessageId||!goal||goal.length>500)
@@ -550,13 +650,51 @@ $("save-work-share").addEventListener("click",()=>{
   const work=villageWorkState.work,body=$("work-share-body").value.trim();
   if(busy||workLoading||workMutating)return;
   if(!ensureSelectedWork(work))return;
+  if(shareFrozen(work))return workNotice("公開処理中または公開済みの候補は編集できません。",true);
   if(!canPrepareWorkShare(work)||!body||body.length>320)
     return workNotice("確認テスト合格後、320文字以内の共有候補を入力してください。",true);
-  saveWorkAction("prepare-share",{villageId:work.villageId,workId:work.id,body});
+  const repairSummary=currentRepairSummary(),values=Object.values(repairSummary);
+  if(values.some(value=>value.length>500)||values.some(Boolean)&&!values.every(Boolean))
+    return workNotice("原因・適用条件・限界はすべて500文字以内で記入するか、すべて空欄にしてください。",true);
+  saveWorkAction("prepare-share",{villageId:work.villageId,workId:work.id,body,
+    ...(values.every(Boolean)?{repairSummary}:{})});
+});
+$("publish-work-share").addEventListener("click",async()=>{
+  const work=villageWorkState.work,reviewed=$("work-publish-reviewed").checked;
+  resetPublishReview();
+  if(busy||workLoading||workMutating||!canMutateVillage(work?.villageId))return;
+  if(!ensureSelectedWork(work))return;
+  if(!canPublishWorkShare(work,reviewed)){
+    syncWorkControls();return workNotice("保存済みの検証記録付き候補を選び、公開する本文と証拠を再確認してください。",true);
+  }
+  const reviewedRumorSha256=work.sharingCandidate.rumor.sha256;
+  publicationAttempt={workIdentity:workIdentity(work),rumorSha256:reviewedRumorSha256};
+  workMutating=true;++workLoadVersion;syncWorkControls();
+  workNotice("確認した候補をローカルのVillage Squareへ公開しています…");
+  try{
+    const response=await fetch("/api/work/action",{
+      method:"POST",headers:workMutationHeaders(work),
+      body:JSON.stringify({action:"publish-share",villageId:work.villageId,workId:work.id,
+        reviewedRumorSha256,allowPublish:true})
+    });
+    const result=await response.json();
+    if(result.work)acceptSavedWork(result.work);
+    if(!response.ok)throw Error(result.message||result.error||"公開結果を確認できませんでした。");
+    if(!result.work?.publication)throw Error("公開状態が返りませんでした。保存状態を読み直してください。");
+    publicationAttempt=null;
+    if(result.state)render(result.state);
+    renderSavedWork();
+    workNotice(result.work.publication.status==="published"?
+      "ローカルのVillage Squareへ公開しました。Rumor ID: "+result.work.publication.rumor.id:
+      "公開結果の確認が必要です。同じ候補を明示的に再確認してから再試行してください。");
+  }catch(error){
+    renderSavedWork();
+    workNotice("公開結果を確認できません: "+error.message+" 自動で再送しません。保存状態を読み直して確認してください。",true);
+  }finally{resetPublishReview();finishWorkMutation();}
 });
 $("try-agentic-repair").addEventListener("click",async()=>{
   const work=villageWorkState.work;
-  if(busy||workLoading||workMutating||cannotRunWork(work))return;
+  if(busy||workLoading||workMutating||cannotRunWork(work)||!canMutateVillage(work?.villageId))return;
   if(!ensureSelectedWork(work))return;
   const verificationOnly=canVerifySavedCandidate(work);
   const provider=$("agent-model").value;
@@ -570,7 +708,7 @@ $("try-agentic-repair").addEventListener("click",async()=>{
     "保存した仕事から、修正候補を1回だけ実行しています…");
   try{
     const response=await fetch("/api/agent/run",{
-      method:"POST",headers:{"Content-Type":"application/json","X-Metron-Mini":"1"},
+      method:"POST",headers:workMutationHeaders(work),
       body:JSON.stringify({villageId:work.villageId,workId:work.id,provider,allowExternalCalls})
     });
     const payload=await response.json();
@@ -583,6 +721,33 @@ $("try-agentic-repair").addEventListener("click",async()=>{
   }catch(error){
     workNotice("修復完了とは扱えません: "+error.message+" 保存状態を読み直して確認してください。",true);
   }finally{finishWorkMutation();}
+});
+async function openVillageWork(bundle){
+  if(busy||workLoading||workMutating||projectUi?.isBusy()||!projectUi?.hasOperator()||bundle?.status!=="running")return;
+  const villageId=bundle.newVillageId||bundle.id;
+  try{
+    await refresh();
+    if(!canMutateVillage(villageId))throw Error("この村の稼働状態と所有者接続を確認してください。");
+    $("work-village").value=villageId;sharingDirty=false;clearVillageApprovals();$("agent-goal").value="";
+    renderWorkState({villageId,sources:[],knowledge:[],works:[]},null);
+    await refreshWorkState({workId:"",preferLatest:true});
+    if($("work-village").value!==villageId||villageWorkState.villageId!==villageId)return;
+    $("agent-goal").value=villageWorkState.work?.goal||bundle.seed?.inheritedGoal?.text||bundle.seed?.purpose||villageInfo(villageId)?.inheritance?.inheritedGoal?.text||villageInfo(villageId)?.inheritance?.purpose||"";
+    syncWorkControls();$("baku-agentic-demo")?.scrollIntoView?.({behavior:"smooth",block:"start"});
+  }catch(error){workNotice(error.message,true);}
+}
+if(typeof globalThis.createMetronProjectUi==="function")projectUi=globalThis.createMetronProjectUi({
+  getWork:()=>villageWorkState.work,onWork:acceptSavedWork,onControls:syncWorkControls,
+  canMutateWork:work=>canMutateVillage(work?.villageId||$("work-village").value),
+  legacyBusy:()=>busy||workLoading||workMutating||Boolean(villageUi?.isBusy()||setupUi?.isBusy()),notice:workNotice,
+  onOwnerChange:()=>{villageUi?.ownerChanged();setupUi?.ownerChanged();if(latest)render(latest);}
+});
+if(projectUi&&typeof globalThis.createMetronVillageUi==="function")villageUi=globalThis.createMetronVillageUi({
+  owner:projectUi,onControls:syncWorkControls,onOpenWork:openVillageWork,onChanged:()=>refresh().catch(error=>workNotice(error.message,true)),externalBusy:()=>busy||workLoading||workMutating||projectUi.isBusy()||Boolean(setupUi?.isBusy())
+});
+if(projectUi&&typeof globalThis.createMetronSetupUi==="function")setupUi=globalThis.createMetronSetupUi({
+  owner:projectUi,onControls:syncWorkControls,onReady:()=>projectUi.reloadCatalog(),
+  externalBusy:()=>busy||workLoading||workMutating||projectUi.isBusy()||Boolean(villageUi?.isBusy())
 });
 refreshWorkState({preferLatest:true});
 updateAgentHealth();
