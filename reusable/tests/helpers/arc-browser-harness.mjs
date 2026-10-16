@@ -23,7 +23,7 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 // Only the new profile's own DevTools endpoint and exact synthetic page target
 // are used. There is no arbitrary JavaScript/CDP command HTTP route.
-async function ownedChromeInput({profile,url,finished,simulateDomRaceOnce=false,onDiagnostic=()=>{}}){
+async function ownedChromeInput({profile,url,finished,simulateDomRaceOnce=false,simulateSlowDomOnce=false,onDiagnostic=()=>{}}){
   const preparationMethods=new Set(['DOM.getDocument','DOM.querySelector','DOM.scrollIntoViewIfNeeded',
     'DOM.getContentQuads','Page.getLayoutMetrics']);
   const cleanDetail=value=>String(value||'').replace(/[\x00-\x1f\x7f]/g,' ').replace(/\s+/g,' ').trim()
@@ -40,7 +40,7 @@ async function ownedChromeInput({profile,url,finished,simulateDomRaceOnce=false,
     return p?.code===-32000&&preparationMethods.has(p.method)&&
       /^(?:Could not find node with given id|No node with given id found|Node does not have a layout object|Could not compute content quads|Node is detached from document)\.?$/i.test(p.detail);
   }
-  let injectedDomRace=false;
+  let injectedDomRace=false,injectedSlowDom=false;
   const deadline=Date.now()+15000;let endpoint;
   while(Date.now()<deadline){
     if(finished())throw Error('synthetic_native_chrome_already_closed');
@@ -77,16 +77,20 @@ async function ownedChromeInput({profile,url,finished,simulateDomRaceOnce=false,
   });
   function command(method,params={},sessionId,preparationDeadline=null){
     if(stopped||socket.readyState!==WebSocket.OPEN)return Promise.reject(Error('synthetic_native_socket_closed'));
-    // Every preparation command shares the same two-second budget. A late
+    // Every preparation command shares the same ten-second budget. A late
     // read-only response is ignored; a command timeout never retries input.
     const remaining=preparationDeadline===null?5000:preparationDeadline-Date.now();
-    if(remaining<=0)return Promise.reject(Error('synthetic_native_dom_preparation_timeout'));
+    const timeoutError=()=>{
+      onDiagnostic({kind:'command-timeout',method,source:'observed'});
+      const category=preparationDeadline===null?'synthetic_native_command_timeout':'synthetic_native_dom_preparation_timeout';
+      return Error(category+'_'+method.toLowerCase().replace(/[^a-z0-9_]/g,'_'));
+    };
+    if(remaining<=0)return Promise.reject(timeoutError());
     const id=++sequence;
     return new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{
         pending.delete(id);
-        onDiagnostic({kind:'command-timeout',method,source:'observed'});
-        reject(Error(preparationDeadline===null?'synthetic_native_command_timeout':'synthetic_native_dom_preparation_timeout'));
+        reject(timeoutError());
       },Math.min(5000,remaining));
       pending.set(id,{resolve,reject,timer,method});
       socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));
@@ -116,6 +120,13 @@ async function ownedChromeInput({profile,url,finished,simulateDomRaceOnce=false,
       const {root}=await read('DOM.getDocument',{depth:0,pierce:false});
       const {nodeId}=await read('DOM.querySelector',{nodeId:root.nodeId,selector:'#'+id});
       if(!nodeId)throw Error('synthetic_native_element_missing');
+      // Exercise a cold renderer taking longer than the former two-second
+      // budget. This test-only delay is before every Input command and is
+      // consumed by the same bounded deadline, including the stale-DOM retry.
+      if(simulateSlowDomOnce&&!injectedSlowDom){
+        injectedSlowDom=true;onDiagnostic({kind:'dom-delay',milliseconds:2500});
+        await delay(2500);
+      }
       // Test-only fault, after a real target/document/query and before ANY
       // Input command. No page/HTTP option can enable it or choose a command.
       if(simulateDomRaceOnce&&!injectedDomRace){
@@ -140,7 +151,7 @@ async function ownedChromeInput({profile,url,finished,simulateDomRaceOnce=false,
     }
     async function click(id){
       if(!trustedIds.has(id))throw Error('synthetic_native_id_not_allowed');
-      const preparationDeadline=Date.now()+2000;let point;
+      const preparationDeadline=Date.now()+10000;let point;
       for(let attempt=0;attempt<8;attempt++){
         try{point=await preparePoint(id,preparationDeadline);break;}
         catch(error){
@@ -251,7 +262,8 @@ export async function createArcBrowserHarness({app,html,driver,config={},dropDel
     [name,readFileSync(new URL(name,ASSETS),'utf8')]));
   const calls=[],barriers=new Set(),controllers=new Set(),generations=new Set(),nativeDiagnostics=[];
   const counts={starts:0,delivers:0,statuses:0,permissionRequests:0,permissionRemoves:0,currentVMgeneration:0,ackLosses:0,nativeClicks:0,
-    domRetries:0,injectedDomRaces:0,observedDomErrors:0,pressAttempts:0,uncertainInput:false,domRaceInjectionEnabled:false};
+    domRetries:0,injectedDomRaces:0,injectedDomDelays:0,observedDomErrors:0,pressAttempts:0,uncertainInput:false,
+    domRaceInjectionEnabled:false,domDelayInjectionEnabled:false};
   let report=null,closed=false,background,resetting=Promise.resolve();
   let evidenceDirectory=null,reportReady;
   const completed=new Promise(resolve=>{reportReady=resolve;});
@@ -422,9 +434,11 @@ export async function createArcBrowserHarness({app,html,driver,config={},dropDel
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const origin='http://127.0.0.1:'+server.address().port;
   const owner={completed,saveDiagnostics,
-    configureNative:({simulateDomRaceOnce})=>{counts.domRaceInjectionEnabled=simulateDomRaceOnce;},
+    configureNative:({simulateDomRaceOnce,simulateSlowDomOnce})=>{
+      counts.domRaceInjectionEnabled=simulateDomRaceOnce;counts.domDelayInjectionEnabled=simulateSlowDomOnce;},
     nativeDiagnostic:event=>{
       if(event.kind==='dom-retry')counts.domRetries++;
+      if(event.kind==='dom-delay')counts.injectedDomDelays++;
       if(event.kind==='press-attempt')counts.pressAttempts++;
       if(event.kind==='uncertain-input')counts.uncertainInput=true;
       if(event.kind==='protocol-error'){
@@ -447,13 +461,13 @@ export async function createArcBrowserHarness({app,html,driver,config={},dropDel
     }};
 }
 
-export async function runArcChromium({url,evidenceRoot,timeoutMs=100000,simulateDomRaceOnce=false}){
+export async function runArcChromium({url,evidenceRoot,timeoutMs=100000,simulateDomRaceOnce=false,simulateSlowDomOnce=false}){
   const fixture=loopbackURL(url),owner=ownedHarnesses.get(fixture.origin);
   if(!owner||fixture.pathname!=='/'||fixture.search)throw Error('Chromium requires this process owned ARC fixture');
   const browser=availableChromium();if(!browser)throw Error('No Chromium executable available');
   if(!Number.isInteger(timeoutMs)||timeoutMs<1000||timeoutMs>300000)throw Error('Invalid Chromium timeout');
-  if(typeof simulateDomRaceOnce!=='boolean')throw Error('Invalid synthetic DOM race option');
-  owner.configureNative({simulateDomRaceOnce});
+  if(typeof simulateDomRaceOnce!=='boolean'||typeof simulateSlowDomOnce!=='boolean')throw Error('Invalid synthetic DOM fault option');
+  owner.configureNative({simulateDomRaceOnce,simulateSlowDomOnce});
   mkdirSync(evidenceRoot,{recursive:true});
   owner.evidence(evidenceRoot);
   const profile=mkdtempSync(join(evidenceRoot,'browser-profile-'));
@@ -471,7 +485,7 @@ export async function runArcChromium({url,evidenceRoot,timeoutMs=100000,simulate
   const execution=launched.then(value=>{finished=true;return value;},error=>{finished=true;throw error;});
   execution.catch(()=>{});
   try{
-    native=await ownedChromeInput({profile,url,finished:()=>finished,simulateDomRaceOnce,onDiagnostic:owner.nativeDiagnostic});owner.attach(native);
+    native=await ownedChromeInput({profile,url,finished:()=>finished,simulateDomRaceOnce,simulateSlowDomOnce,onDiagnostic:owner.nativeDiagnostic});owner.attach(native);
     await Promise.race([owner.completed,execution.then(()=>{throw Error('synthetic_native_closed_before_driver_complete');})]);
     stdout=await native.snapshot();
     writeFileSync(join(evidenceRoot,'browser-dom.html'),stdout);

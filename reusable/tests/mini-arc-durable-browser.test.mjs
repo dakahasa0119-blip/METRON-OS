@@ -169,7 +169,8 @@ test("real synthetic Chromium preserves full ARC replies across lost ACK, reload
       harness=await createArcBrowserHarness({app,html,driver:browserDriver,
         config:{text,port:Number(new URL(app.url).port)},dropDeliverAckOnce:true});
       let browser;
-      try{browser=await runArcChromium({url:harness.url+"/",evidenceRoot:root,timeoutMs:110000,simulateDomRaceOnce:true});}
+      try{browser=await runArcChromium({url:harness.url+"/",evidenceRoot:root,timeoutMs:110000,
+        simulateDomRaceOnce:true,simulateSlowDomOnce:true});}
       catch(error){
         writeFileSync(join(root,"arc-browser-failure-state.json"),JSON.stringify({report:harness.report(),
           metrics:harness.metrics(),calls:harness.calls,error:String(error.message).slice(0,1000)},null,2)+"\n");
@@ -199,6 +200,7 @@ test("real synthetic Chromium preserves full ARC replies across lost ACK, reload
       assert.equal(metrics.nativeClicks,34,"Expected native input for each explicit ARC user action");
       assert.equal(metrics.pressAttempts,metrics.nativeClicks,"DOM retries must not replay a mouse press");
       assert.equal(metrics.injectedDomRaces,1);assert.ok(metrics.domRetries>=1);
+      assert.equal(metrics.injectedDomDelays,1);assert.equal(metrics.domDelayInjectionEnabled,true);
       assert.equal(metrics.domRaceInjectionEnabled,true);assert.equal(metrics.uncertainInput,false);
       const evidence={label:"REAL_OWNED_CHROMIUM_SYNTHETIC_DOM_ACTUAL_ARC_CODE_TEST_CHROME_BRIDGE_REAL_MINI",
         liveChatGpt:false,installedExtension:false,realPermissionUx:false,realBrowser:true,
