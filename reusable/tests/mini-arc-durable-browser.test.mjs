@@ -13,12 +13,15 @@ const sha=text=>createHash("sha256").update(text,"utf8").digest("hex");
 const html=[
   "<!doctype html><html><head><meta charset='utf-8'><title>Owned synthetic ARC conversation</title></head><body>",
   "<label>Harmless synthetic prompt<textarea id='provider-input'></textarea></label>",
-  "<button id='provider-send'>Send synthetic response</button>",
+  "<button id='provider-send' aria-disabled='true'>Send synthetic response</button>",
   "<button id='provider-stop' data-testid='stop-button' hidden>Stop generating</button>",
   "<div id='provider-seed' style='white-space:pre-wrap'>Prior harmless seeded reply.</div>",
   "<div id='provider-answer' style='white-space:pre-wrap' hidden></div>",
-  "<script>window.syntheticProvider={calls:0,inputEvents:0};",
-  "document.getElementById('provider-input').addEventListener('input',()=>window.syntheticProvider.inputEvents++);",
+  "<script>window.syntheticProvider={calls:0,inputEvents:0,readyAfterInput:false};",
+  "document.getElementById('provider-input').addEventListener('input',()=>{",
+  "window.syntheticProvider.inputEvents++;const field=document.getElementById('provider-input'),value=field.value;",
+  "setTimeout(()=>{if(field.value!==value||!value.trim())return;const send=document.getElementById('provider-send');",
+  "send.disabled=false;send.setAttribute('aria-disabled','false');window.syntheticProvider.readyAfterInput=true;},200);});",
   "document.getElementById('provider-send').addEventListener('click',()=>{",
   "window.syntheticProvider.calls++;const a=document.getElementById('provider-answer');a.hidden=false;",
   "a.textContent='Partial synthetic response';a.setAttribute('aria-busy','true');",
@@ -65,12 +68,22 @@ async function browserDriver(config){
       $("provider-input").click();
       check(!arc("picker").querySelector("pre").textContent,"Page code forged a picker selection");
       await select("provider-seed");
+      // Native disabled controls do not dispatch picker clicks. Select the
+      // aria-disabled target first, then reproduce the empty composer's native
+      // disabled state at the actual ARC send boundary. Input enables it later.
+      check($("provider-input").value===""&&window.syntheticProvider.inputEvents===0,"Composer was not initially empty");
+      $("provider-send").disabled=true;
+      check($("provider-send").disabled&&$("provider-send").getAttribute("aria-disabled")==="true","Send was not initially disabled");
       change(arc("prompt"),"Produce only the approved synthetic long response.");
       arc("send").click();
       check(window.syntheticProvider.calls===0,"Page code forged an external AI send");
+      check(window.syntheticProvider.inputEvents===0,"Page code populated the composer without a trusted ARC action");
       await clickArc("send");
+      await waitFor(()=>window.syntheticProvider.calls===1,"empty composer input then asynchronously enabled send");
       check(window.syntheticProvider.calls===1,"ARC did not click the selected synthetic send button once");
       check(window.syntheticProvider.inputEvents===1,"ARC did not emit the real input event once");
+      check(window.syntheticProvider.readyAfterInput,"ARC clicked before the input event enabled Send");
+      check($("provider-input").value===arc("prompt").value,"ARC changed the approved composer text before sending");
       await clickArc("reselect");await select("provider-answer");
       await review();await clickArc("capture");await clickArc("forward");await delay(850);
       check((await metric()).delivers===0,"A partial response was forwarded");
@@ -149,6 +162,7 @@ async function browserDriver(config){
       "Stop caused an autonomous network operation");
     await finish(true,null,{firstId:saved.firstId,secondId,metrics:stopped,
       providerCallsAfterReload:window.syntheticProvider.calls,explicitRecovery:true,stopped:true,
+      emptyComposerSendRegression:true,
       productBrowserStorageUsed:false,testDriverStorage:"Synthetic non-private recovery ID only"});
   }catch(error){await finish(false,error.stack||String(error));}
 }
@@ -181,6 +195,7 @@ test("real synthetic Chromium preserves full ARC replies across lost ACK, reload
       assert.equal(report.ok,true,report.error);
       assert.match(browser.stdout,/<pre id="arc-durable-browser-result" data-result="pass">/);
       assert.notEqual(report.firstId,report.secondId);
+      assert.equal(report.emptyComposerSendRegression,true);
       const b=app.runtime.mailbox("B").messages.filter(m=>[report.firstId,report.secondId].includes(m.id));
       assert.equal(b.length,2,"Repeated first ID or conflicting text inserted another B record");
       for(const id of [report.firstId,report.secondId]){

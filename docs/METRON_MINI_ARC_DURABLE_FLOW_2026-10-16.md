@@ -70,6 +70,17 @@ The input/send/response picks, login boundary, explicit send, capture,
 forward and stop remain separate. Observers inspect only selected response
 state and bounded UI signals; they never send to an AI or Gateway.
 
+An explicit send populates the selected composer and dispatches input before
+checking whether Send is enabled. The same explicit operation may wait for
+up to two seconds for an asynchronous enable, revalidating the selected nodes
+and approved text before its single click. Stop, reselection or text edits
+cancel the pending operation. Timeout does not click or create a delivery ID.
+This does not change the click picker's inability to select a native disabled
+control. The synthetic regression selects the aria-disabled target, then makes
+it natively disabled with an empty composer at the send boundary; only an input
+event enables it after a delay. That verifies send ordering and waiting, not
+initial selection of an already natively disabled control.
+
 Known generation blocks capture. UI transitions may yield a completion
 candidate only when generation, send readiness, baseline and text observation
 agree. When the evidence is ambiguous, manual completion review is required.

@@ -5,7 +5,8 @@
  if(!replies||window.__metronArcPickerActive)return;
  window.__metronArcPickerActive=true;
  const state={selected:[]};
- let disposed=false,lastCaptured=null,currentRecord=null,forwarding=false,observation;
+ const SEND_WAIT_MS=2000,SEND_POLL_MS=50;
+ let disposed=false,lastCaptured=null,currentRecord=null,forwarding=false,observation,pendingSend=null;
  const root=document.createElement("div");root.id="metron-arc-picker";
  root.style.cssText="position:fixed;z-index:2147483647;right:14px;top:14px;max-width:360px;max-height:calc(100vh - 54px);overflow:auto;padding:12px;background:#172a32;color:white;border:1px solid #65b99a;border-radius:12px;font:13px system-ui;box-shadow:0 8px 24px #0007";
  const heading=document.createElement("strong");heading.textContent="METRON ARC — UIを選択";
@@ -53,6 +54,13 @@
  const locate=kind=>{const p=picked(kind);if(!p)return null;try{const matches=document.querySelectorAll(p.selector);return matches.length===1?matches[0]:null;}catch{return null;}};
  const isSensitive=el=>!el||root.contains(el)||el.contains?.(root)||el.closest('input[type="password"],[autocomplete="current-password"],[autocomplete="one-time-code"]');
  function clearCapture(){lastCaptured=null;preview.textContent="";completion.checked=false;}
+ function cancelPendingSend(message){
+  const operation=pendingSend;if(!operation)return;pendingSend=null;
+  if(operation.timer!==null)clearInterval(operation.timer);
+  operation.field.removeEventListener("input",operation.onEdit);operation.field.removeEventListener("change",operation.onEdit);
+  operation.observer?.disconnect();send.disabled=false;if(message)result.textContent=message;
+ }
+ prompt.addEventListener("input",()=>cancelPendingSend("入力が変わったため送信を中止しました。もう一度送信してください。"));
  function showState(value){
   completion.checked=value.manual===true;completion.disabled=disposed||value.generating||!value.node||value.stale;
   completionState.textContent=value.generating?"生成中の表示を検出。目視確認でも取得・転送できません。":
@@ -66,7 +74,7 @@
   checkStatus.disabled=disposed||forwarding||!currentRecord;
  }
  observation=replies.observe({document,getResponse:()=>{const el=locate("response");return isSensitive(el)?null:el;},getSend:()=>locate("send"),ignore:el=>root.contains(el),
-  onInvalidated:clearCapture,onState:showState});
+  onInvalidated:()=>{clearCapture();cancelPendingSend("回答欄が変わったため送信を中止しました。もう一度選択してください。");},onState:showState});
  const refreshControls=()=>observation.sample();
  function chooseRecord(id,recordState){clearCapture();observation.confirmManual(false);currentRecord={id,state:recordState};messageId.textContent=id;refreshControls();}
  function createRecord(){
@@ -89,31 +97,51 @@
   observation.selectionChanged();
   if(state.selected.length===3){document.removeEventListener("click",onClick,true);root.append(session);status.textContent="配送記録を新規作成するか、Miniの配送IDで明示再開してください。送信・取得・状態確認・転送は各ボタンで実行します。";}
  };
- newRecord.addEventListener("click",e=>{if(e.isTrusted!==true||disposed)return;createRecord();result.textContent="新しい配送IDを作りました。回答の生成完了を確認して取得してください。";});
+ newRecord.addEventListener("click",e=>{if(e.isTrusted!==true||disposed)return;cancelPendingSend();createRecord();result.textContent="新しい配送IDを作りました。回答の生成完了を確認して取得してください。";});
  resume.addEventListener("click",e=>{
-  if(e.isTrusted!==true||disposed)return;if(!replies.validId(recovery.value)){result.textContent="配送IDの形式を確認してください。";return;}
+  if(e.isTrusted!==true||disposed)return;cancelPendingSend();if(!replies.validId(recovery.value)){result.textContent="配送IDの形式を確認してください。";return;}
   chooseRecord(recovery.value,"resumed");result.textContent="この配送IDを選びました。状態確認・同じIDでの再送は別の明示操作です。";
  });
- completion.addEventListener("click",e=>{if(e.isTrusted!==true){e.preventDefault();return;}if(disposed)return;const requested=completion.checked;clearCapture();
+ completion.addEventListener("click",e=>{if(e.isTrusted!==true){e.preventDefault();return;}if(disposed)return;cancelPendingSend();const requested=completion.checked;clearCapture();
   const value=observation.confirmManual(requested);if(requested&&!value.manual)result.textContent="生成中・回答未選択・送信前と同じ回答は確認できません。";});
  send.addEventListener("click",e=>{
-  if(e.isTrusted!==true||disposed)return;clearCapture();observation.confirmManual(false);
+  if(e.isTrusted!==true||disposed||pendingSend)return;clearCapture();observation.confirmManual(false);
   const field=locate("input"),button=locate("send"),response=locate("response");
   if(isSensitive(field)||isSensitive(button)||!prompt.value.trim()||prompt.value.length>1500){result.textContent="対象欄・内容を確認してください";return;}
   if(!field.isContentEditable&&field.tagName!=="TEXTAREA"&&field.tagName!=="INPUT"){result.textContent="編集可能な入力欄を選択してください";return;}
   if(isSensitive(response)){result.textContent="次の送信の前に「UIを選び直す」で回答欄を選択してください。";return;}
-  if(!(button instanceof HTMLElement)||button.hasAttribute("disabled")||button.getAttribute("aria-disabled")==="true"){result.textContent="送信ボタンが使用できません。";return;}
-  const beforeSend={node:response,text:replies.readText(response)};
-  if(field.isContentEditable){field.focus();field.textContent=prompt.value;field.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:prompt.value}));}
-  else{const proto=field.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
-   const setter=Object.getOwnPropertyDescriptor(proto,"value")?.set;if(!setter){result.textContent="入力に失敗しました";return;}
-   setter.call(field,prompt.value);field.dispatchEvent(new Event("input",{bubbles:true}));}
-  createRecord();state.selected=state.selected.filter(x=>x.kind!=="response");output.textContent=JSON.stringify(state.selected,null,2);
-  observation.beginSend(beforeSend);button.click();refreshControls();
-  result.textContent="送信操作を実行し新しい配送IDを作成。新しい回答を「UIを選び直す」で選択してください。";
+  if(!(button instanceof HTMLElement)){result.textContent="送信ボタンを選択してください。";return;}
+  const operation={field,button,response,text:prompt.value,editable:field.isContentEditable,record:currentRecord,selection:state.selected,
+   beforeSend:{node:response,text:replies.readText(response)},startedAt:Date.now(),timer:null,observer:null,
+   onEdit:()=>cancelPendingSend("入力が変わったため送信を中止しました。もう一度送信してください。")};
+  pendingSend=operation;send.disabled=true;
+  try{
+   if(field.isContentEditable){field.focus();field.textContent=operation.text;field.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:operation.text}));}
+   else{const proto=field.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+    const setter=Object.getOwnPropertyDescriptor(proto,"value")?.set;if(!setter)throw new Error("missing_input_setter");
+    setter.call(field,operation.text);field.dispatchEvent(new Event("input",{bubbles:true}));}
+  }catch{cancelPendingSend();result.textContent="入力に失敗しました。";return;}
+  if(pendingSend!==operation)return;
+  const attempt=()=>{
+   if(pendingSend!==operation)return;
+   if(disposed||currentRecord!==operation.record||state.selected!==operation.selection||locate("input")!==field||locate("send")!==button||locate("response")!==response||
+    [field,button,response].some(el=>el.isConnected===false||isSensitive(el))||prompt.value!==operation.text||field.isContentEditable!==operation.editable||
+    (field.isContentEditable?field.textContent:field.value)!==operation.text||replies.readText(response)!==operation.beforeSend.text){
+    cancelPendingSend("対象や入力が変わったため送信を中止しました。もう一度選択して送信してください。");return;}
+   if(Date.now()-operation.startedAt>=SEND_WAIT_MS){cancelPendingSend("送信ボタンの準備が間に合わなかったため中止しました。必要ならもう一度送信してください。");return;}
+   if(button.hasAttribute("disabled")||button.getAttribute("aria-disabled")==="true")return;
+   cancelPendingSend();createRecord();state.selected=state.selected.filter(x=>x.kind!=="response");output.textContent=JSON.stringify(state.selected,null,2);
+   observation.beginSend(operation.beforeSend);button.click();refreshControls();
+   result.textContent="送信操作を行い新しい配送IDを作成。新しい回答を「UIを選び直す」で選択してください。";
+  };
+  attempt();if(pendingSend!==operation)return;
+  field.addEventListener("input",operation.onEdit);field.addEventListener("change",operation.onEdit);
+  operation.observer=new MutationObserver(operation.onEdit);
+  operation.observer.observe(field,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["type","autocomplete","contenteditable"]});
+  operation.timer=setInterval(attempt,SEND_POLL_MS);result.textContent="送信ボタンの準備を待っています（最大2秒）。";
  });
  capture.addEventListener("click",e=>{
-  if(e.isTrusted!==true||disposed)return;lastCaptured=null;preview.textContent="";
+  if(e.isTrusted!==true||disposed)return;cancelPendingSend();lastCaptured=null;preview.textContent="";
   const response=locate("response");if(isSensitive(response)){result.textContent="回答欄を再選択してください";return;}
   const value=observation.sample();
   if(value.stale){result.textContent="送信前と同じ回答欄です。新しい質問への回答欄を選択してください。";return;}
@@ -122,7 +150,7 @@
   lastCaptured={node:response,text:value.text,recordId:currentRecord?.id??null};preview.textContent=value.text;result.textContent=value.text;refreshControls();
  });
  function transfer(event,action,isRetry=false){
-  if(event.isTrusted!==true||disposed||forwarding)return;
+  if(event.isTrusted!==true||disposed)return;cancelPendingSend();if(forwarding)return;
   const record=currentRecord;if(!record){result.textContent="新しい配送記録を作るか、配送IDで再開してください。";return;}
   const gatewayPort=Number(port.value);if(!Number.isInteger(gatewayPort)||gatewayPort<1||gatewayPort>65535){result.textContent="Miniのポートは1〜65535で指定してください";return;}
   const value=observation.sample();let captured;
@@ -160,12 +188,12 @@
  retry.addEventListener("click",e=>transfer(e,"deliver",true));
  checkStatus.addEventListener("click",e=>transfer(e,"status"));
  reselect.addEventListener("click",e=>{
-  if(e.isTrusted!==true||disposed)return;clearCapture();state.selected=[];observation.selectionChanged();session.remove();output.textContent="";
+  if(e.isTrusted!==true||disposed)return;cancelPendingSend();clearCapture();state.selected=[];observation.selectionChanged();session.remove();output.textContent="";
   status.textContent="入力欄・送信ボタン・回答欄を選び直してください。配送IDはこのページ内に保持します。";
   document.addEventListener("click",onClick,true);
  });
  const cleanup=e=>{
-  if(e.isTrusted!==true||disposed)return;disposed=true;observation.dispose();document.removeEventListener("click",onClick,true);
+  if(e.isTrusted!==true||disposed)return;cancelPendingSend();disposed=true;observation.dispose();document.removeEventListener("click",onClick,true);
   lastCaptured=null;currentRecord=null;state.selected=[];root.remove();delete window.__metronArcPickerActive;
  };
  stop.addEventListener("click",cleanup);document.addEventListener("click",onClick,true);observation.start();

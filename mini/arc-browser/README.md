@@ -18,6 +18,15 @@ Click the toolbar icon on a harmless, normally logged-in ChatGPT test tab.
 Select the input, send button and existing response element. Password and
 one-time-code fields are excluded; selectors must resolve uniquely.
 
+The click picker needs a selectable send target; it cannot currently pick a
+native disabled button. Select that target while it is clickable. Once targets
+are selected, an empty composer may disable Send: ARC populates the composer
+and emits its input event before checking send readiness. If the provider
+enables Send asynchronously, the explicit operation waits for at most two
+seconds. It clicks only once after rechecking the selected targets and text.
+Stop, reselection or editing the pending text cancels that wait; expiration
+does not send or create a delivery ID. The user must review before trying again.
+
 「この文章を送信」 performs one explicit send. It clears the old response
 selection and creates a new delivery identity. Wait for the actual new reply,
 then use 「UIを選び直す」 and select the new response. The unchanged pre-send

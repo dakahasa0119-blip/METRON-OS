@@ -76,12 +76,12 @@ test("concurrent tabs cannot revoke an active transfer permission",async()=>{
  assert.equal(second.error,"gateway_handoff_busy");await first;assert.deepEqual(h.permissions,["request","remove"]);
 });
 function picker({svg=false,ambiguous=false,deferReply=false,pickTrusted=true}={}){
- let clock=0,pick=null,nextTimer=0;const timers=new Map(),observers=[],created=[],fields={},sent=[],pending=[];
+ let clock=0,pick=null,nextTimer=0;const timers=new Map(),later=new Map(),observers=[],created=[],fields={},sent=[],pending=[];
  let generating=false,reply=null,deferMutations=false;
  function mutate(node){for(const o of [...observers])if(o.active&&(o.node===node||o.node.contains(node))){
   if(deferMutations)o.records.push({target:node});else o.fn([{target:node}]);}}
  class Element{
-  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.style={};this.attrs={};
+  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.extraListeners={};this.style={};this.attrs={};
    this._text="";this._value="";this.events=[];this.clicks=0;this.checked=false;this.disabled=false;this.isConnected=true;created.push(this);}
   get textContent(){return this._text;}
   set textContent(value){this._text=String(value);mutate(this);}
@@ -89,7 +89,8 @@ function picker({svg=false,ambiguous=false,deferReply=false,pickTrusted=true}={}
   get value(){return this._value;}
   set value(value){this._value=String(value);}
   append(...children){this.children.push(...children);for(const child of children)child.parentElement=this;}
-  addEventListener(type,fn){this.listeners[type]=fn;}
+  addEventListener(type,fn){if(!this.listeners[type])this.listeners[type]=fn;else (this.extraListeners[type]??=new Set()).add(fn);}
+  removeEventListener(type,fn){if(this.listeners[type]===fn)delete this.listeners[type];else this.extraListeners[type]?.delete(fn);}
   contains(el){return el===this||this.children.some(x=>x.contains(el));}
   closest(selector){
    if(selector.includes("password"))return this.sensitive?this:null;
@@ -105,7 +106,8 @@ function picker({svg=false,ambiguous=false,deferReply=false,pickTrusted=true}={}
    ...((child.attrs["aria-busy"]==="true"||child.attrs["data-is-streaming"]==="true")?[child]:[]),...child.querySelectorAll()]);}
   focus(){this.focused=true;}
   dispatchEvent(event){this.events.push(event);const synthetic={...event,isTrusted:false,target:this,defaultPrevented:false,
-   preventDefault(){this.defaultPrevented=true;}};this.listeners[event.type]?.(synthetic);return !synthetic.defaultPrevented;}
+   preventDefault(){this.defaultPrevented=true;}};this.listeners[event.type]?.(synthetic);
+   for(const fn of [...(this.extraListeners[event.type]||[])])fn(synthetic);return !synthetic.defaultPrevented;}
   activate(isTrusted){if(this.disabled||this.hasAttribute("disabled"))return;this.clicks++;
    const before=this.checked,event={target:this,isTrusted,defaultPrevented:false,preventDefault(){this.defaultPrevented=true;}};
    if(this.type==="checkbox")this.checked=!this.checked;
@@ -153,7 +155,9 @@ function picker({svg=false,ambiguous=false,deferReply=false,pickTrusted=true}={}
   pickAgain(responseId="response",isTrusted=true){for(const id of ["input","send",responseId])pick?.({target:fields["#"+id],isTrusted,preventDefault(){},stopImmediatePropagation(){}});},
   appendResponse(id,text){const node=document.createElement("div");node.id=id;node.textContent=text;fields["#"+id]=node;body.append(node);return node;},
   confirm(){get("completion-reviewed").checked=false;get("completion-reviewed").humanClick();},
-  tick(ms=1000){clock+=ms;for(const fn of [...timers.values()])fn();},
+  after(fn,ms){later.set(++nextTimer,{fn,at:clock+ms});},
+  tick(ms=1000){clock+=ms;for(const [id,task] of [...later])if(task.at<=clock){later.delete(id);task.fn();}
+   for(const fn of [...timers.values()])fn();},
   generating(value){generating=value;p.tick(0);},
   deferMutations(value){deferMutations=value;},
   ready(text="answer"){fields["#response"].textContent=text;p.newRecord.humanClick();p.confirm();p.capture.humanClick();},
@@ -289,6 +293,99 @@ test("same body in a new explicit record is a distinct message, with whitespace 
 });
 test("starting a new prompt invalidates the old capture",()=>{
  const p=picker();p.ready("old");p.send.humanClick();p.forward.humanClick();assert.equal(p.sent.length,0);
+});
+test("an initially empty composer enables its disabled send from the single input event",()=>{
+ const p=picker(),field=p.fields["#input"],button=p.fields["#send"];button.disabled=true;
+ assert.equal(field.value,"");field.listeners.input=()=>{button.disabled=false;};p.prompt.value="Explicit prompt";
+ p.send.humanClick();assert.equal(field.value,"Explicit prompt");assert.equal(field.events.length,1);
+ assert.equal(field.events[0].type,"input");assert.equal(button.clicks,1);assert.match(p.recordId.textContent,/^arc_[a-f0-9]{32}$/);
+ p.tick(5000);assert.equal(button.clicks,1);assert.equal(field.events.length,1);assert.equal(p.activeTimers(),1);
+});
+test("delayed composer readiness waits without early or duplicate input, click or delivery ID",()=>{
+ const p=picker(),field=p.fields["#input"],button=p.fields["#send"];p.ready("baseline");const id=p.recordId.textContent;
+ button.disabled=true;field.listeners.input=()=>p.after(()=>{button.disabled=false;},100);p.prompt.value="Delayed prompt";
+ p.send.humanClick();assert.equal(field.value,"Delayed prompt");assert.equal(field.events.length,1);assert.equal(button.clicks,0);
+ assert.equal(p.recordId.textContent,id);assert.match(p.root.children[2].textContent,/#response/);
+ p.send.disabled=false;p.send.humanClick();assert.equal(field.events.length,1,"a second gesture cannot restart an active wait");
+ p.tick(99);assert.equal(button.clicks,0);assert.equal(p.recordId.textContent,id);
+ p.tick(1);assert.equal(button.clicks,1);assert.notEqual(p.recordId.textContent,id);
+ assert.doesNotMatch(p.root.children[2].textContent,/#response/);assert.equal(p.activeTimers(),1);assert.equal(p.activeObservers(),0);
+ p.tick(5000);assert.equal(button.clicks,1);assert.equal(field.events.length,1);
+ p.reselect.humanClick();p.pickAgain();p.confirm();p.capture.humanClick();p.forward.humanClick();
+ assert.equal(p.sent.length,0,"the pre-input response baseline still rejects the old reply after waiting");
+ p.appendResponse("fresh-response","fresh");p.reselect.humanClick();p.pickAgain("fresh-response");p.confirm();p.capture.humanClick();p.forward.humanClick();
+ assert.equal(p.sent[0].text,"fresh");
+});
+test("a permanently disabled composer send times out without losing its selected response or record",()=>{
+ const p=picker(),field=p.fields["#input"],button=p.fields["#send"];p.ready("baseline");const id=p.recordId.textContent;
+ button.attrs["aria-disabled"]="true";p.prompt.value="Never ready";p.send.humanClick();
+ assert.equal(field.events.length,1);assert.equal(p.activeTimers(),2);p.tick(1999);assert.equal(button.clicks,0);
+ p.tick(1);assert.equal(button.clicks,0);assert.equal(p.recordId.textContent,id);assert.equal(p.activeTimers(),1);
+ assert.match(p.root.children[2].textContent,/#response/);delete button.attrs["aria-disabled"];p.tick(5000);
+ assert.equal(button.clicks,0);assert.equal(field.events.length,1);p.confirm();p.capture.humanClick();p.forward.humanClick();
+ assert.equal(p.sent[0].text,"baseline");assert.equal(p.sent[0].messageId,id);
+});
+test("stopping or reselecting cancels a composer wait before delayed readiness",()=>{
+ for(const action of ["stop","reselect"]){const p=picker(),field=p.fields["#input"],button=p.fields["#send"];
+  const id=p.recordId.textContent;
+  button.disabled=true;field.listeners.input=()=>p.after(()=>{button.disabled=false;},100);p.prompt.value="Pending";
+  p.send.humanClick();assert.equal(field.events.length,1);assert.equal(p.activeTimers(),2);p[action].humanClick();p.tick(5000);
+  assert.equal(button.clicks,0);assert.equal(field.events.length,1);assert.equal(p.sent.length,0);
+  assert.equal(p.activeTimers(),action==="stop"?0:1);assert.equal(p.activeObservers(),0);assert.equal(p.recordId.textContent,id);
+ }
+});
+test("untrusted send cannot fill an empty composer or start waiting for readiness",()=>{
+ const p=picker(),field=p.fields["#input"],button=p.fields["#send"];button.disabled=true;p.prompt.value="Untrusted";
+ field.listeners.input=()=>{button.disabled=false;};p.send.click();p.send.dispatchEvent({type:"click",isTrusted:true});p.tick(5000);
+ assert.equal(field.value,"");assert.equal(field.events.length,0);assert.equal(button.clicks,0);assert.equal(p.activeTimers(),1);
+});
+test("prompt or composer edits cancel waiting instead of transmitting stale pending text",()=>{
+ for(const edit of ["prompt-input","prompt-property","composer-input","composer-property"]){
+  const p=picker(),field=p.fields["#input"],button=p.fields["#send"];button.disabled=true;p.prompt.value="Pending";p.send.humanClick();
+  const id=p.recordId.textContent;
+  assert.equal(field.events.length,1);const node=edit.startsWith("prompt")?p.prompt:field;node.value="Edited";
+  if(edit.endsWith("input"))node.dispatchEvent({type:"input"});button.disabled=false;p.tick(100);
+  assert.equal(button.clicks,0);assert.equal(field.events.length,edit==="composer-input"?2:1);
+  assert.equal(p.activeTimers(),1);assert.equal(p.activeObservers(),1);assert.equal(p.recordId.textContent,id);
+ }
+});
+test("selector drift, sensitivity and response content changes cancel a pending composer send",()=>{
+ for(const change of ["input-drift","send-drift","response-drift","sensitive","response-text","same-response-text"]){
+  const p=picker(),field=p.fields["#input"],button=p.fields["#send"],response=p.fields["#response"];
+  const id=p.recordId.textContent;
+  response.textContent="baseline";button.disabled=true;p.prompt.value="Pending";p.send.humanClick();assert.equal(field.events.length,1);
+  if(change==="input-drift")p.fields["#input"]=[field,field];
+  else if(change==="send-drift")p.fields["#send"]=[button,button];
+  else if(change==="response-drift")p.fields["#response"]=p.appendResponse("replacement","baseline");
+  else if(change==="sensitive")field.sensitive=true;
+  else response.textContent=change==="same-response-text"?"baseline":"changed";
+  button.disabled=false;p.tick(100);assert.equal(button.clicks,0);assert.equal(p.activeTimers(),1);assert.equal(p.activeObservers(),1);assert.equal(p.recordId.textContent,id);
+ }
+});
+test("a new explicit record or recovery operation cancels a pending composer send",()=>{
+ for(const action of ["newRecord","resume"]){const p=picker(),field=p.fields["#input"],button=p.fields["#send"];
+  button.disabled=true;p.prompt.value="Pending";p.send.humanClick();assert.equal(field.events.length,1);
+  p.recovery.value=ID;p[action].humanClick();const id=p.recordId.textContent;button.disabled=false;p.tick(100);
+  assert.equal(button.clicks,0);assert.equal(p.recordId.textContent,id);assert.equal(p.activeTimers(),1);
+ }
+});
+test("contenteditable sends use one input event and content mutations cancel delayed readiness",()=>{
+ for(const edit of [false,true]){const p=picker(),field=p.fields["#input"],button=p.fields["#send"];
+  field.isContentEditable=true;button.disabled=true;field.listeners.input=()=>p.after(()=>{button.disabled=false;},100);
+  p.prompt.value="Editable prompt";p.send.humanClick();assert.equal(field.textContent,"Editable prompt");assert.equal(field.events.length,1);
+  assert.equal(field.events[0].inputType,"insertText");assert.equal(field.events[0].data,"Editable prompt");assert.equal(p.activeObservers(),2);
+  if(edit)field.textContent="Edited without an input event";p.tick(100);assert.equal(button.clicks,edit?0:1);
+  assert.equal(p.activeTimers(),1);assert.equal(p.activeObservers(),edit?1:0);
+ }
+});
+test("a native composer setter failure ends the operation without an input event or send",()=>{
+ const p=picker(),field=p.fields["#input"],button=p.fields["#send"],id=p.recordId.textContent;
+ const proto=p.context.HTMLTextAreaElement.prototype;
+ p.prompt.value="Invalid setter";
+ Object.defineProperty(proto,"value",{...Object.getOwnPropertyDescriptor(proto,"value"),set(){throw Error("synthetic_invalid_input");}});
+ p.send.humanClick();p.tick(5000);
+ assert.equal(field.events.length,0);assert.equal(button.clicks,0);assert.equal(p.recordId.textContent,id);assert.equal(p.send.disabled,false);
+ assert.equal(p.activeTimers(),1);assert.equal(p.activeObservers(),1);
 });
 test("valid send requires a new response selection and refuses the unchanged earlier reply",()=>{
  const p=picker();p.fields["#response"].textContent="earlier";p.prompt.value="New prompt";
