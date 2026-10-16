@@ -172,9 +172,10 @@ export async function createMiniServer({root,port=8766,workOptions={},projectOpe
       if(!String(req.headers["content-type"]||"").startsWith("application/json"))
         return send(res,415,{error:"json_required"});
       try{
-        const body=await readJson(req);
+        const body=await readJson(req,2*1024*1024);
         if(body?.action==="start")return send(res,200,arcHandoff.start());
         if(body?.action==="deliver")return send(res,200,arcHandoff.deliver(body));
+        if(body?.action==="status")return send(res,200,arcHandoff.status(body));
         return send(res,400,{error:"invalid_arc_handoff_action"});
       }catch(e){return send(res,400,{error:e.code||"arc_handoff_failed"});}
     }
