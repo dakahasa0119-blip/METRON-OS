@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "METRON ARC — Logged-in UI Adapter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "User-invoked DOM picker for a normally logged-in ChatGPT tab. No passwords, cookies or automated login.",
   "permissions": [
     "activeTab",

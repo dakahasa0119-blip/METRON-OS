@@ -4,8 +4,14 @@
  * permission. The bridge token is random, one-time and expires quickly.
  */
 import {randomBytes,createHash} from "node:crypto";
+import {assertArcMessageId} from "./arc-artifact.mjs";
 const fail=code=>Object.assign(new Error(code),{code});
 const sha=s=>createHash("sha256").update(s).digest("hex");
+function v2Fields(input,withText){
+  const allowed=new Set(["action","version","id","token","messageId","expiresAt",
+    ...(withText?["text","sha256","totalBytes"]:[])]);
+  if(Object.keys(input).some(key=>!allowed.has(key)))throw fail("invalid_arc_request");
+}
 export class ArcHandoff {
   constructor(runtime,{now=()=>Date.now()}={}){
     this.runtime=runtime;this.now=now;this.sessions=new Map();
@@ -22,13 +28,38 @@ export class ArcHandoff {
     this.sessions.set(id,{hash:sha(token),expiresAt,used:false});
     return {id,token,expiresAt};
   }
-  deliver({id,token,text}={}){
+  consume({id,token}={}){
     if(typeof id!=="string"||!/^arc_[a-f0-9]{24}$/.test(id)||
        typeof token!=="string"||!/^[a-f0-9]{48}$/.test(token))
       throw fail("invalid_arc_session");
     const session=this.sessions.get(id);
     if(!session||session.used||session.expiresAt<=this.now()||
        sha(token)!==session.hash)
+      throw fail("arc_session_expired_or_used");
+    session.used=true;
+  }
+  status(input={}){
+    if(input.version!==2)throw fail("invalid_arc_version");
+    v2Fields(input,false);
+    assertArcMessageId(input.messageId);
+    this.consume(input);
+    return this.runtime.arcStatus(input.messageId);
+  }
+  deliver(input={}){
+    const {id,token,text}=input;
+    if(input.version===2){
+      v2Fields(input,true);
+      assertArcMessageId(input.messageId);
+      this.consume(input);
+      return this.runtime.submitArc({messageId:input.messageId,text,
+        sha256:input.sha256,totalBytes:input.totalBytes});
+    }
+    if(input.version!==undefined&&input.version!==1)throw fail("invalid_arc_version");
+    // Preserve the legacy validation/one-use behavior and its short envelope.
+    if(typeof id!=="string"||!/^arc_[a-f0-9]{24}$/.test(id)||
+       typeof token!=="string"||!/^[a-f0-9]{48}$/.test(token))throw fail("invalid_arc_session");
+    const session=this.sessions.get(id);
+    if(!session||session.used||session.expiresAt<=this.now()||sha(token)!==session.hash)
       throw fail("arc_session_expired_or_used");
     if(typeof text!=="string"||!text.trim()||text.length>5000)
       throw fail("invalid_arc_reply");

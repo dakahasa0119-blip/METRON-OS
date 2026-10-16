@@ -1,83 +1,129 @@
-# ARC ordinary-login browser adapter (explicit user actions)
+# ARC ordinary-login browser adapter — explicit, recoverable handoff
 
-The original ARC uses the **ordinary signed-in ChatGPT browser UI**, not
-a CLI or API replacement. This directory contains a Manifest V3 extension
-that the user may manually load as an unpacked extension in a Chromium
-browser. Click its toolbar icon on an already logged-in `chatgpt.com` tab.
+ARC uses the ordinary signed-in ChatGPT browser UI. It is not replaced by
+a CLI or a model API. This Manifest V3 source is loaded manually only with
+the user's approval. No extension was installed by the local test harness.
 
-It activates a user-driven DOM picker for three targets: input, send and
-response. It does not automatically send a prompt or read chat content; explicit user buttons are required. It does not inspect cookies,
-read credentials, bypass login/CAPTCHA, or call a model API. The picked
-selectors remain only in the current tab's ephemeral page state.
+The declared permissions remain activeTab and scripting. Only an explicit
+delivery or status operation requests optional http://127.0.0.1/* access;
+the background worker removes that grant when the operation finishes or
+fails. It never reads cookies, credentials or browser storage. Only the
+user-activated, top-level chatgpt.com tab is accepted.
+ARC controls require trusted native input: page scripts cannot authorize
+selection, AI sends, review, capture or Gateway actions by forging clicks.
 
-This is an actual extension and DOM inspection surface, **not yet the
-complete ARC**. Automatic reply capture, resilient AutoDOM recovery,
-automatic Gateway delivery, and supported browser interaction with
-other AI sites are still unfinished. Do not claim otherwise.
+## Select, send and capture
 
-Install manually via the browser's extension management page (developer
-mode → Load unpacked → `mini/arc-browser`). Do not upload any extension
-to a store or request broad website permissions without user approval.
+Click the toolbar icon on a harmless, normally logged-in ChatGPT test tab.
+Select the input, send button and existing response element. Password and
+one-time-code fields are excluded; selectors must resolve uniquely.
 
-## Manual live prompt and response (v0.2)
+The click picker needs a selectable send target; it cannot currently pick a
+native disabled button. Select that target while it is clickable. Once targets
+are selected, an empty composer may disable Send: ARC populates the composer
+and emits its input event before checking send readiness. If the provider
+enables Send asynchronously, the explicit operation waits for at most two
+seconds. It clicks only once after rechecking the selected targets and text.
+Stop, reselection or editing the pending text cancels that wait; expiration
+does not send or create a delivery ID. The user must review before trying again.
 
-After selecting input, send button and response element, the user may enter
-text in the ARC overlay and click **この文章を送信**. ARC sets the selected input
-and clicks the selected send button once. After that click, ARC invalidates
-the previous response selector. Wait for the actual new reply to finish,
-then use **UIを選び直す** to pick the input, send button and that new reply.
-The unchanged pre-send response node is refused even after reselection.
-An explicitly selected new reply may legitimately have the same text as
-the previous reply; equal text alone does not make its DOM target stale.
-The user may separately click **選択した回答を取得** to read up to 5000
-characters of the chosen response into the overlay. ARC does not infer
-the latest turn, prove that the provider accepted the prompt, or detect
-stream completion. Verify the visible prompt/reply and captured preview.
-The initial three picks require an existing response element; use only a
-harmless test conversation, never a private conversation for testing.
-No polling, background prompts, login automation, cookie
-access or automatic Gateway forwarding is performed. A change to ChatGPT's
-DOM may require selecting elements again. This is not yet a complete
-AutoDOM. Gateway forwarding is a separate explicit action below.
+「この文章を送信」 performs one explicit send. It clears the old response
+selection and creates a new delivery identity. Wait for the actual new reply,
+then use 「UIを選び直す」 and select the new response. The unchanged pre-send
+response remains refused; another turn may legitimately have identical text.
 
-## Explicit ARC → Gateway transfer
+Generation observations reuse the old ARC baseline/stream-marker approach,
+with stricter limits: a known generating indicator blocks capture, and text
+remaining unchanged by itself never establishes completion. A witnessed
+busy-to-idle UI transition, send readiness and stable selected text can
+produce a completion candidate. This detector has NOT been validated on
+the real signed-in service. When the UI evidence is insufficient, separately
+confirm 「生成完了を目視確認」 before explicitly capturing the response.
+Known generation cannot be overridden by that checkbox.
 
-After capturing a reply, click **選択した回答をGatewayへ渡す**. The extension
-asks for optional localhost permission, and removes that grant when the transfer
-finishes or fails. Enter the running Mini port in **Miniのポート** (default
-8766); the host is always `127.0.0.1`. If approved, its background worker requests a
-short-lived one-time session token from the local Mini and delivers the
-captured text to the actual Gateway/MotherShip B mailbox. It reports the
-message ID and distinguishes confirmed delivery from an accepted, pending job.
-A pending job is not reported as delivered. Failed recapture clears the previous
-answer; ambiguous selectors fail closed. Use **UIを選び直す** after DOM changes. Replies over 950
-characters are refused, not silently truncated. No automatic transmission
-of conversation history, cookies, credentials or hidden browser state.
+A new send, reselection or selected-text mutation clears completion review
+and the captured snapshot. Text changed after capture cannot be forwarded as
+the old snapshot. Ending ARC disconnects its observers and removes the UI.
+It does not undo a delivery already begun on the receiver. No observer sends
+a prompt, forwards a reply, polls a receipt or retries a request.
 
-The loopback Gateway accepts Chromium extension origins, its own localhost
-origin, and local clients without an Origin header. All delivery requests need
-a random one-time token and the explicit local-request header. **This does not authenticate the
-identity of the human or AI provider**; any installed local extension
-origin can request a new session if it has localhost network access. Do
-not run the Mini endpoint on a public interface or with untrusted local
-extensions. The transport is functional but needs live signed-in ChatGPT
-and Chromium-extension end-to-end verification before a full ARC claim.
+## Explicit new delivery or recovery
 
-## Retry and validation limits
+For a selected existing reply, explicitly choose a new delivery record,
+or enter the existing recovery ID and choose 「このIDで再開」.
+The identity is shown before delivery. Copy it from ARC or the Mini record
+when handing work over. ARC keeps it only in the current overlay; the
+Gateway and MotherShip keep the durable record.
 
-The current overlay suppresses repeat forwarding of an already submitted answer
-within the same explicit send operation, including after recapturing the same
-text or reselecting the UI. A new explicit send starts a new capture context,
-so a new reply with identical text can be forwarded after selecting its target.
-If the delivery response is lost, it
-shows an **unconfirmed outcome** and blocks automatic retry of that capture:
-check Mini before sending again. A durable enqueue followed by a server-side
-error returns the existing job receipt where available. This is not durable,
-cross-tab or cross-reload exactly-once delivery; closing/reopening the overlay
-resets its duplicate guard. No receipt polling or automatic retry is performed.
-If permission removal fails, a warning asks the user to remove localhost access
-in the extension settings.
+After reload, enter that same ID to explicitly query status or resend the
+same complete reply. Nothing resumes or transmits on page load. New sessions
+and new one-use transport tokens do not change the logical message ID.
 
-Executable browser-API/DOM fixtures exercise these failure paths, and server
-tests use real local Gateway persistence and queue backlogs. These fixtures do
-not establish successful authenticated ChatGPT usage or Chrome permission UX.
+- Same ID and same text returns the existing delivery/ACK without inserting
+  another B message.
+- Same ID and different text is refused.
+- The same text with a different, explicitly chosen ID is a different message.
+
+Do not identify a turn by text or selector hash alone. The adapter has no
+verified provider-turn identity for transparent automatic recovery.
+
+## Complete long replies and delivery ACK
+
+The former 950-character limit protected the ordinary 1024-character
+Gateway envelope. Protocol v2 keeps that ordinary envelope limit and puts
+the complete reply in a bounded artifact instead of removing the limit.
+
+The client preserves the selected raw text, rejects invalid Unicode and
+checks its UTF-8 byte count and SHA-256. The limit is 256 KiB of UTF-8.
+The receiver reuses the checked Gateway chunk format: 4096-byte chunks,
+at most 64 chunks, an ordered manifest, exact total bytes and SHA-256.
+A missing, reordered or corrupt chunk never yields partial reply text.
+
+The Gateway persists the manifest/chunks. The receiver verifies the full
+artifact, saves it under arc-artifacts/B/<messageId>.json, and atomically
+saves the short reference in mother-B.json before producing the A-side ACK.
+The regular mailbox envelope remains bounded.
+
+A confirmed receipt requires the original job, B reference, B artifact
+and A's matching ACK to agree on the ID, digest and bytes. Submission or a
+pending ACK is not confirmed delivery. A status request is read-only and
+does not drain the queue or resend. A lost response is an unknown outcome:
+use the same recovery ID for an explicit status check or retry.
+
+If the existing Gateway retry budget is exhausted, ARC reports the failed
+stage and keeps the same ID. Status remains available; retry is disabled.
+Reviving a dead Gateway job after repairing its cause currently requires
+an operator recovery feature that is not yet implemented. A new ID would
+represent a new delivery and must not be used as an implicit workaround.
+
+The raw reply digest is returned as receiptHash/sha256. Read back that digest,
+byte count, ID, B artifact and matching ACK. Ordinary legacy handoffs remain
+supported, but only protocol v2 provides this explicit recovery contract.
+
+## Boundaries and evidence
+
+This is a single trusted writer per Mini data directory. It is not a
+distributed exactly-once guarantee or a power-loss durability guarantee.
+The random, two-minute, one-use in-memory token does not authenticate a human
+or an AI provider. The current UI remains ChatGPT-only; the reply observation
+boundary is replaceable, but other AI sites are not implemented or certified.
+
+The picker/manual controls and generating observations build on the preserved
+ARC assets; the Gateway queue, mailbox conflict checks, atomic checkpoints
+and checked chunk implementation are reused. See
+[the design and validation scope](../../docs/METRON_MINI_ARC_DURABLE_FLOW_2026-10-16.md).
+
+Synthetic Chromium coverage connects actual ARC scripts to a test-only
+Chrome API/background VM bridge, trusted native input into the owned browser,
+and a real isolated Mini. It can establish
+DOM state, HTTP delivery and saved bytes. It does not establish a real
+installed extension's permission UX, isolated-world behavior, normal ChatGPT
+login, real streaming compatibility or successful real-service E2E.
+The native browser-input test needs Chromium and Node 22+ WebSocket support;
+the repository CI uses Node 24. Older Node runtimes skip that browser test
+with an explicit reason; this does not change the reusable packages' runtime.
+
+Automatic latest-turn selection, fully resilient AutoDOM, automatic forwarding,
+other AI providers and the complete METRON continuity/repair scenario remain
+outside the demonstrated result. Install/reload, real-service sends, permission
+changes and application restarts require their own applicable authorization.

@@ -65,7 +65,9 @@ test("ARC picker works in real Chromium DOM and open Shadow DOM", { skip: !findC
       "--user-data-dir=" + join(dir, "chrome-profile"), "--virtual-time-budget=1500",
       "--dump-dom", pathToFileURL(page).href];
     if (process.getuid?.() === 0) args.unshift("--no-sandbox");
-    const out = execFileSync(findChrome(), args, { encoding: "utf8", timeout: 25000, stdio: ["ignore", "pipe", "ignore"] });
+    // Cold Chromium startup on Windows CI can exceed 25 seconds. Keep a
+    // bounded process deadline without retrying the browser or its assertions.
+    const out = execFileSync(findChrome(), args, { encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "ignore"] });
     assert.match(out, /<pre id="result">METRON_BROWSER_PASS<\/pre>/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
