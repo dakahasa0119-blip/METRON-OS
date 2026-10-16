@@ -39,6 +39,7 @@ function fixture(root){
   const source=join(root,"source"),sealed=join(root,"sealed"),allocation=join(root,"allocation");
   mkdirSync(source);mkdirSync(sealed);
   git(source,["init","-q"]);
+  git(source,["config","--local","core.autocrlf","false"]);
   put(source,"src/value.mjs","export const value = 1;\n");
   const marker=join(root,"unexpected-public-check-run");
   put(source,"tests/public.test.mjs",`import {writeFileSync} from "node:fs";\nwriteFileSync(${JSON.stringify(marker)},"unexpected");\nthrow Error("Setup HTTP fixture checks must not run during preparation");\n`);
