@@ -385,7 +385,7 @@ class GatewayClient(private val prefs: Prefs) {
                     put("mode", "admin_target_scores")
                     put("auth_key", prefs.authToken)
                 }
-                val response = Http.post(prefs.gasUrl, json.toString())
+                val response = withContext(Dispatchers.IO) { Http.post(prefs.gasUrl, json.toString()) }
                 val parsed = JSONObject(response)
                 val scores = parsed.optJSONObject("scores")
                 if (scores == null) {
