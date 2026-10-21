@@ -98,12 +98,19 @@ function processMotherShipMessages() {
     if (!sheet) return;
 
     const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return;
+
+    const statuses = [];
+    let hasUpdates = false;
 
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
 
       const processed = row[4];
-      if (processed !== "UNPROCESSED") continue;
+      if (processed !== "UNPROCESSED") {
+        statuses.push([processed]);
+        continue;
+      }
 
       const message = {
         from: row[0],
@@ -122,7 +129,8 @@ function processMotherShipMessages() {
 
       // ★ 返信なし → 終了
       if (!reply) {
-        sheet.getRange(i + 1, 5).setValue("PROCESSED");
+        statuses.push(["PROCESSED"]);
+        hasUpdates = true;
         continue;
       }
 
@@ -138,7 +146,12 @@ function processMotherShipMessages() {
         sendFromMotherShip(name, r.type, r.payload, r.to);
       });
 
-      sheet.getRange(i + 1, 5).setValue("PROCESSED");
+      statuses.push(["PROCESSED"]);
+      hasUpdates = true;
+    }
+
+    if (hasUpdates) {
+      sheet.getRange(2, 5, statuses.length, 1).setValues(statuses);
     }
   });
 }
