@@ -478,12 +478,44 @@ function formatDateForFileName_(date) {
  ******************************************************/
 
 function runSystemGuardianDaily() {
-  // TODO: 実際には Web から GAS や Google API の変更情報を取得して解析する想定。
-  // この段階では「フック」として SystemLog に記録だけしておく。
   logToSystem_(
     "CONTROL",
-    "SystemGuardian: 仕様変更監視サイクルを実行（将来的にブラウジング＆解析をここに実装）"
+    "SystemGuardian: 仕様変更監視サイクルを実行"
   );
+  try {
+    const url = "https://developers.google.com/apps-script/release-notes";
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) {
+      const html = res.getContentText();
+      const h2Regex = /<h2 id="[a-zA-Z]+_\d{1,2}_\d{4}"[^>]*>([^<]+)<\/h2>/g;
+      let match;
+      let dates = [];
+      while ((match = h2Regex.exec(html)) !== null) {
+        dates.push({ date: match[1].trim(), index: match.index });
+      }
+
+      const maxToFetch = Math.min(3, dates.length);
+      for (let i = 0; i < maxToFetch; i++) {
+        let start = dates[i].index;
+        let end = i + 1 < dates.length ? dates[i+1].index : html.length;
+        let section = html.substring(start, end);
+        let contentMatch = section.match(/<div class="devsite-release-note">[\s\S]*?<div>([\s\S]*?)<\/div>/);
+        let content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, "").trim() : "No details found";
+
+        // Unescape some HTML entities
+        content = content.replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+
+        logToSystem_(
+          "GUARDIAN",
+          `GAS Update [${dates[i].date}]: ${content.substring(0, 500)}`
+        );
+      }
+    } else {
+      logToSystem_("ERROR", `SystemGuardian: 変更情報の取得に失敗しました (HTTP ${res.getResponseCode()})`);
+    }
+  } catch (e) {
+    logToSystem_("ERROR", `SystemGuardian: 変更情報の取得中にエラーが発生しました: ${e.message}`);
+  }
 }
 
 function logToSystem_(type, message) {
