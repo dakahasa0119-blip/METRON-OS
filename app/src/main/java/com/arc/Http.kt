@@ -6,6 +6,8 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlin.math.pow
 
 /**
@@ -19,25 +21,27 @@ object Http {
      * Thread.sleep の代わりに delay を使用し、Coroutine キャンセルに対応。
      */
     suspend fun post(urlStr: String, json: String, maxRetries: Int = 3): String {
-        var lastException: Exception? = null
-        
-        for (attempt in 1..maxRetries) {
-            try {
-                return executePost(urlStr, json)
-            } catch (e: Exception) {
-                lastException = e
-                Log.w("Http", "Attempt $attempt failed: ${e.message}")
-                
-                if (attempt < maxRetries) {
-                    // 指数バックオフ: 2秒, 4秒, 8秒... と待機時間を増やす
-                    val waitTime = (2.0.pow(attempt.toDouble()) * 1000).toLong()
-                    delay(waitTime) // Thread.sleep → delay (Coroutine対応)
+        return withContext(Dispatchers.IO) {
+            var lastException: Exception? = null
+
+            for (attempt in 1..maxRetries) {
+                try {
+                    return@withContext executePost(urlStr, json)
+                } catch (e: Exception) {
+                    lastException = e
+                    Log.w("Http", "Attempt $attempt failed: ${e.message}")
+
+                    if (attempt < maxRetries) {
+                        // 指数バックオフ: 2秒, 4秒, 8秒... と待機時間を増やす
+                        val waitTime = (2.0.pow(attempt.toDouble()) * 1000).toLong()
+                        delay(waitTime) // Thread.sleep → delay (Coroutine対応)
+                    }
                 }
             }
+
+            Log.e("Http", "All $maxRetries attempts failed for $urlStr")
+            return@withContext """{"status":"ERROR","message":"${lastException?.message}"}"""
         }
-        
-        Log.e("Http", "All $maxRetries attempts failed for $urlStr")
-        return """{"status":"ERROR","message":"${lastException?.message}"}"""
     }
 
     private fun executePost(urlStr: String, json: String, redirectCount: Int = 0): String {
