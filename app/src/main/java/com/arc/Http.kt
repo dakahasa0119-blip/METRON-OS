@@ -40,7 +40,7 @@ object Http {
         return """{"status":"ERROR","message":"${lastException?.message}"}"""
     }
 
-    private fun executePost(urlStr: String, json: String, redirectCount: Int = 0): String {
+    internal fun executePost(urlStr: String, json: String, redirectCount: Int = 0): String {
         if (redirectCount > 5) {
             throw IllegalStateException("Too many redirects for $urlStr")
         }
@@ -86,7 +86,7 @@ object Http {
         return response
     }
 
-    private fun executeGet(urlStr: String, redirectCount: Int = 0): String {
+    internal fun executeGet(urlStr: String, redirectCount: Int = 0): String {
         if (redirectCount > 5) {
             throw IllegalStateException("Too many redirects for $urlStr")
         }
