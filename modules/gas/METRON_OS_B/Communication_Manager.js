@@ -29,7 +29,16 @@ function getDispatcherSheet() {
    2. 母艦一覧
 ------------------------------------------------------------ */
 function getMotherShipList() {
-  return ["METRON-A", "METRON-B", "METRON-C"];
+  var sheet = getSS().getSheetByName("MotherShips");
+  if (!sheet) return [];
+  var data = sheet.getDataRange().getValues();
+  var ships = [];
+  for (var i = 1; i < data.length; i++) { // Skip header row
+    if (data[i][0]) {
+      ships.push(data[i][0]);
+    }
+  }
+  return ships;
 }
 
 /* ------------------------------------------------------------
@@ -159,4 +168,17 @@ function runMotherShipCommunicationCycle() {
   } finally {
     lock.releaseLock();
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    getMotherShipList,
+    getDispatcherSheet,
+    dispatchMessagesToMotherShips,
+    deliverToMotherShipInbox,
+    sendFromMotherShip,
+    processMotherShipMessages,
+    runMotherShipCommunicationCycle,
+    getSS
+  };
 }
