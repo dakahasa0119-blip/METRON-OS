@@ -2524,9 +2524,10 @@ function doPost(e) {
     // ARCが完了し、次がMOTHERSHIP連携の場合（例：特定の応答接頭辞やモードなどから判定）
     // 現状はシンプルな「MOTHERSHIPに自律評価を依頼する」サンプル実装
     if (status === "ARC_DONE" || status === "ARC_ERROR") {
-      // TODO: 本来はプロンプトのメタデータやBAKUからの指示（followup）に依存させる
-      // 今回はイベント駆動検証のため、"[@metron]" が含まれていればMOTHERSHIPへ渡す
-      if (norm(targetRow[2]).indexOf("[@metron]") >= 0) {
+      const cmd = parseCommandTags(targetRow[2]);
+      const bakuReport = parseBakuStructuredReport(responseText);
+      const bakuRouteMother = bakuReport && bakuReport.followup && upper(norm(bakuReport.followup.executor)) === "MOTHERSHIP";
+      if (cmd.route === "MOTHERSHIP" || bakuRouteMother) {
         const msgId = "MS_" + targetRowIndex + "_" + Date.now();
         const contentContext = `Action: ${status}\nMission: ${missionId}\nResult: ${responseText.slice(0, 1000)}`;
         sheets.mothership.appendRow([new Date(), msgId, "gateway_chained", contentContext, "pending"]);
