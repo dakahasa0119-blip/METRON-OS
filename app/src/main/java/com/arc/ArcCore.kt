@@ -7,7 +7,6 @@ package com.arc
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import org.json.JSONObject
 
 /**
  * プロジェクト全体の共通設定や、システムレベルのユーティリティ (v18.5)
