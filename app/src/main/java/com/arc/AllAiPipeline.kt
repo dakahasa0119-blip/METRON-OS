@@ -1,7 +1,6 @@
 package com.arc
 
 import android.graphics.Bitmap
-import android.util.Base64
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.util.*
@@ -188,7 +187,7 @@ class AllAiPipeline(
             captureBitmap { bmp ->
                 val out = ByteArrayOutputStream()
                 bmp.compress(Bitmap.CompressFormat.JPEG, 70, out)
-                d.complete(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP))
+                d.complete(android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP))
             }
             d.await()
         }
