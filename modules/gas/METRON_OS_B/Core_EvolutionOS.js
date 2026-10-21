@@ -478,12 +478,54 @@ function formatDateForFileName_(date) {
  ******************************************************/
 
 function runSystemGuardianDaily() {
-  // TODO: 実際には Web から GAS や Google API の変更情報を取得して解析する想定。
-  // この段階では「フック」として SystemLog に記録だけしておく。
-  logToSystem_(
-    "CONTROL",
-    "SystemGuardian: 仕様変更監視サイクルを実行（将来的にブラウジング＆解析をここに実装）"
-  );
+  logToSystem_("CONTROL", "SystemGuardian: 仕様変更監視サイクルを開始します。");
+
+  try {
+    const url = "https://developers.google.com/apps-script/release-notes";
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+
+    if (response.getResponseCode() !== 200) {
+      logToSystem_("ERROR", `SystemGuardian: 監視先へのアクセスに失敗しました (HTTP ${response.getResponseCode()})`);
+      return;
+    }
+
+    const html = response.getContentText();
+    const notes = [];
+    const parts = html.split(/<h2[^>]*id="[a-zA-Z]+_\d+_\d+"[^>]*>/);
+
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      const dateMatch = part.match(/^([^<]+)<\/h2>/);
+      if (!dateMatch) continue;
+
+      let content = part.substring(dateMatch[0].length);
+      content = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+      notes.push({
+        date: dateMatch[1].trim(),
+        summary: content.substring(0, 300) + (content.length > 300 ? "..." : "")
+      });
+
+      if (notes.length >= 3) break;
+    }
+
+    if (notes.length > 0) {
+      logToSystem_("GUARDIAN", `GAS仕様変更情報を取得しました（最新 ${notes.length} 件）。`);
+
+      const proposal = {
+        target: "SystemGuardian",
+        fileName: `仕様変更レポート_${formatDateForFileName_(new Date())}`,
+        sourceCode: `【GAS Release Notes】\n\n` + notes.map(n => `■ ${n.date}\n${n.summary}`).join("\n\n") + `\n\n【タスク】\nこれらの変更が現在のシステムに影響を与えるか評価し、必要であれば対応策を立案せよ。`,
+        status: "NEW"
+      };
+
+      registerEvolutionProposal(proposal);
+    } else {
+      logToSystem_("WARNING", "SystemGuardian: 仕様変更情報が見つかりませんでした。");
+    }
+  } catch (e) {
+    logToSystem_("ERROR", `SystemGuardian 監視エラー: ${e.message}`);
+  }
 }
 
 function logToSystem_(type, message) {
