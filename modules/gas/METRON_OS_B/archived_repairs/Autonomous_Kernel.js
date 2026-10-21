@@ -84,10 +84,3 @@ function _runSandboxValidation(code) {
     return { success: false, error: e.message };
   }
 }
-
-// function runAutonomousCycle() {
-//   const triggers = ScriptApp.getProjectTriggers();
-//   if (!triggers.some(t => t.getHandlerFunction() === "runAutonomousCycle")) {
-//     ScriptApp.newTrigger("runAutonomousCycle").timeBased().everyMinutes(5).create();
-//   }
-// }
