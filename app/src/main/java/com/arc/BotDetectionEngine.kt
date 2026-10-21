@@ -74,6 +74,10 @@ object BotDetectionEngine {
         "security"
     )
 
+    private val allTokensRegex = Regex(
+        (hardMarks + hardTokens + softTokens).joinToString("|") { Regex.escape(it) }
+    )
+
     fun fromDomScan(blocked: Boolean, mark: String?, url: String? = null): BotSignal {
         if (!blocked) return BotSignal(decision = BotDecision.CLEAR, confidence = 0, mark = "none", source = "dom")
         return classify(detail = mark.orEmpty(), type = "DOM_SCAN", url = url, source = "dom")
@@ -205,22 +209,24 @@ object BotDetectionEngine {
         val evidences = mutableListOf<String>()
         var score = 0
 
-        for (mark in hardMarks) {
-            if (normalized.contains(mark)) {
-                evidences += "hard_mark:$mark"
-                score += 60
+        if (allTokensRegex.containsMatchIn(normalized)) {
+            for (mark in hardMarks) {
+                if (normalized.contains(mark)) {
+                    evidences += "hard_mark:$mark"
+                    score += 60
+                }
             }
-        }
-        for (token in hardTokens) {
-            if (normalized.contains(token)) {
-                evidences += "hard_token:$token"
-                score += 25
+            for (token in hardTokens) {
+                if (normalized.contains(token)) {
+                    evidences += "hard_token:$token"
+                    score += 25
+                }
             }
-        }
-        for (token in softTokens) {
-            if (normalized.contains(token)) {
-                evidences += "soft_token:$token"
-                score += 8
+            for (token in softTokens) {
+                if (normalized.contains(token)) {
+                    evidences += "soft_token:$token"
+                    score += 8
+                }
             }
         }
 
