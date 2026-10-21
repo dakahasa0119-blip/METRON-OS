@@ -41,12 +41,9 @@ class ArcWorker(
     private val statusTrail = ArrayDeque<String>()
     private var statusSeq: Long = 0L
     private var lastFastHeartbeatAtMs: Long = 0L
-    private var lastCopilotDiagAtMs: Long = 0L
-    private val copilotDiagCooldownMs: Long = 20_000L
     private var consultInFlight: Boolean = false
     private var consultAttemptCount: Int = 0
     private var lastConsultAtMs: Long = 0L
-    private val webDiag by lazy { WebViewDiagnosticProbe(web, gateway, prefs, workerScope) }
     private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
     private val timingModels = mutableMapOf<String, TimingModel>()
     private data class BotEvent(
@@ -882,26 +879,6 @@ class ArcWorker(
         }
 
         handleDomErrorFallback(type, data)
-    }
-
-    @Synchronized
-    private fun shouldRunCopilotDiag(nowMs: Long): Boolean {
-        if (nowMs - lastCopilotDiagAtMs < copilotDiagCooldownMs) return false
-        lastCopilotDiagAtMs = nowMs
-        return true
-    }
-
-    private fun triggerCopilotDiag(reason: String) {
-        if (isAborted) return
-        val target = inferTargetFromUrl(web.currentUrl()).ifBlank { lastTarget }
-        if (target != "copilot") return
-        val nowMs = System.currentTimeMillis()
-        if (!shouldRunCopilotDiag(nowMs)) return
-        emitStatus("COPILOT_DIAG_CAPTURE")
-        webDiag.captureAndSend(reason = reason) { ok, key ->
-            val tag = if (ok) "COPILOT_DIAG_SENT" else "COPILOT_DIAG_FAIL"
-            emitStatus("$tag:$key")
-        }
     }
 
     private fun handleDomErrorFallback(type: String, data: String?) {
