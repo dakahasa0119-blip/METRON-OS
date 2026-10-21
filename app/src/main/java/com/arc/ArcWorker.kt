@@ -38,8 +38,7 @@ class ArcWorker(
     private var stealthRetryCount: Int = 0
     private var adaptiveRetryCount: Int = 0
     private var isFinalizingResult: Boolean = false
-    private val statusTrail = ArrayDeque<String>()
-    private var statusSeq: Long = 0L
+
     private var lastFastHeartbeatAtMs: Long = 0L
     private var lastCopilotDiagAtMs: Long = 0L
     private val copilotDiagCooldownMs: Long = 20_000L
@@ -47,165 +46,50 @@ class ArcWorker(
     private var consultAttemptCount: Int = 0
     private var lastConsultAtMs: Long = 0L
     private val webDiag by lazy { WebViewDiagnosticProbe(web, gateway, prefs, workerScope) }
-    private data class TimingModel(var emaMs: Double = 0.0, var samples: Int = 0)
+
     private val timingModels = mutableMapOf<String, TimingModel>()
-    private data class BotEvent(
-        val confidence: Int,
-        val atMs: Long
-    )
-    private val pendingBotEvents = mutableMapOf<String, BotEvent>()
-    private data class RuntimeTiming(
-        val timeoutMs: Long,
-        val noProgressMs: Long,
-        val sampleCount: Int = 0,
-        val avgMs: Long = 0L,
-        val p90Ms: Long = 0L
-    )
+
+
 
     // 🚀 [統合信号系]
     var onGlobalAiResult: ((String) -> Unit)? = null
     var onSystemStatusUpdate: ((String) -> Unit)? = null
+        set(value) {
+            field = value
+            statusManager.onSystemStatusUpdate = value
+        }
+
+    private val statusManager = ArcStatusManager(
+        web = web,
+        prefs = prefs,
+        inferTargetFromUrl = ::inferTargetFromUrl,
+        getTarget = { lastTarget },
+        getQid = { currentQid },
+        getMissionId = { currentMissionId },
+        getSlotId = { currentSlotId },
+        isAborted = { isAborted },
+        onSystemStatusUpdate = onSystemStatusUpdate,
+        announceStatusFunc = { announceStatus(it) }
+    )
+
+    private val botManager = ArcBotManager(
+        web = web,
+        prefs = prefs,
+        emitStatus = { emitStatus(it) }
+    )
+
+    private fun emitStatus(status: String) = statusManager.emitStatus(status)
+    private fun rememberStatus(status: String) = statusManager.rememberStatus(status)
+    private fun snapshotStatusTrail() = statusManager.snapshotStatusTrail()
+    private fun latestStatus() = statusManager.latestStatus()
+    private fun currentStatusSeq() = statusManager.currentStatusSeq()
+
     var onSystemErrorRequest: ((String, String?) -> Unit)? = null 
     var onGatewayInstruction: ((JSONObject) -> Unit)? = null
     
     private var currentDoneCallback: (() -> Unit)? = null
     private var timeoutJob: Job? = null
-    private fun isDriveReferencePrompt(prompt: String): Boolean {
-        val p = prompt.lowercase()
-        val marks = listOf(
-            "docs.google.com/spreadsheets",
-            "drive.google.com",
-            "@google",
-            "google drive",
-            "spreadsheet",
-            "sheet",
-            "スプレッドシート",
-            "シート参照"
-        )
-        return marks.any { p.contains(it) }
-    }
 
-    private fun baseTimeoutMsFor(target: String, prompt: String): Long {
-        if (isDriveReferencePrompt(prompt)) {
-            return when (target.lowercase()) {
-                "gemini" -> 150_000L
-                else -> 120_000L
-            }
-        }
-        return 45_000L
-    }
-
-    private fun baseNoProgressMsFor(target: String, prompt: String): Long {
-        if (isDriveReferencePrompt(prompt)) {
-            return when (target.lowercase()) {
-                "gemini" -> 95_000L
-                else -> 70_000L
-            }
-        }
-        return 28_000L
-    }
-
-    private fun timingKey(target: String, prompt: String): String {
-        val mode = if (isDriveReferencePrompt(prompt)) "drive" else "normal"
-        return "${target.lowercase()}:$mode"
-    }
-
-    private fun recordAttemptTiming(target: String, prompt: String, elapsedMs: Long, success: Boolean) {
-        if (elapsedMs <= 0L) return
-        val key = timingKey(target, prompt)
-        val m = timingModels.getOrPut(key) { TimingModel() }
-        val x = elapsedMs.toDouble()
-        if (m.samples <= 0) {
-            m.emaMs = x
-            m.samples = 1
-            return
-        }
-        val alpha = if (success) 0.25 else 0.12
-        m.emaMs = m.emaMs * (1.0 - alpha) + x * alpha
-        m.samples += 1
-        prefs.addTimingSample(
-            key = key,
-            elapsedMs = elapsedMs,
-            success = success
-        )
-    }
-
-    private fun runtimeTimingFor(target: String, prompt: String): RuntimeTiming {
-        val key = timingKey(target, prompt)
-        val baseTimeout = baseTimeoutMsFor(target, prompt)
-        val baseNoProgress = baseNoProgressMsFor(target, prompt)
-        var timeout = baseTimeout
-        var noProgress = baseNoProgress
-
-        val hist = prefs.getTimingStats(
-            key = key,
-            lookbackMs = 12 * 60 * 60_000L,
-            minSamples = 3,
-            successOnly = true
-        )
-        var sampleCount = 0
-        var avgMs = 0L
-        var p90Ms = 0L
-        if (hist != null) {
-            sampleCount = hist.samples
-            avgMs = hist.avgMs
-            p90Ms = hist.p90Ms
-            val histTimeout = (hist.p90Ms + (hist.stdMs * 2).coerceAtLeast(5_000L))
-                .coerceIn(35_000L, 240_000L)
-            val histNoProgress = ((hist.avgMs * 0.58) + hist.stdMs)
-                .toLong()
-                .coerceIn(15_000L, (histTimeout - 5_000L).coerceAtLeast(15_000L))
-            timeout = maxOf(timeout, histTimeout)
-            noProgress = maxOf(noProgress, histNoProgress)
-        }
-
-        val model = timingModels[key]
-        if (model != null && model.samples >= 2) {
-            val emaTimeout = (model.emaMs * 1.85).toLong().coerceIn(35_000L, 240_000L)
-            val emaNoProgress = (model.emaMs * 0.62).toLong().coerceIn(15_000L, (emaTimeout - 5_000L).coerceAtLeast(15_000L))
-            timeout = maxOf(timeout, emaTimeout)
-            noProgress = maxOf(noProgress, emaNoProgress)
-        }
-
-        if (isDriveReferencePrompt(prompt)) {
-            timeout = timeout.coerceAtLeast(90_000L)
-            noProgress = noProgress.coerceAtLeast(45_000L)
-        }
-        noProgress = noProgress.coerceAtMost((timeout - 5_000L).coerceAtLeast(15_000L))
-        return RuntimeTiming(
-            timeoutMs = timeout,
-            noProgressMs = noProgress,
-            sampleCount = sampleCount,
-            avgMs = avgMs,
-            p90Ms = p90Ms
-        )
-    }
-
-    private fun dynamicNoProgressLimitMs(
-        target: String,
-        prompt: String,
-        baseMs: Long,
-        elapsedMs: Long,
-        generating: Boolean,
-        assistantLen: Int,
-        timeoutMs: Long
-    ): Long {
-        var limit = baseMs
-        val model = timingModels[timingKey(target, prompt)]
-        if (model != null && model.samples >= 2) {
-            val emaBased = (model.emaMs * 0.70).toLong().coerceAtLeast(15_000L)
-            limit = maxOf(limit, emaBased)
-        }
-
-        if (generating || assistantLen > 0) {
-            val longCap = (timeoutMs - 5_000L).coerceAtLeast(limit)
-            limit = minOf(longCap, limit + 25_000L)
-        } else if (elapsedMs >= 20_000L) {
-            val coldCut = if (isDriveReferencePrompt(prompt)) 45_000L else 22_000L
-            limit = minOf(limit, coldCut)
-        }
-        return limit
-    }
 
     init {
         gateway.telemetrySupplier = {
@@ -222,7 +106,7 @@ class ArcWorker(
                     put("interstitial", botT.interstitial)
                     put("updated_at", botT.updatedAt)
                 })
-                put("bot_pending_events", pendingBotEvents.size)
+                put("bot_pending_events", botManager.pendingBotEvents.size)
                 put("capabilities", JSONObject().apply {
                     put("supports_slot_mode", true)
                     put("supports_consensus", true)
@@ -341,60 +225,7 @@ class ArcWorker(
     private fun validateSelector(s: String?) = !s.isNullOrBlank() && s.length < 100 && (s.startsWith(".") || s.startsWith("#") || s.contains("["))
 
     @Synchronized
-    private fun rememberStatus(status: String) {
-        val ts = System.currentTimeMillis()
-        statusTrail.addLast("${ts}:${status.take(120)}")
-        while (statusTrail.size > 20) statusTrail.removeFirst()
-    }
 
-    private fun emitStatus(status: String) {
-        rememberStatus(status)
-        val seq = nextStatusSeq()
-        val url = web.currentUrl()
-        val inferred = inferTargetFromUrl(url).ifBlank { lastTarget }
-        val shortUrl = if (url.length > 180) url.take(180) + "...(len=" + url.length + ")" else url
-        Log.d(
-            "ARC_HUD_EVT",
-            "seq=$seq qid=${currentQid ?: "-"} target=${inferred.ifBlank { "-" }} status=${status.take(120)} url=$shortUrl"
-        )
-        onSystemStatusUpdate?.invoke(status)
-        requestFastHeartbeat(status)
-    }
-
-    private fun requestFastHeartbeat(status: String) {
-        if (isAborted) return
-        if (currentQid == null && currentMissionId.isNullOrBlank()) return
-        val statusHint = when {
-            status.startsWith("MISSION OK") || status.startsWith("PIPE_STEP_DONE") -> "success"
-            status.startsWith("ERROR") || status.startsWith("BOT_BLOCKED") -> "error"
-            else -> "running"
-        }
-        
-        if (statusHint == "success" || statusHint == "error") {
-            announceStatus(statusHint)
-        }
-    }
-
-    @Synchronized
-    private fun snapshotStatusTrail(): JSONArray {
-        return JSONArray(statusTrail.toList())
-    }
-
-    @Synchronized
-    private fun latestStatus(): String {
-        return statusTrail.lastOrNull() ?: ""
-    }
-
-    @Synchronized
-    private fun nextStatusSeq(): Long {
-        statusSeq += 1
-        return statusSeq
-    }
-
-    @Synchronized
-    private fun currentStatusSeq(): Long {
-        return statusSeq
-    }
 
     private fun cancelActiveJobs() {
         timeoutJob?.cancel()
@@ -562,10 +393,10 @@ class ArcWorker(
             workerScope.launch { delay(1000); if(!isAborted) action() }
         }
         
-        if (isDriveReferencePrompt(task.prompt)) {
+        if (ArcTiming.isDriveReferencePrompt(task.prompt)) {
             emitStatus("LONG_WAIT_MODE:DRIVE_REF")
         }
-        val runtimeTiming = runtimeTimingFor(target, task.prompt)
+        val runtimeTiming = ArcTiming.runtimeTimingFor(target, task.prompt, timingModels, prefs)
         val timeoutMs = runtimeTiming.timeoutMs
         emitStatus(
             "TIMING_MODEL target=$target timeout_ms=$timeoutMs no_progress_ms=${runtimeTiming.noProgressMs} samples=${runtimeTiming.sampleCount} avg_ms=${runtimeTiming.avgMs} p90_ms=${runtimeTiming.p90Ms}"
@@ -598,7 +429,7 @@ class ArcWorker(
                 }
 
                 if (elapsed >= 12_000L) {
-                    val bot = detectBotWallQuick()
+                    val bot = botManager.detectBotWallQuick()
                     if (bot.decision == BotDecision.BOT_BLOCKED) {
                         handleDomError("BOT_BLOCKED", bot.detailString())
                         return@launch
@@ -634,23 +465,24 @@ class ArcWorker(
 
                 if (elapsed >= 6_000L) {
                     val urlNow = web.currentUrl()
-                    if (isLoginRequiredUrl(target, urlNow)) {
+                    if (botManager.isLoginRequiredUrl(target, urlNow)) {
                         handleDomError("LOGIN_REQUIRED", urlNow)
                         return@launch
                     }
                 }
 
-                val dynamicNoProgressMs = dynamicNoProgressLimitMs(
+                val dynamicNoProgressMs = ArcTiming.dynamicNoProgressLimitMs(
                     target = target,
                     prompt = task.prompt,
                     baseMs = runtimeTiming.noProgressMs,
                     elapsedMs = elapsed,
                     generating = generatingNow,
                     assistantLen = lastAssistantLen,
-                    timeoutMs = timeoutMs
+                    timeoutMs = timeoutMs,
+                    timingModels = timingModels
                 )
                 if (noProgressMs >= dynamicNoProgressMs) {
-                    val bot = detectBotWallQuick()
+                    val bot = botManager.detectBotWallQuick()
                     if (bot.decision == BotDecision.BOT_BLOCKED) {
                         handleDomError("BOT_BLOCKED", bot.detailString())
                         return@launch
@@ -662,14 +494,7 @@ class ArcWorker(
         }
     }
 
-    private suspend fun detectBotWallQuick(): BotSignal {
-        val d = CompletableDeferred<BotSignal>()
-        web.detectBotWall { signal ->
-            if (!d.isCompleted) d.complete(signal)
-        }
-        return withTimeoutOrNull(1500) { d.await() }
-            ?: BotSignal(decision = BotDecision.CLEAR, confidence = 0, mark = "timeout", source = "arc_timeout")
-    }
+
 
     private data class ProgressSignal(
         val generating: Boolean = false,
@@ -752,8 +577,8 @@ class ArcWorker(
                 prompt = lastAiTask?.prompt
             ) { ok ->
                 if (ok) {
-                    tuneBotThresholdOnSuccess(qid)
-                    recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = true)
+                    botManager.tuneBotThresholdOnSuccess(qid)
+                    ArcTiming.recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = true, timingModels = timingModels, prefs = prefs)
                     prefs.addContext(
                         q = "Task: $qid",
                         a = result,
@@ -764,7 +589,7 @@ class ArcWorker(
                     emitStatus("MISSION OK")
                     announceStatus("success")
                 } else {
-                    recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false)
+                    ArcTiming.recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false, timingModels = timingModels, prefs = prefs)
                     gateway.sendArcError(
                         qid,
                         "RESULT_POST_FAIL",
@@ -781,69 +606,13 @@ class ArcWorker(
         }
     }
 
-    private fun isLoginRequiredUrl(target: String, url: String): Boolean {
-        return BotDetectionEngine.isLoginRequiredUrl(target, url)
-    }
 
-    private fun isBotBlocked(type: String, data: String?): Boolean {
-        val raw = BotDetectionEngine.fromError(
-            type = type,
-            data = data,
-            url = web.currentUrl()
-        )
-        val t = prefs.getBotThresholds()
-        val signal = BotDetectionEngine.applyThresholds(raw, t.blocked, t.interstitial)
-        return signal.decision == BotDecision.BOT_BLOCKED
-    }
-
-    private fun extractConfidence(detail: String?): Int {
-        if (detail.isNullOrBlank()) return 0
-        return Regex("""confidence=(\d+)""")
-            .find(detail)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.toIntOrNull()
-            ?.coerceIn(0, 100)
-            ?: 0
-    }
-
-    private fun rememberBotEvent(qid: String?, detail: String?) {
-        if (qid.isNullOrBlank()) return
-        pendingBotEvents[qid] = BotEvent(
-            confidence = extractConfidence(detail),
-            atMs = System.currentTimeMillis()
-        )
-    }
-
-    private fun tuneBotThresholdOnSuccess(qid: String?) {
-        if (qid.isNullOrBlank()) return
-        val ev = pendingBotEvents.remove(qid) ?: return
-        val age = System.currentTimeMillis() - ev.atMs
-        if (age > 120_000L) return
-        val next = prefs.adjustBotThresholds(
-            deltaBlocked = if (ev.confidence >= 60) 1 else 0,
-            deltaInterstitial = 0
-        )
-        emitStatus("BOT_AUTOTUNE success blocked=${next.blocked} interstitial=${next.interstitial}")
-    }
-
-    private fun tuneBotThresholdOnFailure(qid: String?, type: String, data: String?) {
-        if (qid.isNullOrBlank()) return
-        val ev = pendingBotEvents.remove(qid) ?: return
-        if (!type.contains("BOT_BLOCKED", ignoreCase = true) && !isBotBlocked(type, data)) return
-        if (System.currentTimeMillis() - ev.atMs > 180_000L) return
-        val next = prefs.adjustBotThresholds(
-            deltaBlocked = -1,
-            deltaInterstitial = -1
-        )
-        emitStatus("BOT_AUTOTUNE fail blocked=${next.blocked} interstitial=${next.interstitial}")
-    }
 
     private fun handleDomError(type: String, data: String?) {
         onSystemErrorRequest?.invoke(type, data)
         val qid = currentQid ?: ""
         if (type.contains("BOT_BLOCKED", ignoreCase = true)) {
-            rememberBotEvent(currentQid, data)
+            botManager.rememberBotEvent(currentQid, data)
         }
         val isGeminiTransient = type == "GEMINI_FAIL_2" || type == "GEMINI_FAIL_13"
         if (
@@ -871,7 +640,7 @@ class ArcWorker(
         val maybeRecoverable = currentQid != null &&
             qid != "manual" &&
             !qid.startsWith("HEAL_") &&
-            (type.contains("TIMEOUT") || type.contains("FAIL") || isBotBlocked(type, data))
+            (type.contains("TIMEOUT") || type.contains("FAIL") || botManager.isBotBlocked(type, data))
         if (maybeRecoverable) {
             attemptAdaptiveRecovery(type, data) { recovered ->
                 if (!recovered) {
@@ -913,7 +682,7 @@ class ArcWorker(
             persistFallbackResult(qid, type)
         }
 
-        if (!isCopilotHardBlocked && currentQid != null && !currentQid!!.startsWith("HEAL_") && isBotBlocked(type, data) && stealthRetryCount < 1) {
+        if (!isCopilotHardBlocked && currentQid != null && !currentQid!!.startsWith("HEAL_") && botManager.isBotBlocked(type, data) && stealthRetryCount < 1) {
             stealthRetryCount++
             emitStatus("SAFE_RETRY_$stealthRetryCount")
             val retryTask = lastAiTask?.copy(forceReload = true)
@@ -938,8 +707,8 @@ class ArcWorker(
         } else {
             val elapsedMs = (System.currentTimeMillis() - currentAttemptStartedAtMs).coerceAtLeast(0L)
             val target = lastAiTask?.target?.lowercase()?.trim().orEmpty()
-            tuneBotThresholdOnFailure(qid, type, data)
-            recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false)
+            botManager.tuneBotThresholdOnFailure(qid, type, data)
+            ArcTiming.recordAttemptTiming(target = target, prompt = lastAiTask?.prompt ?: "", elapsedMs = elapsedMs, success = false, timingModels = timingModels, prefs = prefs)
             prefs.addContext(
                 q = "Task: $qid",
                 a = "ERROR: $type ${data ?: ""}",
