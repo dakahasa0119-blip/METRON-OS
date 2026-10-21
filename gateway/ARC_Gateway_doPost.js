@@ -2484,16 +2484,16 @@ function doPost(e) {
           allVersions.sort((a, b) => a.versionNumber - b.versionNumber);
           const toDelete = allVersions.slice(0, 20);
           let deletedCount = 0;
-          for (let i = 0; i < toDelete.length; i++) {
-            const v = toDelete[i];
-            const delUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions/" + v.versionNumber;
-            const delRes = UrlFetchApp.fetch(delUrl, {
-              method: "delete",
-              headers: { Authorization: "Bearer " + token },
-              muteHttpExceptions: true
-            });
-            if (delRes.getResponseCode() < 300) deletedCount++;
-          }
+          const requests = toDelete.map(v => ({
+            url: "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions/" + v.versionNumber,
+            method: "delete",
+            headers: { Authorization: "Bearer " + token },
+            muteHttpExceptions: true
+          }));
+          const responses = UrlFetchApp.fetchAll(requests);
+          responses.forEach(res => {
+            if (res.getResponseCode() < 300) deletedCount++;
+          });
           addAudit(traceId, "DEPLOY_CLEANUP", targetScriptId, "", "ok", "Deleted " + deletedCount + " old versions.");
         }
       }
