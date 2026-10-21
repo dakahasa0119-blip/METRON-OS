@@ -1,19 +1,25 @@
 /**
  * 🧠 [5] METRON_SWARM
  */
+var SWARM_BRAIN_TYPES = {
+  GEMINI: "Gemini",
+  CHATGPT: "ChatGPT"
+};
+
 var METRON_SWARM = {
-  ROLES: { CREATOR: "Gemini", HACKER: "Gemini" },
+  BRAIN_TYPES: SWARM_BRAIN_TYPES,
+  ROLES: { CREATOR: SWARM_BRAIN_TYPES.GEMINI, HACKER: SWARM_BRAIN_TYPES.GEMINI },
   shuffleRoles: function () {
     const openAiKey = METRON_PROPS.getOpenAiKey();
     console.log("🔄 知能の布陣を診断中...");
     if (!openAiKey) {
       console.log("ℹ️ OpenAI未接続。Gemini内の【Creator】と【Hacker】で進捗を維持します。");
-      this.ROLES.CREATOR = "Gemini";
-      this.ROLES.HACKER = "Gemini";
+      this.ROLES.CREATOR = this.BRAIN_TYPES.GEMINI;
+      this.ROLES.HACKER = this.BRAIN_TYPES.GEMINI;
     } else {
-      const aiBrains = ["Gemini", "ChatGPT"];
+      const aiBrains = [this.BRAIN_TYPES.GEMINI, this.BRAIN_TYPES.CHATGPT];
       this.ROLES.CREATOR = aiBrains[Math.floor(Math.random() * aiBrains.length)];
-      this.ROLES.HACKER = this.ROLES.CREATOR === "Gemini" ? "ChatGPT" : "Gemini";
+      this.ROLES.HACKER = this.ROLES.CREATOR === this.BRAIN_TYPES.GEMINI ? this.BRAIN_TYPES.CHATGPT : this.BRAIN_TYPES.GEMINI;
       console.log(`📡 多重脳稼働：[Creator: ${this.ROLES.CREATOR}] [Hacker: ${this.ROLES.HACKER}]`);
     }
   },
