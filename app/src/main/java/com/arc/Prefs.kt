@@ -81,6 +81,21 @@ class Prefs(context: Context) {
     var copilotUrl: String by StringPref("copilot_url", "https://claude.ai/")
     var gatewaySlotRegistryJson: String by StringPref("gateway_slot_registry_json", "[]")
 
+    private var cachedGatewaySlotRegistry: JSONArray? = null
+    private var lastGatewaySlotRegistryJson: String? = null
+
+    private fun getGatewaySlotRegistryArray(): JSONArray {
+        val currentJson = gatewaySlotRegistryJson
+        if (cachedGatewaySlotRegistry != null && lastGatewaySlotRegistryJson == currentJson) {
+            return cachedGatewaySlotRegistry!!
+        }
+        val arr = JSONArray(currentJson)
+        cachedGatewaySlotRegistry = arr
+        lastGatewaySlotRegistryJson = currentJson
+        return arr
+    }
+
+
     fun normalizedRuntimeMode(): String {
         val m = runtimeMode.trim().lowercase()
         return when (m) {
@@ -127,7 +142,7 @@ class Prefs(context: Context) {
             return normalizeTarget(sid).ifBlank { fallback.ifBlank { "gemini" } }
         }
         return try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getGatewaySlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val id = normalizeSlotId(obj.optString("slot_id", ""))
@@ -158,7 +173,7 @@ class Prefs(context: Context) {
         val t = normalizeTarget(target)
         if (sid.isBlank() || t.isBlank()) return
         try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getGatewaySlotRegistryArray()
             var idx = -1
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
@@ -177,6 +192,8 @@ class Prefs(context: Context) {
             if (!responseSelector.isNullOrBlank()) next.put("response_selector", responseSelector.take(240))
             if (idx >= 0) arr.put(idx, next) else arr.put(next)
             gatewaySlotRegistryJson = arr.toString()
+            cachedGatewaySlotRegistry = null
+            lastGatewaySlotRegistryJson = null
         } catch (_: Exception) {
             gatewaySlotRegistryJson = JSONArray().put(
                 JSONObject().apply {
@@ -189,6 +206,8 @@ class Prefs(context: Context) {
                     if (!responseSelector.isNullOrBlank()) put("response_selector", responseSelector.take(240))
                 }
             ).toString()
+            cachedGatewaySlotRegistry = null
+            lastGatewaySlotRegistryJson = null
         }
     }
 
@@ -197,7 +216,7 @@ class Prefs(context: Context) {
         val target = resolveTargetForSlot(sid, fallbackTarget)
         if (sid.isBlank()) return getUrlFor(target)
         return try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getGatewaySlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 if (normalizeSlotId(obj.optString("slot_id", "")) != sid) continue
@@ -217,7 +236,7 @@ class Prefs(context: Context) {
         val defaultPair = getSelectorsFor(target)
         if (sid.isBlank()) return defaultPair
         return try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getGatewaySlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 if (normalizeSlotId(obj.optString("slot_id", "")) != sid) continue
@@ -261,7 +280,7 @@ class Prefs(context: Context) {
 
     fun applySlotRegistryToLegacyTargets() {
         try {
-            val arr = JSONArray(gatewaySlotRegistryJson)
+            val arr = getGatewaySlotRegistryArray()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val sid = normalizeSlotId(obj.optString("slot_id", ""))
