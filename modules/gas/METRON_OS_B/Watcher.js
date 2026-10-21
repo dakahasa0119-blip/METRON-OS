@@ -186,3 +186,9 @@ function onChange(e) {
   if (name === "Injection_Slot") { W_checkInjectionSlot(); return; }
   if (name === "Forge_Staging") { W_checkForgeStaging(); return; }
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    W_chatHash
+  };
+}
