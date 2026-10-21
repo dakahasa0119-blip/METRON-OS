@@ -36,6 +36,8 @@ function processPendingInjectionsV305() {
   if (!slotSheet || slotSheet.getLastRow() < 2) return;
 
   const data = slotSheet.getDataRange().getValues();
+  const statuses = data.map(row => [row[4]]);
+  let changed = false;
   
   for (let i = 1; i < data.length; i++) {
     // PENDING または 以前の APIエラー(ERROR) が出ている行を再処理
@@ -51,13 +53,19 @@ function processPendingInjectionsV305() {
         PropertiesService.getScriptProperties().setProperty("ACTIVE_RESTORE_CODE", code);
         
         // 成功を刻印
-        slotSheet.getRange(i + 1, 5).setValue("DONE: 内部受肉成功 (API回避)");
+        statuses[i][0] = "DONE: 内部受肉成功 (API回避)";
+        changed = true;
         if (typeof announce === 'function') announce(`[${fileName}] 内部受肉に成功。`, "SUCCESS");
 
       } catch (err) {
-        slotSheet.getRange(i + 1, 5).setValue("EXEC_ERROR: " + err.message);
+        statuses[i][0] = "EXEC_ERROR: " + err.message;
+        changed = true;
       }
     }
+  }
+
+  if (changed) {
+    slotSheet.getRange(1, 5, statuses.length, 1).setValues(statuses);
   }
 }
 
@@ -74,13 +82,22 @@ function exportForgeToFolder() {
                  DriveApp.getFoldersByName(folderName).next() : DriveApp.createFolder(folderName);
 
   const data = forgeSheet.getDataRange().getValues();
+  const statuses = data.map(row => [row[4]]);
   let count = 0;
+  let changed = false;
+
   for (let i = 1; i < data.length; i++) {
     if (data[i][4] === "STAGED") {
       folder.createFile(`${data[i][1]}.gs`, data[i][3]);
-      forgeSheet.getRange(i + 1, 5).setValue("EXPORTED");
+      statuses[i][0] = "EXPORTED";
+      changed = true;
       count++;
     }
   }
+
+  if (changed) {
+    forgeSheet.getRange(1, 5, statuses.length, 1).setValues(statuses);
+  }
+
   return `✅ ${count}件排出完了: ${folderName}`;
 }
