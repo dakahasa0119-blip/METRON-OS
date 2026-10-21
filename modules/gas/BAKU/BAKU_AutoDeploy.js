@@ -217,16 +217,26 @@ var BAKU_AutoDeploy = {
                 if (allVersions.length > 20) {
                     allVersions.sort(function (a, b) { return a.versionNumber - b.versionNumber; });
                     var toDelete = allVersions.slice(0, allVersions.length - 20);
-                    var deletedCount = 0;
+                    var deleteRequests = [];
                     for (var i = 0; i < toDelete.length; i++) {
                         var v = toDelete[i];
                         var delUrl = "https://script.googleapis.com/v1/projects/" + targetScriptId + "/versions/" + v.versionNumber;
-                        var delRes = UrlFetchApp.fetch(delUrl, {
+                        deleteRequests.push({
+                            url: delUrl,
                             method: "delete",
                             headers: { Authorization: "Bearer " + token },
                             muteHttpExceptions: true
                         });
-                        if (delRes.getResponseCode() < 300) deletedCount++;
+                    }
+
+                    var deletedCount = 0;
+                    if (deleteRequests.length > 0) {
+                        var deleteResponses = UrlFetchApp.fetchAll(deleteRequests);
+                        for (var j = 0; j < deleteResponses.length; j++) {
+                            if (deleteResponses[j].getResponseCode() < 300) {
+                                deletedCount++;
+                            }
+                        }
                     }
                     console.log("Deleted " + deletedCount + " old versions.");
                 }
