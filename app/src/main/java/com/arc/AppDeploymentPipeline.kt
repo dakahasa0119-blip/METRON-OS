@@ -1,7 +1,6 @@
 package com.arc
 
 import kotlinx.coroutines.*
-import org.json.JSONObject
 
 /**
  * Phase 6: Market Research & Code Generation Pipeline
