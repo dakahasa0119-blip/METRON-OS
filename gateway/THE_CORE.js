@@ -5,7 +5,6 @@
 
 function rewritePhysicalFile(filename, newContent) {
   const purified = extractPureCode(newContent);
-  try { new Function(purified); } catch (e) { return false; }
 
   const scriptId = ScriptApp.getScriptId();
   const token = ScriptApp.getOAuthToken();
@@ -27,12 +26,16 @@ function rewritePhysicalFile(filename, newContent) {
     project.files.push({ name: filename, type: "SERVER_JS", source: purified });
   }
 
-  UrlFetchApp.fetch(baseUrl, {
-    method: "put",
-    contentType: "application/json",
-    headers: { Authorization: "Bearer " + token },
-    payload: JSON.stringify({ files: project.files })
-  });
+  try {
+    UrlFetchApp.fetch(baseUrl, {
+      method: "put",
+      contentType: "application/json",
+      headers: { Authorization: "Bearer " + token },
+      payload: JSON.stringify({ files: project.files })
+    });
+  } catch (e) {
+    return false;
+  }
 
   return true;
 }
@@ -47,7 +50,6 @@ function processIncomingSignal(rowIndex) {
 
   const success = rewritePhysicalFile(filename, rawCode);
   if (success) {
-    eval(extractPureCode(rawCode));
     sheet.getRange(rowIndex, 5).setValue("EVOLVED (GW)");
   } else {
     sheet.getRange(rowIndex, 5).setValue("FAILED (GW)");
