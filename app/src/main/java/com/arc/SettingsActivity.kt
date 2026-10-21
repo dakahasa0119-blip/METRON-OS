@@ -314,7 +314,12 @@ class SettingsActivity : AppCompatActivity() {
         when (slot) { 0 -> prefs.profileSlot1 = json; 1 -> prefs.profileSlot2 = json; else -> prefs.profileSlot3 = json }
     }
 
-    private fun isValidJson(json: String): Boolean = try { JSONObject(json); true } catch (_: Exception) { false }
+    internal fun isValidJson(json: String): Boolean = Companion.isValidJson(json)
+
+    companion object {
+        @JvmStatic
+        fun isValidJson(json: String): Boolean = try { JSONObject(json); true } catch (_: Exception) { false }
+    }
 
     private fun setupButtons() {
         binding.importButton.setOnClickListener {
