@@ -178,7 +178,7 @@ A new **guided, interactive experience** is part of the runnable Mini OS.
 Start `node mini/start.mjs` and open
 **http://127.0.0.1:8766/experience**. Inside each village, MotherShip A/B
 exchange local tasks via their own Gateway. Across villages, a **real versioned
-Rumor JSON file**is published into a local shared Village Square folder,
+Rumor JSON file** is published into a local shared Village Square folder,
 then independently read by the next village's own Gateway. The user controls
 the receiving filter strength and personally decides whether to adopt or
 quarantine the Rumor; no AI-generated "derived idea" is fabricated.
