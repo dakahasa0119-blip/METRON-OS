@@ -1,6 +1,37 @@
-# METRON — AI Continuity, Recovery and External-Interface Experiments
+# METRON-OS (METRON / メトロン)
 
-日本語 / English
+**AI workflow continuity, persistent memory, multi-agent coordination and recovery experiments.**  
+**AIの長期記憶・文脈継承・連携・障害復旧を研究する、METRON構想の公開ソースと実験実装です。**
+
+Canonical repository / 正式な公開先: **[dakahasa0119-blip/METRON-OS](https://github.com/dakahasa0119-blip/METRON-OS)**  
+Maintainer / 管理者: [dakahasa0119-blip](https://github.com/dakahasa0119-blip)
+
+## プロジェクト概要 / Project overview
+
+**METRON（メトロン、METRON OS、METRON-OS）**は、AIのモデル・会話・サービス・端末が変わっても、ユーザーの目的、文脈、判断の経緯、途中成果を引き継ぎ、複数のAIが協力して作業を進め、失敗から復旧できる仕組みを目指す実験的なオープンソースプロジェクトです。単なるチャット履歴の保存にとどまらず、独立した母艦や「村」が知識を交換する分散型AIコミュニティまでを長期構想に含みます。
+
+**METRON-OS** is the public source repository for METRON: an experimental AI architecture exploring persistent agent memory, context handoff, multi-agent workflow orchestration, external AI interfaces, and failure recovery. Its long-term vision includes independent AI-enabled villages exchanging knowledge while retaining provenance and user control. The repository contains historical Android and Google Apps Script prototypes, a local Node.js METRON Mini runtime, and reusable JavaScript reference modules.
+
+| Component / 構成 | Intended role / 役割 |
+| --- | --- |
+| **MotherShip / 母艦 / METRON OS** | Preserve user goals, context and work state / 目的・文脈・作業状態の保持 |
+| **Gateway** | Connect users and components; manage jobs, delivery and memory / 指示の中継・実行状態・記憶の管理 |
+| **ARC / PROXY-HAND** | Explore external AI interaction and browser interfaces / 外部AIとの連携・ブラウザ操作の研究 |
+| **BAKU** | Investigate failures, reuse source fragments, repair and verify / 障害調査・コード救済・修復・再検証 |
+
+**開発段階 / Status:** 実装・検証の範囲は部品ごとに異なります。全体の自律運転、一般的な自己修復、複数端末にまたがる村間通信の完成を主張するものではありません。Verified local behavior and historical evidence are distinguished from unverified integration and future goals in the implementation notes below.
+
+**名称の区別 / Project identity:** このページのMETRON-OSは上記管理者のAIアーキテクチャ研究を指し、汎用OSの配布物、キーボード用ファームウェア、基盤AIモデルの名称ではありません。`dakahasa0119-blip`はGitHubアカウント名です。Please identify this project by its full repository name and canonical URL rather than by the word “METRON” alone.
+
+### 読み始める場所 / Start here
+
+- [METRON Miniの起動方法・構成・制限 / Local quick start](mini/README.md)
+- [構想と実装の証拠 / Implementation status](docs/IMPLEMENTATION_STATUS.md)
+- [村・知識交換という構想 / AI civilization concept and evidence boundaries](docs/METRON_CIVILIZATION_EXPERIENCE_2026-10-14.md)
+- [再利用できるARC・BAKU・Gateway・母艦の部品 / Reusable modules](reusable/README.md)
+- [ライセンスと再利用条件 / Licensing](LICENSING.md)
+
+## Implementation notes / 実装・検証の詳細
 
 **METRON is an experimental architecture and a collection of historical prototypes**, exploring continuity of AI workflows, persistent memory, external AI interaction, repair, and eventually decentralized AI communities. It is **not** a verified, fully autonomous or fully distributed AI civilization.
 
@@ -147,7 +178,7 @@ A new **guided, interactive experience** is part of the runnable Mini OS.
 Start `node mini/start.mjs` and open
 **http://127.0.0.1:8766/experience**. Inside each village, MotherShip A/B
 exchange local tasks via their own Gateway. Across villages, a **real versioned
-Rumor JSON file** is published into a local shared Village Square folder,
+Rumor JSON file**is published into a local shared Village Square folder,
 then independently read by the next village's own Gateway. The user controls
 the receiving filter strength and personally decides whether to adopt or
 quarantine the Rumor; no AI-generated "derived idea" is fabricated.
