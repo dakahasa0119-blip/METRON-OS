@@ -5,7 +5,6 @@ import android.util.Base64
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.util.*
-import org.json.JSONObject
 import kotlin.math.max
 
 /**
